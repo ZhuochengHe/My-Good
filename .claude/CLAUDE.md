@@ -4,13 +4,13 @@ See @README for project overview.
 
 ## Quick Reference
 
-| Document | Purpose |
-|----------|---------|
+| Document               | Purpose                    |
+| ---------------------- | -------------------------- |
 | `docs/ARCHITECTURE.md` | Core interfaces, data flow |
-| `docs/ROADMAP.md` | Implementation phases |
-| `docs/LLM_CONTEXT.md` | Quick context for LLMs |
-| `docs/TODO.md` | Current tasks |
-| `docs/DEV_LOG.md` | Daily progress |
+| `docs/ROADMAP.md`      | Implementation phases      |
+| `docs/LLM_CONTEXT.md`  | Quick context for LLMs     |
+| `docs/TODO.md`         | Current tasks              |
+| `docs/DEV_LOG.md`      | Daily progress             |
 
 ## Workflow & Process
 
@@ -60,6 +60,7 @@ Key components:
 - **Explanation Level:** Technical details explained to undergraduate level when needed.
 - **Conciseness:** Keep responses concise. Detailed explanations only on request.
 - **Code Comments:** JSDoc for all exports explaining purpose, parameters, return values.
+- **File Limitation** Each code piece is limited under ~700 LOCs if possible. Split up files if needed.
 
 ## Key Principles
 
@@ -68,12 +69,6 @@ Key components:
 - JSONL sessions for debuggability
 - Provider abstraction for multi-model support
 - Plugin manifest pattern for tool discovery
-
-## Session Documentation
-
-Session summaries are automatically generated after each session and stored in `docs/sessions/` as personalized diary entries. These capture design thinking and decisions.
-
-See `.claude/hooks/SESSION_SUMMARY_GUIDE.md` for hook documentation (separate from project memory).
 
 ---
 
