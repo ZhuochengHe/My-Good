@@ -1,0 +1,50 @@
+{
+  "id": "web-search",
+  "name": "Web Search",
+  "version": "1.0.0",
+  "description": "Search the web and fetch URLs",
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web for information",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of results (default: 5)",
+            "default": 5
+          }
+        },
+        "required": ["query"]
+      },
+      "handler": "search"
+    },
+    {
+      "name": "fetch_url",
+      "description": "Fetch the content of a URL",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL to fetch"
+          },
+          "format": {
+            "type": "string",
+            "description": "Output format: 'text', 'html', or 'markdown'",
+            "enum": ["text", "html", "markdown"],
+            "default": "markdown"
+          }
+        },
+        "required": ["url"]
+      },
+      "handler": "fetchUrl",
+      "timeout": 15000
+    }
+  ]
+}

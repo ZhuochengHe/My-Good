@@ -1,0 +1,37 @@
+{
+  "id": "shell",
+  "name": "Shell Execution",
+  "version": "1.0.0",
+  "description": "Execute shell commands",
+  "tools": [
+    {
+      "name": "shell_exec",
+      "description": "Execute a shell command and return its output",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to execute"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory for the command"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Timeout in milliseconds (default: 30000)",
+            "default": 30000
+          }
+        },
+        "required": ["command"]
+      },
+      "handler": "execCommand",
+      "dangerous": true,
+      "timeout": 30000
+    }
+  ],
+  "gates": {
+    "platforms": ["linux", "darwin"]
+  }
+}

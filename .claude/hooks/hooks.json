@@ -1,0 +1,11 @@
+{
+  "hooks": [
+    {
+      "event": "session-close",
+      "name": "post-session-summarize",
+      "script": "./post-session-summarize.js",
+      "description": "Generate personalized session summary with design notes and outcomes",
+      "enabled": true
+    }
+  ]
+}

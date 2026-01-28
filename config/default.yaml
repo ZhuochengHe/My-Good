@@ -1,0 +1,53 @@
+# Default Agent Configuration
+# Copy to ~/.my-agent/config.yaml and customize
+
+agent:
+  id: default
+  name: My Agent
+  systemPrompt: |
+    You are a helpful assistant with access to tools.
+    Use tools when needed to accomplish tasks.
+    Be concise and accurate in your responses.
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+  maxTurns: 20
+  maxTokensPerTurn: 4096
+  tools:
+    allow:
+      - '*'
+    deny: []
+    requireApproval:
+      - shell_exec
+
+providers:
+  anthropic:
+    type: anthropic
+    apiKey: ${ANTHROPIC_API_KEY}
+    defaultModel: claude-sonnet-4-20250514
+    timeout: 60000
+    maxRetries: 3
+
+  openai:
+    type: openai
+    apiKey: ${OPENAI_API_KEY}
+    defaultModel: gpt-4o
+    timeout: 60000
+    maxRetries: 3
+
+plugins:
+  directories:
+    - ~/.my-agent/plugins
+    - ./plugins
+  enabled:
+    - '*'
+  disabled: []
+
+session:
+  storePath: ~/.my-agent/sessions
+  maxMessages: 100
+  idleTimeoutMinutes: 480
+
+logging:
+  level: info
+  format: pretty
+  # file: ~/.my-agent/logs/agent.log

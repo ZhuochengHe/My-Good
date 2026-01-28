@@ -2,24 +2,47 @@
 
 See @README for project overview.
 
+## Quick Reference
+
+| Document | Purpose |
+|----------|---------|
+| `docs/ARCHITECTURE.md` | Core interfaces, data flow |
+| `docs/ROADMAP.md` | Implementation phases |
+| `docs/LLM_CONTEXT.md` | Quick context for LLMs |
+| `docs/TODO.md` | Current tasks |
+| `docs/DEV_LOG.md` | Daily progress |
+
 ## Workflow & Process
 
-- **Development Approach:** Design-first. Understand requirements and architecture before heavy coding, then implement, then add tests once design stabilizes.
-- **Testing:** After making changes, run tests automatically. (Future: automate via scripts)
-- **Proactive Improvements:** Yes - suggest improvements proactively, including innovative ideas with technical explanations.
-- **Backup & Confirmation:** Before making significant changes, ensure current files are backed up and ask for confirmation before proceeding.
-- **Task Execution:** Execute tasks as planned without over-explaining, unless discussing innovative ideas or improvements.
+- **Development Approach:** Design-first, now in implementation phase. TDD for all new code.
+- **Testing:** Write tests first, run after changes. Target ≥80% coverage.
+- **Proactive Improvements:** Yes - suggest improvements with technical explanations.
+- **Backup & Confirmation:** Before significant changes, ask for confirmation.
+- **Task Execution:** Execute tasks concisely without over-explaining.
 
-## Communication & Code Standards
+## Architecture Summary
 
-### Language & Framework
+Custom agent execution loop:
+```
+User Input → Agent → Provider → LLM → Tool Calls? → Execute → Loop
+```
+
+Key components:
+- **Agent** - Orchestrates execution loop
+- **Providers** - Anthropic, OpenAI API clients
+- **Plugins** - Manifest-based tools (file-ops, shell, web-search)
+- **Sessions** - JSONL conversation storage
+- **Events** - Lifecycle event system
+
+## Language & Framework
 
 - **Language**: TypeScript (strict mode, ESM modules)
 - **Runtime**: Node.js ≥18.0.0
-- **Agent Runtime**: Custom implementation for MVP (to be researched)
-- **Reference**: Google TypeScript Style Guide (https://google.github.io/styleguide/tsguide.html)
+- **Agent Runtime**: Custom implementation
+- **Testing**: Vitest with TDD approach
+- **Reference**: Google TypeScript Style Guide
 
-### Code Standards (Google TypeScript Style Guide)
+## Code Standards (Google TypeScript Style Guide)
 
 - **Naming**: lowerCamelCase variables/functions, UpperCamelCase classes/interfaces, CONSTANT_CASE constants
 - **Visibility**: Limit visibility, use `private` (not `#`), avoid `public` keyword
@@ -28,23 +51,29 @@ See @README for project overview.
 - **Control Flow**: Blocks for multi-line statements, `===` and `!==`, `const` by default
 - **Functions**: Named functions at top level, arrow functions in expressions
 - **No**: Default exports, `var`, `@ts-ignore`, private fields (`#`), `any` type
+- **Immutability**: Use `readonly` for message types and config
 
-**For comprehensive style guidelines, see @typescript_style.md**
+**Full guide:** `docs/reference/typescript_style.md`
 
-### Code Writing Requirements
+## Code Writing Requirements
 
 - **Explanation Level:** Technical details explained to undergraduate level when needed.
-- **Conciseness:** Keep responses concise. Detailed explanations only provided when explicitly asked or for innovative suggestions.
-- **Code Comments:** Each implemented function must have detailed comments explaining its purpose, behavior, and any non-obvious logic (per Google guide).
-
+- **Conciseness:** Keep responses concise. Detailed explanations only on request.
+- **Code Comments:** JSDoc for all exports explaining purpose, parameters, return values.
 
 ## Key Principles
 
-- Design-driven development with iterative refinement based on implementation learnings
-- Tests important but come after design stabilization
-- Clear code with comprehensive function-level documentation
-- Proactive suggestions with thoughtful technical reasoning
-- Conservative approach to major changes (backup + ask before proceeding)
+- TDD: Write failing tests first, then implement
+- Event-driven architecture for extensibility
+- JSONL sessions for debuggability
+- Provider abstraction for multi-model support
+- Plugin manifest pattern for tool discovery
+
+## Session Documentation
+
+Session summaries are automatically generated after each session and stored in `docs/sessions/` as personalized diary entries. These capture design thinking and decisions.
+
+See `.claude/hooks/SESSION_SUMMARY_GUIDE.md` for hook documentation (separate from project memory).
 
 ---
 
