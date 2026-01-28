@@ -26,6 +26,7 @@ git commit -m "$COMMIT_MESSAGE"
 # Show commit result
 if [ $? -eq 0 ]; then
   echo "✓ Changes committed successfully"
+  git push
 else
   echo "✗ Failed to commit changes"
   exit 1
