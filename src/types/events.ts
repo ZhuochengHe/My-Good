@@ -2,7 +2,8 @@
  * Event type definitions for the agent lifecycle.
  */
 
-import type { ToolCall, ToolResult } from './tools.js';
+import type { ToolResult } from './tools.js';
+import type { ToolCall } from './messages.js';
 import type { TokenUsage } from './providers.js';
 import type { AgentError, AgentRunResult } from './agent.js';
 
