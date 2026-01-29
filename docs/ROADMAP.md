@@ -2,6 +2,16 @@
 
 **Project:** Custom Agent Execution Loop | **Updated:** 2026-01-28
 
+## Vision
+
+Build an AI assistant framework for normal people (not just programmers/engineers). Users should:
+- Get powerful capabilities without facing raw code/configuration
+- Ask task-based requests ("Fix the failing test") instead of granting tool permissions
+- Trust that errors are mostly undoable without being responsible for architecture
+- Benefit from model improvements without code changes
+
+This project learns from Claude Code but prioritizes **simplicity over power-user flexibility**.
+
 ## MVP Definition
 
 Build functional agent that executes tool-based tasks with extensible plugins.
@@ -14,7 +24,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] Works with both Claude and ChatGPT
 - [ ] CLI is responsive and user-friendly
 
-## Phase 1: Core Foundation (Week 1-2)
+## Stage 1: Core Foundation (MVP)
 
 ### 1.1 Project Setup
 - [x] Choose TypeScript + Node.js
@@ -45,7 +55,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] JSON and pretty formats
 - [ ] File output support
 
-## Phase 2: Providers (Week 2)
+## Stage 2: Multi-Provider Support
 
 ### 2.1 Provider Interface
 - [ ] Base provider implementation
@@ -65,7 +75,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] Tool call format handling
 - [ ] Streaming support
 
-## Phase 3: Agent Loop (Week 2-3)
+## Stage 3: Agentic Reasoning
 
 ### 3.1 Execution Loop
 - [ ] Message → Provider → Response cycle
@@ -86,7 +96,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] Logging subscriber
 - [ ] Event emission at all lifecycle points
 
-## Phase 4: Plugin System (Week 3)
+## Stage 4: Extensibility
 
 ### 4.1 Plugin Manager
 - [ ] Directory scanning
@@ -105,7 +115,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] **shell**: exec_command
 - [ ] **web-search**: search, fetch_url
 
-## Phase 5: Session Management (Week 3)
+## Stage 5: Persistence & Debugging
 
 ### 5.1 Session Store
 - [ ] JSONL file storage
@@ -120,7 +130,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] Session metadata tracking
 - [ ] Token usage accumulation
 
-## Phase 6: CLI Interface (Week 4)
+## Stage 6: User Interface
 
 ### 6.1 CLI Framework
 - [ ] Command structure (Commander.js)
@@ -143,7 +153,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] Ctrl+C handling
 - [ ] History navigation
 
-## Phase 7: Polish (Week 4)
+## Stage 7: Quality & Documentation
 
 ### 7.1 Error Handling
 - [ ] Comprehensive error types
@@ -162,23 +172,39 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 
 ---
 
-## Future Phases (Post-MVP)
+## Future Stages (Post-MVP)
 
-### Phase 8: Enhanced Features
-- [ ] Session compaction (context window management)
-- [ ] Tool approval system
-- [ ] Token usage tracking and limits
-- [ ] Extended reasoning support
+### Stage 8: Task-Based Abstraction
+**Goal:** Move from tool-based to task-based permission model for non-technical users.
 
-### Phase 9: Production Readiness
+- [ ] Define task types (fix-bug, refactor, add-feature, debug, etc.)
+- [ ] Create permission matrices per task type
+- [ ] Build task-scoped execution context
+- [ ] Agent learns to stay within task bounds
+- [ ] User-friendly task request prompts
+
+**Depends on:** Model improvements + user feedback on common patterns
+
+### Stage 9: Nearly-Reversible Operations
+**Goal:** Make failures low-cost and recoverable without requiring user infrastructure knowledge.
+
+- [ ] Classify tools by reversibility tier (full, near, none)
+- [ ] Build operation journal (track everything done)
+- [ ] Implement reversal strategies per tool
+- [ ] Expose undo/rollback to users
+- [ ] Handle irreversible operations with explicit confirmation
+
+**Depends on:** Early user data on what breaks + git/transaction infrastructure
+
+### Stage 10: Production Readiness
 - [ ] Sandbox execution for shell/code
 - [ ] Rate limiting
 - [ ] Hot-reload configuration
 - [ ] Daemon mode (systemd/launchd)
 
-### Phase 10: Ecosystem
+### Stage 11: Ecosystem & Scale
 - [ ] HTTP API server
-- [ ] Web UI
+- [ ] Web UI for non-technical users
 - [ ] VS Code extension
 - [ ] Plugin marketplace
 
@@ -197,3 +223,25 @@ For each component, follow TDD:
 ```
 types → config → logger → providers → agent-loop → plugins → session → cli
 ```
+
+---
+
+## Focus: MVP First
+
+For Stages 1-7 (MVP), keep these principles:
+
+**Do:**
+- Build the execution loop that works reliably
+- Make tool-based permission model work end-to-end
+- Ensure JSONL sessions are debuggable and append-only
+- Write tests for core paths (target ≥80% coverage)
+- Document how plugins work
+
+**Don't (yet):**
+- Build task-based abstraction (Stage 8) — too early without user data
+- Implement reversal/undo systems (Stage 9) — wait for operational patterns to emerge
+- Optimize for safety beyond basic logging — reversibility will emerge from real usage
+- Build UI for non-technical users (Stage 11) — first verify experts can use it
+- Add features that only make sense with user permissions — keep it simple now
+
+**Why:** You'll learn what matters once people actually use it. Build the foundation solid first.
