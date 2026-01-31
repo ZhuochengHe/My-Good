@@ -20,6 +20,7 @@ Use `/session-summary` to generate a personalized narrative summary of the curre
 
 ```bash
 # Generate summary for current session
+# You will be prompted for session name if not set via /rename
 /session-summary
 ```
 
@@ -28,11 +29,13 @@ The summary will be saved to:
 docs/sessions/YYYY-MM-DD_SessionName.md
 ```
 
+**Note:** If you've used `/rename "Session Name"` before calling `/session-summary`, it will use that name. Otherwise, you'll be prompted to enter the session name.
+
 ## Requirements
 
-- Session must be named via `/rename "Session Name"`
 - Best results when docs/DEV_LOG.md is kept updated during session
 - Git repository with changes to track
+- Session name will be prompted for if not set via `/rename` command
 
 ## Output Format
 
