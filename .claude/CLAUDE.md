@@ -19,6 +19,7 @@ See @README for project overview.
 - **Proactive Improvements:** Yes - suggest improvements with technical explanations.
 - **Backup & Confirmation:** Before significant changes, ask for confirmation.
 - **Task Execution:** Execute tasks concisely without over-explaining.
+- **Git Branching:** Always create a new feature branch before making code changes. Do not work on main/stage-1-foundation directly. Example: `git checkout -b stage-2-provider-interface` before implementing features.
 
 ## Architecture Summary
 
@@ -72,4 +73,4 @@ Key components:
 
 ---
 
-**Last Updated:** 2026-01-28
+**Last Updated:** 2026-01-31
