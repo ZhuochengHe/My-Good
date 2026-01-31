@@ -1,6 +1,6 @@
 # Project TODO
 
-**Updated:** 2026-01-28
+**Updated:** 2026-01-31
 
 ## Completed Decisions
 
@@ -81,11 +81,16 @@
 
 ### Stage 2: Multi-Provider Support (Current)
 
-#### 2.1 Provider Interface
-- [ ] Base provider implementation with retry logic
-- [ ] Provider manager for routing between models
-- [ ] Exponential backoff for rate limits
-- [ ] Error handling and recovery
+#### 2.1 Provider Interface ✅
+- [x] Base provider implementation with retry logic
+- [x] Provider manager for routing between models
+- [x] Exponential backoff for rate limits
+- [x] Error handling and recovery
+- [x] Tests written first (TDD) - 70 tests, 90.77% coverage
+  - Error hierarchy with custom error types
+  - Retry logic with exponential backoff and jitter
+  - Base provider with timeout and retry wrappers
+  - Provider manager with lazy initialization
 
 #### 2.2 Anthropic Provider
 - [ ] API client implementation using @anthropic-ai/sdk
