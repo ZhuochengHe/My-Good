@@ -1,10 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main, stage-1-foundation]
   pull_request:
-    branches: [main, stage-1-foundation]
+    branches: [main]
 
 jobs:
   test:
