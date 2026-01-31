@@ -17,7 +17,7 @@ export interface ToolManifest {
 /** Conditional loading requirements */
 export interface PluginGates {
   readonly requiredBinaries?: readonly string[];
-  readonly requiredEnv?: Record<string, string | '*'>;
+  readonly requiredEnv?: Record<string, string>;
   readonly platforms?: readonly ('linux' | 'darwin' | 'win32')[];
 }
 
