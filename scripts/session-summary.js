@@ -14,7 +14,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import readline from 'readline';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
@@ -271,35 +270,14 @@ function summaryExists(filePath) {
 }
 
 /**
- * Prompt user for session name if not provided
- * @returns {Promise<string>} - Session name from user input
- */
-function promptForSessionName() {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    rl.question('📝 Enter session name: ', (answer) => {
-      rl.close();
-      resolve(answer.trim() || 'Untitled Session');
-    });
-  });
-}
-
-/**
  * Main execution
  */
-async function main() {
+function main() {
   try {
     ensureSessionsDir();
 
-    // Get session name from environment or prompt user
-    let sessionName = process.env.CLAUDE_SESSION_NAME;
-    if (!sessionName) {
-      sessionName = await promptForSessionName();
-    }
+    // Get session name from environment (set by Claude Code when /session-summary is invoked)
+    const sessionName = process.env.CLAUDE_SESSION_NAME || 'Untitled Session';
 
     // Generate filename
     const fileName = generateSessionFileName(sessionName);
