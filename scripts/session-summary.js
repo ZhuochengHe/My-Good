@@ -84,7 +84,7 @@ function getGitChanges() {
 }
 
 /**
- * Read recent entries from DEV_LOG.md
+ * Extract session notes with proper structure
  * @returns {string} - Latest session notes
  */
 function getSessionNotes() {
@@ -96,33 +96,38 @@ function getSessionNotes() {
     const content = fs.readFileSync(DEV_LOG_PATH, 'utf-8');
     const lines = content.split('\n');
 
-    // Find the most recent session entry (starting with ##)
-    let inCurrentSession = false;
-    const sessionContent = [];
-
+    // Find the most recent entry (everything after last ## date header)
+    let lastHeaderIdx = -1;
     for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-
-      // Found the most recent date header
-      if (line.startsWith('## ')) {
-        inCurrentSession = true;
-        continue;
-      }
-
-      if (inCurrentSession) {
-        // Stop at next date header
-        if (line.startsWith('## ') && line !== lines[i]) {
-          break;
-        }
-
-        // Collect lines in reverse, then reverse at end
-        if (line.trim()) {
-          sessionContent.unshift(line);
-        }
+      if (lines[i].startsWith('## ') && /^\## \d{4}-\d{2}-\d{2}/.test(lines[i])) {
+        lastHeaderIdx = i;
+        break;
       }
     }
 
-    return sessionContent.length > 0 ? sessionContent.join('\n') : '(No notes in dev log)';
+    if (lastHeaderIdx === -1) {
+      return '(No dated entries in dev log)';
+    }
+
+    // Collect content after the last date header until EOF or next date header
+    const sessionContent = [];
+    for (let i = lastHeaderIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      // Stop if we hit another date header
+      if (line.startsWith('## ') && /^\## \d{4}-\d{2}-\d{2}/.test(line)) {
+        break;
+      }
+      if (line.trim()) {
+        sessionContent.push(line);
+      }
+    }
+
+    if (sessionContent.length === 0) {
+      return '(No notes in dev log)';
+    }
+
+    // Return first 30 lines of notes to avoid bloat, preserve structure
+    return sessionContent.slice(0, 30).join('\n');
   } catch {
     return '(Unable to read dev log)';
   }
@@ -147,6 +152,57 @@ function getReferencedFiles() {
 }
 
 /**
+ * Summarize session notes (extract focus/key points)
+ * @param {string} notes - Full session notes from DEV_LOG
+ * @returns {string} - Summary based on notes structure
+ */
+function summarizeNotes(notes) {
+  if (notes.includes('(No notes in dev log)') || notes.includes('(Unable to read dev log)')) {
+    return 'Session focused on implementation tasks.';
+  }
+
+  // Try to extract "Focus:" line if available
+  const focusMatch = notes.match(/\*\*Focus:\*\*\s*([^\n]+)/);
+  if (focusMatch) {
+    return focusMatch[1].trim();
+  }
+
+  // Try to extract "### Session Summary" or similar
+  const summaryMatch = notes.match(/#{2,4}\s*Session\s*Summary\s*\n([^\n]+)/i);
+  if (summaryMatch) {
+    return summaryMatch[1].trim();
+  }
+
+  // Fallback: use first meaningful line
+  const lines = notes.split('\n').filter((l) => l.trim() && !l.startsWith('#'));
+  return lines[0] || 'Session focused on implementation tasks.';
+}
+
+/**
+ * Categorize and count git changes
+ * @param {string} changes - Formatted git changes
+ * @returns {object} - Change summary
+ */
+function categorizeChanges(changes) {
+  const lines = changes.split('\n');
+  const stats = {
+    modified: 0,
+    added: 0,
+    deleted: 0,
+    renamed: 0,
+  };
+
+  lines.forEach((line) => {
+    if (line.includes('📝')) stats.modified++;
+    if (line.includes('✨')) stats.added++;
+    if (line.includes('🗑️')) stats.deleted++;
+    if (line.includes('→')) stats.renamed++;
+  });
+
+  return { stats, lines: lines.filter((l) => l.trim()) };
+}
+
+/**
  * Create markdown summary with personalized narrative
  * @param {string} sessionName - Session name
  * @param {object} context - Context data
@@ -157,6 +213,8 @@ function getReferencedFiles() {
  */
 function createSummary(sessionName, context) {
   const { changes, notes, references } = context;
+  const { stats, lines: changeLines } = categorizeChanges(changes);
+  const noteSummary = summarizeNotes(notes);
 
   const timestamp = new Date().toLocaleString('en-US', {
     year: 'numeric',
@@ -167,6 +225,35 @@ function createSummary(sessionName, context) {
     timeZone: 'UTC',
   });
 
+  // Build dynamic outcome based on actual work
+  const totalChanges = changeLines.length;
+  let statusEmoji = '✨';
+  let statusText = 'In Progress';
+
+  if (totalChanges === 0) {
+    statusEmoji = '📝';
+    statusText = 'Planning & Discussion';
+  } else if (stats.added > stats.deleted && stats.added > stats.modified) {
+    statusEmoji = '🚀';
+    statusText = 'New Features Added';
+  } else if (stats.modified > stats.added && stats.modified > stats.deleted) {
+    statusEmoji = '🔧';
+    statusText = 'Refinement & Fixes';
+  } else if (stats.deleted > 0) {
+    statusEmoji = '🧹';
+    statusText = 'Cleanup & Refactoring';
+  }
+
+  const changesSummary =
+    totalChanges > 0
+      ? `${changeLines.slice(0, 5).join('\n')}${changeLines.length > 5 ? `\n- ...and ${changeLines.length - 5} more files` : ''}`
+      : '- No file changes yet';
+
+  const referencesList =
+    references.length > 0
+      ? references.map((f) => `- [\`${f}\`](./${path.relative(SESSIONS_DIR, path.join(process.cwd(), f))})`).join('\n')
+      : '- None';
+
   return `# Session: ${sessionName}
 
 **Date:** ${timestamp} UTC
@@ -175,84 +262,37 @@ function createSummary(sessionName, context) {
 
 ## 🎯 What We Did
 
-In this session, we focused on building and organizing the project foundation. Starting from a comprehensive architectural design, we translated abstract interfaces and patterns into concrete project structure—creating the scaffolding that will guide all future implementation.
+${noteSummary}
 
 ### Session Notes
 ${notes}
 
 ---
 
-## 💡 Design Ideas & Decisions
+## 📊 Session Activity
 
-**Key architectural decisions made:**
-- Custom agent loop (vs Pi Agent Runtime) for full control and learning
-- JSONL session storage for debuggability and human-readability
-- Event-driven architecture for extensibility
-- Provider abstraction enabling multi-model support
-- Manifest-based plugin system for tool discovery
+**Files Changed:**
+- Added: ${stats.added}
+- Modified: ${stats.modified}
+- Deleted: ${stats.deleted}
+- Renamed: ${stats.renamed}
 
-**References:**
-- See \`docs/ARCHITECTURE.md\` for complete interface definitions
-- See \`docs/ROADMAP.md\` for implementation timeline
+**Files touched this session:**
+${changesSummary}
 
 ---
 
-## 🔨 What We Built
+## 📚 References & Documentation
 
-Created the complete TypeScript project foundation:
-${changes}
-
-**Default plugins prepared:**
-- file-ops (read, write, list files)
-- shell (command execution)
-- web-search (search and fetch URLs)
-
-**Configuration & tooling:**
-- package.json with dependencies
-- tsconfig.json (strict TypeScript)
-- vitest.config.ts (TDD-focused testing)
-- ESLint & Prettier for code quality
+${referencesList}
 
 ---
 
-## 📚 Resources & References
+## ✅ Session Status
 
-**Documentation created:**
-${references.map((f) => `- [\`${f}\`](./${path.relative(SESSIONS_DIR, path.join(process.cwd(), f))})`).join('\n')}
+**${statusEmoji} Status:** ${statusText}
 
-**Session log entry:**
-- Update \`docs/DEV_LOG.md\` with learnings and next steps
-
----
-
-## ✅ Session Outcome
-
-**Status:** Foundation Complete ✨
-
-**What's ready:**
-- All core TypeScript interfaces defined
-- Project structure matches architecture design
-- Build configuration ready (npm install → ready to code)
-- Default plugins manifests prepared
-
-**Next phase:**
-Implement Phase 1 of roadmap:
-1. Configuration system (YAML + Zod validation)
-2. Logger utility
-3. Provider implementations (Anthropic, OpenAI)
-4. Core agent execution loop
-
-**Key insight:**
-The design-first approach paid off—having complete interfaces before writing implementation code will significantly speed up development and reduce refactoring later.
-
----
-
-## 🚀 For Next Session
-
-- Run \`npm install\` to set up dependencies
-- Start with config loader implementation (reference: docs/ARCHITECTURE.md § 8)
-- Follow TDD: write tests first, then implementation
-- Update DEV_LOG.md daily with progress
+**Outcome:** Session work captured. Review notes above for details and next steps.
 
 ---
 
@@ -272,11 +312,11 @@ function summaryExists(filePath) {
 /**
  * Main execution
  */
-async function main() {
+function main() {
   try {
     ensureSessionsDir();
 
-    // Get session name from environment or use timestamp
+    // Get session name from environment (set by Claude Code when /session-summary is invoked)
     const sessionName = process.env.CLAUDE_SESSION_NAME || 'Untitled Session';
 
     // Generate filename
