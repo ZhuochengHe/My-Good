@@ -118,19 +118,59 @@
   - Model listing (GPT-4, GPT-4 Turbo, GPT-3.5 Turbo)
   - Health check with minimal request
 
-### Stage 3: Plugins
-- [ ] Implement plugin manager
-- [ ] Implement tool executor
-- [ ] Create file-ops plugin
-- [ ] Create shell plugin
-- [ ] Create web-search plugin
+### Stage 3: Agentic Reasoning
 
-### Stage 4: Persistence
+#### 3.1 Execution Loop
+- [ ] Message → Provider → Response cycle
+- [ ] Tool call detection
+- [ ] Tool execution orchestration
+- [ ] Turn counting and limits
+- [ ] Stop condition handling
+
+#### 3.2 Context Building ✅
+- [x] Token counter implementation with character approximation
+- [x] Context builder for request construction
+- [x] Token estimation across messages, tools, and system prompts
+- [x] Message history truncation with token limits
+- [x] Tool call/result pair preservation
+- [x] Tests written first (TDD) - 50 tests, 90.74% coverage
+  - Token counting for text, messages, and tool definitions
+  - Request building with proper optional field handling
+  - Token estimation with breakdown
+  - History truncation with preservation of tool pairs
+  - Edge case handling for long content and empty inputs
+
+#### 3.3 Event System
+- [ ] Event emitter implementation
+- [ ] Event subscriber interface
+- [ ] Logging subscriber
+- [ ] Event emission at all lifecycle points
+
+### Stage 4: Extensibility
+
+#### 4.1 Plugin Manager
+- [ ] Directory scanning
+- [ ] Manifest loading and validation
+- [ ] Plugin gates checking
+- [ ] Plugin enable/disable
+
+#### 4.2 Tool Executor
+- [ ] Parameter validation (JSON Schema)
+- [ ] Handler invocation
+- [ ] Timeout handling
+- [ ] Error wrapping
+
+#### 4.3 Default Plugins
+- [ ] **file-ops**: read_file, write_file, list_directory
+- [ ] **shell**: exec_command
+- [ ] **web-search**: search, fetch_url
+
+### Stage 5: Persistence
 - [ ] Implement JSONL session store
 - [ ] Session load/save/append
 - [ ] Session listing and management
 
-### Stage 5: CLI
+### Stage 6: CLI
 - [ ] Set up Commander.js
 - [ ] Implement `chat` command
 - [ ] Implement `run` command
@@ -138,7 +178,7 @@
 - [ ] Implement `config` commands
 - [ ] Implement `session` commands
 
-### Stage 6: Polish
+### Stage 7: Polish
 - [ ] Comprehensive error handling
 - [ ] Streaming support
 - [ ] Unit tests (≥80% coverage)
