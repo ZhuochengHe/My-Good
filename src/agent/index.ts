@@ -9,3 +9,8 @@ export {
   type TokenEstimate,
   type EstimateOptions,
 } from './context-builder.js';
+export {
+  ExecutionLoop,
+  type OnToolCallCallback,
+  type ExtendedRunOptions,
+} from './execution-loop.js';
