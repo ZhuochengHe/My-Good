@@ -79,7 +79,7 @@
 - [x] Child loggers with context inheritance
 - [x] Tests written first (TDD) - 54 tests, 99% coverage
 
-### Stage 2: Multi-Provider Support (Current)
+### Stage 2: Multi-Provider Support ✅ COMPLETE
 
 #### 2.1 Provider Interface ✅
 - [x] Base provider implementation with retry logic
@@ -118,19 +118,72 @@
   - Model listing (GPT-4, GPT-4 Turbo, GPT-3.5 Turbo)
   - Health check with minimal request
 
-### Stage 3: Plugins
-- [ ] Implement plugin manager
-- [ ] Implement tool executor
-- [ ] Create file-ops plugin
-- [ ] Create shell plugin
-- [ ] Create web-search plugin
+### Stage 3: Agentic Reasoning ✅ COMPLETE
 
-### Stage 4: Persistence
+#### 3.1 Event System ✅
+- [x] Custom error classes for agent errors
+- [x] Event emitter implementation with type-safe callbacks
+- [x] Event subscriber interface
+- [x] Logging subscriber with configurable levels
+- [x] Event emission at all lifecycle points
+- [x] Tests written first (TDD) - 30 tests, 100% coverage
+  - Event emitter with typed callbacks
+  - Logging subscriber with various log levels
+  - Error handling and edge cases
+
+#### 3.2 Context Building ✅
+- [x] Token counter implementation with character approximation
+- [x] Context builder for request construction
+- [x] Token estimation across messages, tools, and system prompts
+- [x] Message history truncation with token limits
+- [x] Tool call/result pair preservation
+- [x] Tests written first (TDD) - 50 tests, 90.74% coverage
+  - Token counting for text, messages, and tool definitions
+  - Request building with proper optional field handling
+  - Token estimation with breakdown
+  - History truncation with preservation of tool pairs
+  - Edge case handling for long content and empty inputs
+
+#### 3.3 Execution Loop ✅
+- [x] Message → Provider → Response cycle
+- [x] Tool call detection and extraction
+- [x] Tool execution orchestration (stub implementation)
+- [x] Turn counting and limits
+- [x] Stop condition handling
+- [x] Integration tests with mock provider and tools
+- [x] Tests written first (TDD) - 49 tests, 92.43% coverage
+  - Agent initialization and configuration
+  - Single turn execution without tools
+  - Multi-turn execution with tool calls
+  - Turn limit enforcement
+  - Error handling and recovery
+  - Event emission throughout execution
+
+### Stage 4: Extensibility (Current)
+
+#### 4.1 Plugin Manager
+- [ ] Directory scanning
+- [ ] Manifest loading and validation
+- [ ] Plugin gates checking
+- [ ] Plugin enable/disable
+
+#### 4.2 Tool Executor
+- [ ] Parameter validation (JSON Schema)
+- [ ] Handler invocation
+- [ ] Timeout handling
+- [ ] Error wrapping
+
+#### 4.3 Default Plugins
+- [ ] **file-ops**: read_file, write_file, list_directory
+- [ ] **shell**: exec_command
+- [ ] **web-search**: search, fetch_url
+
+### Stage 5: Persistence
 - [ ] Implement JSONL session store
 - [ ] Session load/save/append
 - [ ] Session listing and management
 
-### Stage 5: CLI
+### Stage 6: CLI
 - [ ] Set up Commander.js
 - [ ] Implement `chat` command
 - [ ] Implement `run` command
@@ -138,7 +191,7 @@
 - [ ] Implement `config` commands
 - [ ] Implement `session` commands
 
-### Stage 6: Polish
+### Stage 7: Polish
 - [ ] Comprehensive error handling
 - [ ] Streaming support
 - [ ] Unit tests (≥80% coverage)

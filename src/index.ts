@@ -8,8 +8,10 @@
 // Types
 export * from './types/index.js';
 
+// Agent module
+export * from './agent/index.js';
+
 // TODO: Export other modules as they are implemented
-// export * from './agent/index.js';
 // export * from './providers/index.js';
 // export * from './plugins/index.js';
 // export * from './session/index.js';

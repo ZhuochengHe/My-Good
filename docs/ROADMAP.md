@@ -77,26 +77,30 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [x] Tool call format handling
 - [x] Streaming support
 
-## Stage 3: Agentic Reasoning
+## Stage 3: Agentic Reasoning ✅ COMPLETE
 
-### 3.1 Execution Loop
-- [ ] Message → Provider → Response cycle
-- [ ] Tool call detection
-- [ ] Tool execution orchestration
-- [ ] Turn counting and limits
-- [ ] Stop condition handling
+### 3.1 Event System ✅
+- [x] Custom error classes for agent errors
+- [x] Event emitter implementation
+- [x] Event subscriber interface
+- [x] Logging subscriber
+- [x] Event emission at all lifecycle points
 
-### 3.2 Context Building
-- [ ] System prompt injection
-- [ ] Conversation history formatting
-- [ ] Tool definitions injection
-- [ ] Token counting (basic)
+### 3.2 Context Building ✅
+- [x] Token counter with character approximation
+- [x] System prompt injection
+- [x] Conversation history formatting
+- [x] Tool definitions injection
+- [x] Token counting and estimation
+- [x] Message history truncation with token limits
 
-### 3.3 Event System
-- [ ] Event emitter implementation
-- [ ] Event subscriber interface
-- [ ] Logging subscriber
-- [ ] Event emission at all lifecycle points
+### 3.3 Execution Loop ✅
+- [x] Message → Provider → Response cycle
+- [x] Tool call detection and extraction
+- [x] Tool execution orchestration
+- [x] Turn counting and limits
+- [x] Stop condition handling
+- [x] Integration tests with mock provider
 
 ## Stage 4: Extensibility
 
