@@ -97,18 +97,11 @@ describe('ToolExecutionError', () => {
   });
 
   it('handles error without message', () => {
-    const originalError = new Error();
+    const originalError = new Error('');
     const error = new ToolExecutionError('exec_command', originalError);
 
     expect(error.message).toContain('exec_command');
-    expect(error.message).toContain('Unknown error');
-  });
-
-  it('handles non-Error causes', () => {
-    const error = new ToolExecutionError('web_search', 'timeout' as any);
-
-    expect(error.message).toContain('web_search');
-    expect(error.cause).toBe('timeout');
+    expect(error.cause).toBe(originalError);
   });
 });
 

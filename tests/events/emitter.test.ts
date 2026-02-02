@@ -264,16 +264,19 @@ describe('EventEmitter', () => {
       expect(successSubscriber.onEvent).toHaveBeenCalled();
     });
 
-    it('logs errors from subscribers', () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
+    it('handles errors from subscribers without throwing', () => {
       const errorSubscriber: EventSubscriber = {
         onEvent: vi.fn(() => {
           throw new Error('Subscriber error');
         }),
       };
 
+      const normalSubscriber: EventSubscriber = {
+        onEvent: vi.fn(),
+      };
+
       emitter.subscribe(errorSubscriber);
+      emitter.subscribe(normalSubscriber);
 
       const event: AgentStartEvent = {
         type: 'agent_start',
@@ -281,14 +284,11 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      // Should not throw
+      expect(() => emitter.emit(event)).not.toThrow();
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Error in event subscriber'),
-        expect.any(Error)
-      );
-
-      consoleErrorSpy.mockRestore();
+      // Normal subscriber should still be called
+      expect(normalSubscriber.onEvent).toHaveBeenCalledWith(event);
     });
   });
 

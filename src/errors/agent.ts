@@ -66,23 +66,15 @@ export class CancelledError extends AgentError {
 export class ToolExecutionError extends AgentError {
   readonly toolName: string;
 
-  constructor(toolName: string, cause: Error | unknown) {
-    const errorMessage = cause instanceof Error
-      ? (cause.message || 'Unknown error')
-      : 'Unknown error';
+  constructor(toolName: string, cause: Error) {
     super(
-      `Tool execution failed for '${toolName}': ${errorMessage}`,
+      `Tool execution failed for '${toolName}': ${cause.message}`,
       'TOOL_ERROR',
       true,
-      cause instanceof Error ? cause : undefined
+      cause
     );
     this.name = 'ToolExecutionError';
     this.toolName = toolName;
-
-    // Store non-Error causes in the cause property anyway for debugging
-    if (!(cause instanceof Error)) {
-      (this as any).cause = cause;
-    }
   }
 }
 

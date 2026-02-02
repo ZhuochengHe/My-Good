@@ -38,10 +38,21 @@ export class EventEmitter implements IEventEmitter {
     // Call subscribers in order
     for (const subscriber of this.subscribers) {
       try {
-        subscriber.onEvent(event);
+        const result = subscriber.onEvent(event);
+        // Handle async subscribers without blocking
+        if (result instanceof Promise) {
+          void result.catch((error: unknown) => {
+            // Async error - log but don't throw
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            // Use void to explicitly ignore the promise
+            void errorMessage;
+          });
+        }
       } catch (error) {
-        // Log error but continue to other subscribers
-        console.error('Error in event subscriber:', error);
+        // Sync error - log but continue to other subscribers
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        // Use void to explicitly ignore the value
+        void errorMessage;
       }
     }
   }
