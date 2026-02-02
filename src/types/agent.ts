@@ -43,7 +43,8 @@ export type AgentErrorCode =
   | 'TOOL_ERROR'
   | 'VALIDATION_ERROR'
   | 'TIMEOUT'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'MAX_TURNS';
 
 /** Agent error structure */
 export interface AgentError {

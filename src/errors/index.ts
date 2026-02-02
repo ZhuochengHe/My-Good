@@ -14,3 +14,13 @@ export {
   isProviderError,
   isRecoverableError,
 } from './provider.js';
+
+export {
+  AgentError,
+  MaxTurnsError,
+  CancelledError,
+  ToolExecutionError,
+  ContextOverflowError,
+  isAgentError,
+  isRecoverableAgentError,
+} from './agent.js';

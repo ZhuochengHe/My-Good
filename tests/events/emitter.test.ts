@@ -1,0 +1,315 @@
+/**
+ * Tests for event emitter implementation.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter as EventEmitterImpl } from '../../src/events/emitter.js';
+import type {
+  AgentEvent,
+  AgentStartEvent,
+  ToolCallStartEvent,
+  ErrorEvent,
+  EventSubscriber,
+} from '../../src/types/events.js';
+
+describe('EventEmitter', () => {
+  let emitter: EventEmitterImpl;
+
+  beforeEach(() => {
+    emitter = new EventEmitterImpl();
+  });
+
+  describe('subscribe', () => {
+    it('returns unsubscribe function', () => {
+      const subscriber: EventSubscriber = { onEvent: vi.fn() };
+
+      const unsubscribe = emitter.subscribe(subscriber);
+
+      expect(unsubscribe).toBeTypeOf('function');
+    });
+
+    it('allows multiple subscribers', () => {
+      const subscriber1: EventSubscriber = { onEvent: vi.fn() };
+      const subscriber2: EventSubscriber = { onEvent: vi.fn() };
+
+      emitter.subscribe(subscriber1);
+      emitter.subscribe(subscriber2);
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      expect(subscriber1.onEvent).toHaveBeenCalledWith(event);
+      expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
+    });
+  });
+
+  describe('emit', () => {
+    it('calls all subscribers synchronously', () => {
+      const callOrder: number[] = [];
+      const subscriber1: EventSubscriber = {
+        onEvent: vi.fn(() => callOrder.push(1)),
+      };
+      const subscriber2: EventSubscriber = {
+        onEvent: vi.fn(() => callOrder.push(2)),
+      };
+
+      emitter.subscribe(subscriber1);
+      emitter.subscribe(subscriber2);
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      expect(callOrder).toEqual([1, 2]);
+      expect(subscriber1.onEvent).toHaveBeenCalledTimes(1);
+      expect(subscriber2.onEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes event to all subscribers', () => {
+      const subscriber1: EventSubscriber = { onEvent: vi.fn() };
+      const subscriber2: EventSubscriber = { onEvent: vi.fn() };
+
+      emitter.subscribe(subscriber1);
+      emitter.subscribe(subscriber2);
+
+      const event: ToolCallStartEvent = {
+        type: 'tool_call_start',
+        toolCall: {
+          id: 'tc_001',
+          name: 'read_file',
+          arguments: { path: 'test.txt' },
+        },
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      expect(subscriber1.onEvent).toHaveBeenCalledWith(event);
+      expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
+      expect(subscriber1.onEvent).toHaveBeenCalledTimes(1);
+      expect(subscriber2.onEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not throw with empty subscribers list', () => {
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      expect(() => emitter.emit(event)).not.toThrow();
+    });
+
+    it('handles multiple events to same subscriber', () => {
+      const subscriber: EventSubscriber = { onEvent: vi.fn() };
+
+      emitter.subscribe(subscriber);
+
+      const event1: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'session-1',
+        timestamp: Date.now(),
+      };
+      const event2: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'session-2',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event1);
+      emitter.emit(event2);
+
+      expect(subscriber.onEvent).toHaveBeenCalledTimes(2);
+      expect(subscriber.onEvent).toHaveBeenNthCalledWith(1, event1);
+      expect(subscriber.onEvent).toHaveBeenNthCalledWith(2, event2);
+    });
+  });
+
+  describe('unsubscribe', () => {
+    it('removes only that subscriber', () => {
+      const subscriber1: EventSubscriber = { onEvent: vi.fn() };
+      const subscriber2: EventSubscriber = { onEvent: vi.fn() };
+
+      const unsubscribe1 = emitter.subscribe(subscriber1);
+      emitter.subscribe(subscriber2);
+
+      unsubscribe1();
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      expect(subscriber1.onEvent).not.toHaveBeenCalled();
+      expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
+    });
+
+    it('is safe to call multiple times', () => {
+      const subscriber: EventSubscriber = { onEvent: vi.fn() };
+
+      const unsubscribe = emitter.subscribe(subscriber);
+
+      unsubscribe();
+      unsubscribe();
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      expect(() => emitter.emit(event)).not.toThrow();
+      expect(subscriber.onEvent).not.toHaveBeenCalled();
+    });
+
+    it('does not affect other subscribers when called', () => {
+      const subscriber1: EventSubscriber = { onEvent: vi.fn() };
+      const subscriber2: EventSubscriber = { onEvent: vi.fn() };
+      const subscriber3: EventSubscriber = { onEvent: vi.fn() };
+
+      const unsubscribe1 = emitter.subscribe(subscriber1);
+      emitter.subscribe(subscriber2);
+      emitter.subscribe(subscriber3);
+
+      unsubscribe1();
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      expect(subscriber1.onEvent).not.toHaveBeenCalled();
+      expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
+      expect(subscriber3.onEvent).toHaveBeenCalledWith(event);
+    });
+  });
+
+  describe('async subscribers', () => {
+    it('handles async subscribers correctly', async () => {
+      const results: string[] = [];
+      const asyncSubscriber: EventSubscriber = {
+        onEvent: vi.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          results.push('async');
+        }),
+      };
+      const syncSubscriber: EventSubscriber = {
+        onEvent: vi.fn(() => {
+          results.push('sync');
+        }),
+      };
+
+      emitter.subscribe(asyncSubscriber);
+      emitter.subscribe(syncSubscriber);
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      // Sync subscriber should be called immediately
+      expect(syncSubscriber.onEvent).toHaveBeenCalled();
+
+      // Wait for async to complete
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(asyncSubscriber.onEvent).toHaveBeenCalled();
+      expect(results).toContain('sync');
+      expect(results).toContain('async');
+    });
+  });
+
+  describe('error handling', () => {
+    it('continues to other subscribers if one throws', () => {
+      const errorSubscriber: EventSubscriber = {
+        onEvent: vi.fn(() => {
+          throw new Error('Subscriber error');
+        }),
+      };
+      const successSubscriber: EventSubscriber = {
+        onEvent: vi.fn(),
+      };
+
+      emitter.subscribe(errorSubscriber);
+      emitter.subscribe(successSubscriber);
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      // Should not throw despite subscriber error
+      expect(() => emitter.emit(event)).not.toThrow();
+
+      expect(errorSubscriber.onEvent).toHaveBeenCalled();
+      expect(successSubscriber.onEvent).toHaveBeenCalled();
+    });
+
+    it('logs errors from subscribers', () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const errorSubscriber: EventSubscriber = {
+        onEvent: vi.fn(() => {
+          throw new Error('Subscriber error');
+        }),
+      };
+
+      emitter.subscribe(errorSubscriber);
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Error in event subscriber'),
+        expect.any(Error)
+      );
+
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('subscriber order', () => {
+    it('calls subscribers in subscription order', () => {
+      const callOrder: number[] = [];
+      const subscribers = [1, 2, 3, 4, 5].map((num) => ({
+        onEvent: vi.fn(() => callOrder.push(num)),
+      }));
+
+      subscribers.forEach((sub) => emitter.subscribe(sub));
+
+      const event: AgentStartEvent = {
+        type: 'agent_start',
+        sessionId: 'test-session',
+        timestamp: Date.now(),
+      };
+
+      emitter.emit(event);
+
+      expect(callOrder).toEqual([1, 2, 3, 4, 5]);
+    });
+  });
+});
