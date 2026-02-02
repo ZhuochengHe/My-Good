@@ -92,19 +92,31 @@
   - Base provider with timeout and retry wrappers
   - Provider manager with lazy initialization
 
-#### 2.2 Anthropic Provider
-- [ ] API client implementation using @anthropic-ai/sdk
-- [ ] Message format conversion to Claude format
-- [ ] Tool call format handling
-- [ ] Streaming support
-- [ ] Write tests (TDD)
+#### 2.2 Anthropic Provider ✅
+- [x] API client implementation using @anthropic-ai/sdk
+- [x] Message format conversion to Claude format
+- [x] Tool call format handling
+- [x] Streaming support
+- [x] Tests written first (TDD) - 32 tests, 98.99% coverage
+  - Message format conversion (user/assistant/tool)
+  - Tool definition mapping to Anthropic format
+  - Tool call extraction from responses
+  - Streaming with text deltas and tool calls
+  - Model listing (Claude 3.5 Sonnet, Opus, Haiku)
+  - Health check with minimal request
 
-#### 2.3 OpenAI Provider
-- [ ] API client implementation using openai SDK
-- [ ] Message format conversion to OpenAI format
-- [ ] Tool call format handling
-- [ ] Streaming support
-- [ ] Write tests (TDD)
+#### 2.3 OpenAI Provider ✅
+- [x] API client implementation using openai SDK
+- [x] Message format conversion to OpenAI format
+- [x] Tool call format handling
+- [x] Streaming support
+- [x] Tests written first (TDD) - 36 tests, 99.26% coverage
+  - Message format conversion (user/assistant/system/tool)
+  - Tool definition mapping to OpenAI function format
+  - Tool call handling with tool_call_id
+  - Streaming with text deltas and tool calls
+  - Model listing (GPT-4, GPT-4 Turbo, GPT-3.5 Turbo)
+  - Health check with minimal request
 
 ### Stage 3: Plugins
 - [ ] Implement plugin manager
