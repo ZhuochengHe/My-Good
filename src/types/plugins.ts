@@ -41,11 +41,11 @@ export interface Plugin {
 }
 
 /** Plugin manager interface */
-export interface PluginManager {
+export interface IPluginManager {
   /**
-   * Discover and load all plugins from configured directories.
+   * Load a single plugin from a directory.
    */
-  loadAll(): Promise<void>;
+  loadPlugin(pluginPath: string): Promise<Plugin>;
 
   /**
    * Get a specific plugin by ID.

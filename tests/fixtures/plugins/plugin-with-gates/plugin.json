@@ -1,0 +1,22 @@
+{
+  "id": "gates-plugin",
+  "name": "Plugin with Gates",
+  "version": "1.0.0",
+  "description": "A plugin with gate requirements",
+  "tools": [
+    {
+      "name": "gated_tool",
+      "description": "A tool with gates",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "handler": "handlers.js"
+    }
+  ],
+  "gates": {
+    "requiredBinaries": ["node"],
+    "platforms": ["linux", "darwin", "win32"]
+  }
+}

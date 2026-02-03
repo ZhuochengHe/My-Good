@@ -1,76 +1,57 @@
 # Project Memory
 
-See @README for project overview.
+See @README for project overview. See `docs/LLM_CONTEXT.md` for quick context.
 
-## Quick Reference
+## Workflow
 
-| Document               | Purpose                    |
-| ---------------------- | -------------------------- |
-| `docs/ARCHITECTURE.md` | Core interfaces, data flow |
-| `docs/ROADMAP.md`      | Implementation phases      |
-| `docs/LLM_CONTEXT.md`  | Quick context for LLMs     |
-| `docs/TODO.md`         | Current tasks              |
-| `docs/DEV_LOG.md`      | Daily progress             |
+**Development:** TDD-first implementation. Use subagents for complex features.
 
-## Workflow & Process
+**Git Flow:**
+1. Create feature branch: `git checkout -b stage-X-feature-name`
+2. Use subagents for parallel work (planner → tdd-guide → reviewer)
+3. Update docs after completion
+4. **Run lint and build, and fix all errors before PR**
+5. Run `npm test` to verify all tests pass
 
-- **Development Approach:** Design-first, now in implementation phase. TDD for all new code.
-- **Testing:** Write tests first, run after changes. Target ≥80% coverage.
-- **Proactive Improvements:** Yes - suggest improvements with technical explanations.
-- **Backup & Confirmation:** Before significant changes, ask for confirmation.
-- **Task Execution:** Execute tasks concisely without over-explaining.
-- **Git Branching:** Always create a new feature branch before making code changes. Do not work on main/stage-1-foundation directly. Example: `git checkout -b stage-2-provider-interface` before implementing features.
+**Agent Coordination:**
+- Use `/tdd` or `tdd-guide` agent for TDD implementation
+- Use `planner` agent for complex feature planning
+- Use `doc-updater` agent for documentation updates
+- Run agents in parallel when independent (single message, multiple Task calls)
 
-## Architecture Summary
+## Architecture
 
-Custom agent execution loop:
-```
-User Input → Agent → Provider → LLM → Tool Calls? → Execute → Loop
-```
+**Flow:** `User Input → Agent → Provider → LLM → Tool Calls? → Execute → Loop`
 
-Key components:
-- **Agent** - Orchestrates execution loop
-- **Providers** - Anthropic, OpenAI API clients
-- **Plugins** - Manifest-based tools (file-ops, shell, web-search)
-- **Sessions** - JSONL conversation storage
-- **Events** - Lifecycle event system
+**Stack:**
+- TypeScript (strict, ESM) + Node.js ≥18 + Vitest
+- Custom agent loop (no framework)
+- Provider abstraction (Anthropic, OpenAI)
+- Plugin system (manifest-based tool discovery)
+- JSONL sessions + event-driven lifecycle
 
-## Language & Framework
+## Code Standards
 
-- **Language**: TypeScript (strict mode, ESM modules)
-- **Runtime**: Node.js ≥18.0.0
-- **Agent Runtime**: Custom implementation
-- **Testing**: Vitest with TDD approach
-- **Reference**: Google TypeScript Style Guide
+**Style:** Google TypeScript Style Guide (`docs/reference/typescript_style.md`)
+- Naming: camelCase, PascalCase classes, CONSTANT_CASE
+- No: `any`, default exports, `var`, `@ts-ignore`, `#private`
+- JSDoc for all exports; max ~700 LOC per file
+- Interfaces over types; `readonly` for immutability
 
-## Code Standards (Google TypeScript Style Guide)
-
-- **Naming**: lowerCamelCase variables/functions, UpperCamelCase classes/interfaces, CONSTANT_CASE constants
-- **Visibility**: Limit visibility, use `private` (not `#`), avoid `public` keyword
-- **Comments**: JSDoc (`/** */`) for all exports; inline comments (`//`) for implementation details
-- **Types**: Prefer interfaces over type aliases, avoid `any` (use `unknown` instead)
-- **Control Flow**: Blocks for multi-line statements, `===` and `!==`, `const` by default
-- **Functions**: Named functions at top level, arrow functions in expressions
-- **No**: Default exports, `var`, `@ts-ignore`, private fields (`#`), `any` type
-- **Immutability**: Use `readonly` for message types and config
-
-**Full guide:** `docs/reference/typescript_style.md`
-
-## Code Writing Requirements
-
-- **Explanation Level:** Technical details explained to undergraduate level when needed.
-- **Conciseness:** Keep responses concise. Detailed explanations only on request.
-- **Code Comments:** JSDoc for all exports explaining purpose, parameters, return values.
-- **File Limitation** Each code piece is limited under ~700 LOCs if possible. Split up files if needed.
+**Testing:** TDD mandatory (RED → GREEN → REFACTOR), ≥80% coverage
 
 ## Key Principles
 
-- TDD: Write failing tests first, then implement
-- Event-driven architecture for extensibility
-- JSONL sessions for debuggability
-- Provider abstraction for multi-model support
-- Plugin manifest pattern for tool discovery
+- TDD: Tests first, always
+- Event-driven: Extensible architecture
+- Provider abstraction: Multi-model support
+- Plugin manifests: Tool discovery
+- JSONL sessions: Debuggability
+
+## Docs
+ROADMAP.md, TODO.md, ARCHITECTURE.md, DEV_LOG.md
+
 
 ---
 
-**Last Updated:** 2026-01-31
+**Last Updated:** 2026-02-03

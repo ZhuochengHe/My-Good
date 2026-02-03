@@ -24,3 +24,14 @@ export {
   isAgentError,
   isRecoverableAgentError,
 } from './agent.js';
+
+export {
+  PluginError,
+  PluginErrorCode,
+  PluginLoadError,
+  ManifestValidationError,
+  GatesCheckError,
+  ToolNotFoundError,
+  isPluginError,
+  isRecoverablePluginError,
+} from './plugin.js';

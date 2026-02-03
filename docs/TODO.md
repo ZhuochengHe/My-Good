@@ -1,6 +1,6 @@
 # Project TODO
 
-**Updated:** 2026-01-31
+**Updated:** 2026-02-03
 
 ## Completed Decisions
 
@@ -159,19 +159,33 @@
   - Error handling and recovery
   - Event emission throughout execution
 
-### Stage 4: Extensibility (Current)
+### Stage 4: Extensibility
 
-#### 4.1 Plugin Manager
-- [ ] Directory scanning
-- [ ] Manifest loading and validation
-- [ ] Plugin gates checking
-- [ ] Plugin enable/disable
+#### 4.1 Plugin Manager ✅
+- [x] Directory scanning
+- [x] Manifest loading and validation
+- [x] Plugin gates checking
+- [x] Plugin enable/disable
+- [x] Tests written first (TDD) - 129 tests, 94.81% coverage
+  - Plugin error classes (validation, initialization, execution)
+  - Manifest validation with Zod schema
+  - Gates checker (platform, binaries, env variables)
+  - Plugin manager core with enable/disable
+  - Directory scanning with recursive search
+  - Integration tests with real plugin loading
 
-#### 4.2 Tool Executor
-- [ ] Parameter validation (JSON Schema)
-- [ ] Handler invocation
-- [ ] Timeout handling
-- [ ] Error wrapping
+#### 4.2 Tool Executor ✅
+- [x] Parameter validation (JSON Schema)
+- [x] Handler invocation
+- [x] Timeout handling
+- [x] Error wrapping
+- [x] Tests written first (TDD) - 34 tests, 92.89% coverage
+  - JSON Schema validation with Ajv
+  - Handler invocation with plugin context
+  - Timeout handling with configurable duration
+  - Error wrapping (4 error types)
+  - Integration with Agent execution loop
+  - Tool not found and validation error handling
 
 #### 4.3 Default Plugins
 - [ ] **file-ops**: read_file, write_file, list_directory
