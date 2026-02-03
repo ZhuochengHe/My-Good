@@ -3,7 +3,15 @@
  */
 
 import { execSync } from 'child_process';
-import type { PluginGates } from '../types/plugins.js';
+
+/**
+ * Plugin gates (flexible type that accepts both readonly and mutable arrays).
+ */
+type PluginGatesLike = {
+  readonly requiredBinaries?: readonly string[] | string[] | undefined;
+  readonly requiredEnv?: Record<string, string> | undefined;
+  readonly platforms?: readonly ('linux' | 'darwin' | 'win32')[] | ('linux' | 'darwin' | 'win32')[] | undefined;
+};
 
 /**
  * Result of gates check.
@@ -59,7 +67,7 @@ function isPlatformAllowed(
  * @param gates - Plugin gates to check
  * @returns Result indicating if all gates passed
  */
-export function checkGates(gates: PluginGates | undefined): GatesCheckResult {
+export function checkGates(gates: PluginGatesLike | undefined): GatesCheckResult {
   if (!gates) {
     return { passed: true, errors: [] };
   }

@@ -107,7 +107,9 @@ export class ToolNotFoundError extends PluginError {
     );
     this.name = 'ToolNotFoundError';
     this.toolName = toolName;
-    this.pluginId = pluginId;
+    if (pluginId !== undefined) {
+      this.pluginId = pluginId;
+    }
   }
 }
 

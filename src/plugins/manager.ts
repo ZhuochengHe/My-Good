@@ -5,14 +5,14 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import type { Plugin, PluginManifest } from '../types/plugins.js';
+import type { Plugin, PluginManifest, IPluginManager } from '../types/plugins.js';
 import type { ToolDefinition, ToolHandler } from '../types/tools.js';
 import {
   PluginLoadError,
   ManifestValidationError,
   GatesCheckError,
 } from '../errors/plugin.js';
-import { validateManifest } from './manifest-schema.js';
+import { validateManifest, type ValidatedPluginManifest } from './manifest-schema.js';
 import { checkGates } from './gates-checker.js';
 
 /**
@@ -30,7 +30,7 @@ export interface LoadDirectoryResult {
  * Internal plugin state (mutable for enable/disable).
  */
 interface PluginState {
-  manifest: PluginManifest;
+  manifest: ValidatedPluginManifest;
   tools: Map<string, ToolHandler>;
   path: string;
   enabled: boolean;
@@ -39,7 +39,7 @@ interface PluginState {
 /**
  * Plugin manager implementation.
  */
-export class PluginManager {
+export class PluginManager implements IPluginManager {
   private readonly plugins: Map<string, PluginState> = new Map();
 
   /**
@@ -305,7 +305,7 @@ export class PluginManager {
    */
   private stateToPlugin(state: PluginState): Plugin {
     return {
-      manifest: state.manifest,
+      manifest: state.manifest as PluginManifest,
       tools: new Map(state.tools),
       path: state.path,
       enabled: state.enabled,
