@@ -1,6 +1,6 @@
 # Project Roadmap
 
-**Project:** Custom Agent Execution Loop | **Updated:** 2026-01-28
+**Project:** Custom Agent Execution Loop | **Updated:** 2026-02-03
 
 ## Vision
 
@@ -104,17 +104,17 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 
 ## Stage 4: Extensibility
 
-### 4.1 Plugin Manager
-- [ ] Directory scanning
-- [ ] Manifest loading and validation
-- [ ] Plugin gates checking
-- [ ] Plugin enable/disable
+### 4.1 Plugin Manager ✅
+- [x] Directory scanning
+- [x] Manifest loading and validation
+- [x] Plugin gates checking
+- [x] Plugin enable/disable
 
-### 4.2 Tool Executor
-- [ ] Parameter validation (JSON Schema)
-- [ ] Handler invocation
-- [ ] Timeout handling
-- [ ] Error wrapping
+### 4.2 Tool Executor ✅
+- [x] Parameter validation (JSON Schema)
+- [x] Handler invocation
+- [x] Timeout handling
+- [x] Error wrapping
 
 ### 4.3 Default Plugins
 - [ ] **file-ops**: read_file, write_file, list_directory
