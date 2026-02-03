@@ -71,10 +71,14 @@ export class PluginManager implements IPluginManager {
     // Validate manifest
     const validationResult = validateManifest(manifestData);
     if (!validationResult.valid) {
-      throw new ManifestValidationError(
-        String((manifestData as any)?.id || 'unknown'),
-        validationResult.errors
-      );
+      const pluginId =
+        typeof manifestData === 'object' &&
+        manifestData !== null &&
+        'id' in manifestData &&
+        typeof manifestData.id === 'string'
+          ? manifestData.id
+          : 'unknown';
+      throw new ManifestValidationError(pluginId, validationResult.errors);
     }
 
     const manifest = validationResult.manifest;
@@ -104,7 +108,7 @@ export class PluginManager implements IPluginManager {
       const handlerUrl = pathToFileURL(handlerPath).href;
 
       try {
-        const handlerModule = await import(handlerUrl);
+        const handlerModule = (await import(handlerUrl)) as Record<string, unknown>;
 
         // Map each tool to its handler function
         for (const tool of manifest.tools) {
@@ -116,7 +120,7 @@ export class PluginManager implements IPluginManager {
                 `Handler function ${tool.name} not found in ${handlerFile}`
               );
             }
-            tools.set(tool.name, handlerFn);
+            tools.set(tool.name, handlerFn as ToolHandler);
           }
         }
       } catch (error) {

@@ -7,7 +7,7 @@ import { z } from 'zod';
 /**
  * Schema for parameter definitions in tool manifests.
  */
-const parameterSchemaSchema: z.ZodType<any> = z.lazy(() =>
+const parameterSchemaSchema: z.ZodType<unknown> = z.lazy(() =>
   z.object({
     type: z.enum(['string', 'number', 'boolean', 'object', 'array']),
     description: z.string().optional(),

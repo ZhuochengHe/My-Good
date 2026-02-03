@@ -7,11 +7,11 @@ import { execSync } from 'child_process';
 /**
  * Plugin gates (flexible type that accepts both readonly and mutable arrays).
  */
-type PluginGatesLike = {
+interface PluginGatesLike {
   readonly requiredBinaries?: readonly string[] | string[] | undefined;
   readonly requiredEnv?: Record<string, string> | undefined;
   readonly platforms?: readonly ('linux' | 'darwin' | 'win32')[] | ('linux' | 'darwin' | 'win32')[] | undefined;
-};
+}
 
 /**
  * Result of gates check.
