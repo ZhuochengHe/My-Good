@@ -10,7 +10,7 @@ See @README for project overview. See `docs/LLM_CONTEXT.md` for quick context.
 1. Create feature branch: `git checkout -b stage-X-feature-name`
 2. Use subagents for parallel work (planner → tdd-guide → reviewer)
 3. Update docs after completion
-4. **Run `npm run lint` and fix all errors before PR**
+4. **Run lint and build, and fix all errors before PR**
 5. Run `npm test` to verify all tests pass
 
 **Agent Coordination:**

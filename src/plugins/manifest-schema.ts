@@ -3,11 +3,12 @@
  */
 
 import { z } from 'zod';
+import type { ParameterSchema } from '../types/tools.js';
 
 /**
  * Schema for parameter definitions in tool manifests.
  */
-const parameterSchemaSchema: z.ZodType<unknown> = z.lazy(() =>
+const parameterSchemaSchema: z.ZodType<ParameterSchema> = z.lazy(() =>
   z.object({
     type: z.enum(['string', 'number', 'boolean', 'object', 'array']),
     description: z.string().optional(),
@@ -17,7 +18,7 @@ const parameterSchemaSchema: z.ZodType<unknown> = z.lazy(() =>
     enum: z.array(z.union([z.string(), z.number()])).optional(),
     default: z.unknown().optional(),
   })
-);
+) as z.ZodType<ParameterSchema>;
 
 /**
  * Schema for tool definition parameters.
