@@ -7,7 +7,7 @@
 **Name:** Custom Agent Execution Loop
 **Language:** TypeScript (strict, ESM)
 **Runtime:** Node.js ≥18.0.0
-**Status:** Stage 4.1 and 4.2 complete, Stage 4.3 in progress
+**Status:** Stage 4 complete (Plugin System + Default Plugins), Stage 5 next (Persistence)
 
 ## What We're Building
 
@@ -83,15 +83,15 @@ interface SessionStore {
 
 ## Implementation Priority
 
-1. ✅ Types → 2. ✅ Config → 3. ✅ Logger → 4. ✅ Providers → 5. ✅ Agent Loop → 6. ✅ Plugin Manager → 7. ✅ Tool Executor → 8. Default Plugins → 9. Sessions → 10. CLI
+1. ✅ Types → 2. ✅ Config → 3. ✅ Logger → 4. ✅ Providers → 5. ✅ Agent Loop → 6. ✅ Plugin Manager → 7. ✅ Tool Executor → 8. ✅ Default Plugins → 9. Sessions → 10. CLI
 
-## Default Plugins
+## Default Plugins ✅
 
-| Plugin | Tools |
-|--------|-------|
-| file-ops | read_file, write_file, list_directory |
-| shell | exec_command |
-| web-search | search, fetch_url |
+| Plugin | Tools | Status |
+|--------|-------|--------|
+| file-ops | read_file, write_file, list_directory | ✅ Complete |
+| shell | shell_exec | ✅ Complete (linux/darwin) |
+| web-search | web_search, fetch_url | ✅ Complete (MVP) |
 
 ## Error Handling
 
