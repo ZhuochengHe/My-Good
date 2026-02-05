@@ -9,7 +9,8 @@ export type SessionErrorCode =
   | 'SESSION_SAVE_FAILED'
   | 'SESSION_CORRUPTED'
   | 'INVALID_SESSION_ID'
-  | 'SESSION_DELETE_FAILED';
+  | 'SESSION_DELETE_FAILED'
+  | 'SESSION_TOO_LARGE';
 
 /**
  * Base class for session-related errors.
@@ -153,6 +154,23 @@ export class SessionDeleteError extends SessionError {
  */
 export function isSessionError(error: unknown): error is SessionError {
   return error instanceof SessionError;
+}
+
+/**
+ * Error thrown when a session exceeds resource limits.
+ */
+export class SessionTooLargeError extends SessionError {
+  readonly sessionId: string;
+
+  constructor(sessionId: string, reason: string) {
+    super(
+      `Session ${sessionId} exceeds resource limits: ${reason}`,
+      'SESSION_TOO_LARGE',
+      { sessionId, reason }
+    );
+    this.name = 'SessionTooLargeError';
+    this.sessionId = sessionId;
+  }
 }
 
 /**

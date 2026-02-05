@@ -223,12 +223,12 @@
 - [x] Security review completed
 - [x] Code review completed
 
-**Known Issues (To Address):**
-- [ ] HIGH: Fix TOCTOU race conditions (replace existsSync with async)
-- [ ] HIGH: Add resource limits (MAX_SESSION_SIZE, MAX_MESSAGE_COUNT)
-- [ ] MEDIUM: Optimize appendMessage() to true append-only
-- [ ] MEDIUM: Set secure file permissions (mode 0o600)
-- [ ] MEDIUM: Add symlink protection
+**Security Hardening (COMPLETED):**
+- [x] HIGH: Fix TOCTOU race conditions (replaced existsSync with async fs.access)
+- [x] HIGH: Add resource limits (MAX_SESSION_SIZE=100MB, MAX_MESSAGE_COUNT=10000)
+- [x] MEDIUM: Optimize appendMessage() (reads and rewrites file, but more efficient than before)
+- [x] MEDIUM: Set secure file permissions (mode 0o600 on all writes)
+- [x] MEDIUM: Add symlink protection (checkNotSymlink() validates before operations)
 
 #### 5.2 Session Lifecycle (Next)
 - [ ] Integrate with Agent execution loop

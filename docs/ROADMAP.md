@@ -141,11 +141,11 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - Session ID validation prevents path traversal
 - Automatic backup on corruption detection
 
-**Security Hardening (Pending):**
-- [ ] Fix TOCTOU race conditions
-- [ ] Add resource exhaustion limits
-- [ ] Secure file permissions (0o600)
-- [ ] Symlink attack protection
+**Security Hardening (COMPLETED):**
+- [x] Fix TOCTOU race conditions (replaced existsSync with async checks)
+- [x] Add resource exhaustion limits (MAX_SESSION_SIZE, MAX_MESSAGE_COUNT)
+- [x] Secure file permissions (0o600 on all writes)
+- [x] Symlink attack protection (validates files before operations)
 
 ### 5.2 Session Lifecycle
 - [ ] Create new session

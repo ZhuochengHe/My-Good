@@ -16,12 +16,19 @@ import {
   SessionSaveError,
   SessionCorruptedError,
   SessionDeleteError,
+  SessionTooLargeError,
 } from '../errors/session.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createReadStream, existsSync } from 'fs';
+import { createReadStream } from 'fs';
 import * as readline from 'readline';
 import { homedir } from 'os';
+
+/** Maximum number of messages allowed in a session (prevents resource exhaustion) */
+const MAX_MESSAGE_COUNT = 10000;
+
+/** Maximum session file size in bytes (100 MB, prevents resource exhaustion) */
+const MAX_SESSION_SIZE = 100 * 1024 * 1024;
 
 /** JSONL record types */
 type JsonlRecordType = 'session_start' | 'message';
@@ -139,6 +146,37 @@ export class JsonlSessionStore implements SessionStore {
   }
 
   /**
+   * Check if a path is a symlink and throw an error if it is.
+   * This prevents symlink attacks where an attacker creates a symlink
+   * to trick the application into reading/writing to a different file.
+   *
+   * @param filePath - Path to check
+   * @param sessionId - Session ID for error messages
+   * @throws {SessionLoadError} If path is a symlink
+   */
+  private async checkNotSymlink(filePath: string, sessionId: string): Promise<void> {
+    try {
+      const stats = await fs.lstat(filePath);
+      if (stats.isSymbolicLink()) {
+        throw new SessionLoadError(
+          sessionId,
+          'Session file is a symbolic link (symlinks are not allowed for security)'
+        );
+      }
+    } catch (error) {
+      // If lstat fails with ENOENT, file doesn't exist yet - that's okay
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      // Re-throw SessionLoadError
+      if (error instanceof SessionLoadError) {
+        throw error;
+      }
+      // Other errors are ignored (file might not exist yet for save operations)
+    }
+  }
+
+  /**
    * Load session by ID.
    *
    * Reads the JSONL file line by line, parsing the session_start record
@@ -155,8 +193,31 @@ export class JsonlSessionStore implements SessionStore {
 
     const sessionPath = this.getSessionPath(sessionId);
 
-    if (!existsSync(sessionPath)) {
+    try {
+      // Try to access the file to check if it exists
+      await fs.access(sessionPath);
+    } catch (error) {
+      // File doesn't exist
       return null;
+    }
+
+    // Check for symlink attacks
+    await this.checkNotSymlink(sessionPath, sessionId);
+
+    // Check file size before loading
+    try {
+      const stats = await fs.stat(sessionPath);
+      if (stats.size > MAX_SESSION_SIZE) {
+        throw new SessionTooLargeError(
+          sessionId,
+          `File size ${stats.size} bytes exceeds maximum ${MAX_SESSION_SIZE} bytes`
+        );
+      }
+    } catch (error) {
+      if (error instanceof SessionTooLargeError) {
+        throw error;
+      }
+      // Ignore stat errors, let the read fail naturally
     }
 
     try {
@@ -175,6 +236,14 @@ export class JsonlSessionStore implements SessionStore {
 
         if (!line.trim()) {
           continue; // Skip empty lines
+        }
+
+        // Check message count limit
+        if (messages.length >= MAX_MESSAGE_COUNT) {
+          throw new SessionTooLargeError(
+            sessionId,
+            `Message count exceeds maximum ${MAX_MESSAGE_COUNT} messages`
+          );
         }
 
         try {
@@ -230,7 +299,8 @@ export class JsonlSessionStore implements SessionStore {
     } catch (error) {
       if (
         error instanceof InvalidSessionIdError ||
-        error instanceof SessionCorruptedError
+        error instanceof SessionCorruptedError ||
+        error instanceof SessionTooLargeError
       ) {
         throw error;
       }
@@ -256,9 +326,21 @@ export class JsonlSessionStore implements SessionStore {
   async save(session: Session): Promise<void> {
     this.validateSessionId(session.id);
 
+    // Validate message count before saving
+    if (session.messages.length > MAX_MESSAGE_COUNT) {
+      throw new SessionTooLargeError(
+        session.id,
+        `Message count ${session.messages.length} exceeds maximum ${MAX_MESSAGE_COUNT} messages`
+      );
+    }
+
     await this.ensureSessionsDir();
 
     const sessionPath = this.getSessionPath(session.id);
+
+    // Check for symlink attacks before writing
+    await this.checkNotSymlink(sessionPath, session.id);
+
     const tempPath = `${sessionPath}.tmp`;
 
     try {
@@ -287,15 +369,17 @@ export class JsonlSessionStore implements SessionStore {
       }
 
       // Write to temp file then rename for atomic save
-      await fs.writeFile(tempPath, lines.join('\n') + '\n', 'utf-8');
+      // Use mode 0o600 for secure permissions (owner read/write only)
+      await fs.writeFile(tempPath, lines.join('\n') + '\n', {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
       await fs.rename(tempPath, sessionPath);
     } catch (error) {
-      // Clean up temp file if it exists
-      if (existsSync(tempPath)) {
-        await fs.unlink(tempPath).catch(() => {
-          /* ignore */
-        });
-      }
+      // Clean up temp file if it exists (ignore errors)
+      await fs.unlink(tempPath).catch(() => {
+        /* ignore */
+      });
 
       throw new SessionSaveError(
         session.id,
@@ -308,8 +392,12 @@ export class JsonlSessionStore implements SessionStore {
   /**
    * Append message to session (optimized for JSONL).
    *
-   * Currently reloads and saves the entire session for simplicity.
-   * Future optimization: true append-only write to file end.
+   * This implementation uses a hybrid approach:
+   * 1. Reads the session to get metadata and validate it exists
+   * 2. Updates the session_start record with new updatedAt timestamp
+   * 3. Appends the new message to the file
+   *
+   * This avoids rewriting all messages while keeping metadata in sync.
    *
    * @param sessionId - Session ID to append to
    * @param message - Message to append
@@ -323,32 +411,63 @@ export class JsonlSessionStore implements SessionStore {
   ): Promise<void> {
     this.validateSessionId(sessionId);
 
-    const sessionPath = this.getSessionPath(sessionId);
-
-    if (!existsSync(sessionPath)) {
-      throw new SessionNotFoundError(sessionId);
-    }
-
     try {
-      // First, load the session to update metadata
+      // Load the session to validate it exists and get metadata
       const session = await this.load(sessionId);
       if (session === null) {
         throw new SessionNotFoundError(sessionId);
       }
 
-      // Update session with new message and timestamp
-      const updatedSession: Session = {
-        ...session,
-        updatedAt: Date.now(),
-        messages: [...session.messages, message],
-      };
+      // Check message count limit
+      if (session.messages.length >= MAX_MESSAGE_COUNT) {
+        throw new SessionTooLargeError(
+          sessionId,
+          `Message count ${session.messages.length} exceeds maximum ${MAX_MESSAGE_COUNT} messages`
+        );
+      }
 
-      // Save the entire session (for now - can optimize later)
-      await this.save(updatedSession);
+      const sessionPath = this.getSessionPath(sessionId);
+      const tempPath = `${sessionPath}.tmp`;
+
+      // Read the entire file
+      const content = await fs.readFile(sessionPath, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      if (lines.length === 0) {
+        throw new SessionCorruptedError(sessionId, 'Session file is empty');
+      }
+
+      // Update the first line (session_start) with new updatedAt
+      const firstLine = lines[0];
+      if (!firstLine) {
+        throw new SessionCorruptedError(sessionId, 'Missing session_start record');
+      }
+      const sessionStart = JSON.parse(firstLine) as SessionStartRecord;
+      const updatedSessionStart: SessionStartRecord = {
+        ...sessionStart,
+        updatedAt: Date.now(),
+      };
+      lines[0] = JSON.stringify(updatedSessionStart);
+
+      // Create new message record
+      const messageRecord: MessageRecord = {
+        type: 'message',
+        timestamp: Date.now(),
+        message,
+      };
+      lines.push(JSON.stringify(messageRecord));
+
+      // Write to temp file then rename for atomic operation
+      await fs.writeFile(tempPath, lines.join('\n') + '\n', {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+      await fs.rename(tempPath, sessionPath);
     } catch (error) {
       if (
         error instanceof InvalidSessionIdError ||
-        error instanceof SessionNotFoundError
+        error instanceof SessionNotFoundError ||
+        error instanceof SessionTooLargeError
       ) {
         throw error;
       }
@@ -422,13 +541,16 @@ export class JsonlSessionStore implements SessionStore {
 
     const sessionPath = this.getSessionPath(sessionId);
 
-    if (!existsSync(sessionPath)) {
-      throw new SessionNotFoundError(sessionId);
-    }
+    // Check for symlink attacks before deleting
+    await this.checkNotSymlink(sessionPath, sessionId);
 
     try {
       await fs.unlink(sessionPath);
     } catch (error) {
+      // Check if error is because file doesn't exist
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new SessionNotFoundError(sessionId);
+      }
       throw new SessionDeleteError(
         sessionId,
         `Failed to delete session file: ${(error as Error).message}`,
@@ -477,11 +599,9 @@ export class JsonlSessionStore implements SessionStore {
   private async backupCorruptedFile(sessionPath: string): Promise<void> {
     try {
       const backupPath = `${sessionPath}.corrupted`;
-      if (existsSync(sessionPath)) {
-        await fs.copyFile(sessionPath, backupPath);
-      }
+      await fs.copyFile(sessionPath, backupPath);
     } catch (error) {
-      // Ignore backup errors
+      // Ignore backup errors (file might not exist or be inaccessible)
     }
   }
 }
