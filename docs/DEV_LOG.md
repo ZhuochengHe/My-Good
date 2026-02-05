@@ -1,6 +1,47 @@
 # Development Log
 
-## 2026-02-04
+## 2026-02-04 (Part 2) - Stage 5.1: JSONL Session Store (Complete)
+
+**Branch:** `stage-5.1-session-store`
+
+### Orchestration Workflow
+
+Used **feature workflow** (planner → tdd-guide → code-reviewer → security-reviewer) for Stage 5.1 implementation.
+
+### What Was Built
+
+Implemented JSONL-based session persistence with comprehensive TDD approach:
+
+**Files Created:**
+- `src/errors/session.ts` - 7 session error classes
+- `src/session/jsonl-store.ts` - Main implementation (433 LOC)
+- `src/session/index.ts` - Module exports
+- `tests/session/jsonl-store.test.ts` - 39 unit tests
+- `tests/session/integration.test.ts` - 9 integration tests
+
+**Key Features:**
+- JSONL storage (one message per line, human-readable)
+- Atomic file operations (temp + rename)
+- Corruption detection with automatic backup
+- Session ID validation (prevents path traversal)
+- Load, save, append, list, delete, clear operations
+
+**Test Results:**
+- 48 new tests (39 unit + 9 integration), all passing
+- Total: 661/661 tests passing
+- Coverage: 84.93% lines, 80.35% branches
+
+**Reviews:**
+- Code Review: 9/10 (approved with minor revisions)
+- Security Review: 7.5/10 (approved, hardening recommended)
+
+**Known Issues (To Address):**
+- HIGH: TOCTOU race conditions, resource exhaustion limits
+- MEDIUM: appendMessage() optimization, file permissions
+
+---
+
+## 2026-02-04 (Part 1) - Stage 4.3: Default Plugins Complete
 
 ### Session Summary
 **Focus:** Stage 4.3 - Default Plugins Complete
