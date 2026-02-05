@@ -13,9 +13,9 @@ A CLI-based AI agent that:
 ## Status
 
 **Phase:** Implementation (Post-Design)
-**Current Stage:** Stage 4 Complete (Plugin System + Default Plugins)
+**Current Stage:** Stage 5.1 Complete (Session Store - JSONL Persistence)
 
-All architecture decisions finalized. Core agent execution loop, multi-provider support, and plugin system fully implemented with three default plugins (file-ops, shell, web-search). See `/docs/ARCHITECTURE.md`.
+All architecture decisions finalized. Core agent execution loop, multi-provider support, plugin system, and JSONL session persistence fully implemented. Three default plugins (file-ops, shell, web-search) included. See `/docs/ARCHITECTURE.md`.
 
 ## Quick Start
 

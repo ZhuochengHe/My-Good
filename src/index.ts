@@ -14,8 +14,10 @@ export * from './agent/index.js';
 // Plugins module
 export * from './plugins/index.js';
 
+// Session module
+export * from './session/index.js';
+
 // TODO: Export other modules as they are implemented
 // export * from './providers/index.js';
-// export * from './session/index.js';
 // export * from './config/index.js';
 // export * from './events/index.js';

@@ -123,12 +123,29 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 
 ## Stage 5: Persistence & Debugging
 
-### 5.1 Session Store
-- [ ] JSONL file storage
-- [ ] Load session by ID
-- [ ] Append messages (optimized)
-- [ ] List sessions
-- [ ] Delete/clear sessions
+### 5.1 Session Store ✅ COMPLETE
+- [x] JSONL file storage
+- [x] Load session by ID
+- [x] Append messages (optimized)
+- [x] List sessions
+- [x] Delete/clear sessions
+- [x] Corruption detection and backup
+- [x] Atomic file operations
+- [x] Comprehensive error handling
+- [x] Test coverage: 84.93% (48 tests)
+
+**Implementation Details:**
+- 7 session error types for detailed error handling
+- Streaming JSONL reads for memory efficiency
+- Temp file + rename pattern for atomic saves
+- Session ID validation prevents path traversal
+- Automatic backup on corruption detection
+
+**Security Hardening (Pending):**
+- [ ] Fix TOCTOU race conditions
+- [ ] Add resource exhaustion limits
+- [ ] Secure file permissions (0o600)
+- [ ] Symlink attack protection
 
 ### 5.2 Session Lifecycle
 - [ ] Create new session
