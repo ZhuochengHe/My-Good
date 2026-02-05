@@ -1,6 +1,6 @@
 # Project Roadmap
 
-**Project:** Custom Agent Execution Loop | **Updated:** 2026-02-03
+**Project:** Custom Agent Execution Loop | **Updated:** 2026-02-04
 
 ## Vision
 
@@ -18,10 +18,10 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 
 ### Success Criteria
 - [ ] Agent executes 10+ consecutive turns with tool calling
-- [ ] 3+ default plugins working (file-ops, shell, web-search)
-- [ ] Users can install and use custom plugins
+- [x] 3+ default plugins working (file-ops, shell, web-search) ✅
+- [x] Users can install and use custom plugins ✅
 - [ ] Session history persists across restarts
-- [ ] Works with both Claude and ChatGPT
+- [x] Works with both Claude and ChatGPT ✅
 - [ ] CLI is responsive and user-friendly
 
 ## Stage 1: Core Foundation (MVP) ✅ COMPLETE
@@ -102,7 +102,7 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [x] Stop condition handling
 - [x] Integration tests with mock provider
 
-## Stage 4: Extensibility
+## Stage 4: Extensibility ✅ COMPLETE
 
 ### 4.1 Plugin Manager ✅
 - [x] Directory scanning
@@ -116,10 +116,10 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [x] Timeout handling
 - [x] Error wrapping
 
-### 4.3 Default Plugins
-- [ ] **file-ops**: read_file, write_file, list_directory
-- [ ] **shell**: exec_command
-- [ ] **web-search**: search, fetch_url
+### 4.3 Default Plugins ✅
+- [x] **file-ops**: read_file, write_file, list_directory
+- [x] **shell**: shell_exec
+- [x] **web-search**: web_search, fetch_url
 
 ## Stage 5: Persistence & Debugging
 

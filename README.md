@@ -13,8 +13,9 @@ A CLI-based AI agent that:
 ## Status
 
 **Phase:** Implementation (Post-Design)
+**Current Stage:** Stage 4 Complete (Plugin System + Default Plugins)
 
-All architecture decisions finalized. See `/docs/ARCHITECTURE.md`.
+All architecture decisions finalized. Core agent execution loop, multi-provider support, and plugin system fully implemented with three default plugins (file-ops, shell, web-search). See `/docs/ARCHITECTURE.md`.
 
 ## Quick Start
 
@@ -56,10 +57,10 @@ src/
 ├── cli/             # CLI commands
 └── utils/           # Utilities
 
-plugins/             # Default plugins
-├── file-ops/        # File operations
-├── shell/           # Command execution
-└── web-search/      # Web search
+plugins/             # Default plugins (implemented)
+├── file-ops/        # File operations (read, write, list)
+├── shell/           # Command execution (linux/darwin)
+└── web-search/      # Web search and URL fetching
 
 docs/                # Documentation
 ├── ARCHITECTURE.md
@@ -75,8 +76,26 @@ docs/                # Documentation
 - **Custom Agent Loop** - Full control over execution flow
 - **Multi-Provider** - Anthropic Claude + OpenAI GPT
 - **Plugin System** - Manifest-based, extensible tools
-- **JSONL Sessions** - Human-readable, append-only storage
+- **Default Plugins** - file-ops, shell, web-search included
+- **JSONL Sessions** - Human-readable, append-only storage (coming soon)
 - **Event-Driven** - Hooks for logging, UI, extensions
+
+## Default Plugins
+
+Three plugins are included out of the box:
+
+### file-ops
+- `read_file` - Read file contents
+- `write_file` - Write content to files (creates directories as needed)
+- `list_directory` - List directory contents (supports recursive mode)
+
+### shell
+- `shell_exec` - Execute shell commands (linux/darwin only)
+- Returns stdout, stderr, and exit code
+
+### web-search
+- `web_search` - Search stub (returns config message for MVP)
+- `fetch_url` - Fetch URLs and convert to html/text/markdown
 
 ## Configuration
 
@@ -95,7 +114,7 @@ providers:
     apiKey: ${OPENAI_API_KEY}
 
 plugins:
-  directories: [~/.my-agent/plugins]
+  directories: [~/.my-agent/plugins, ./plugins]
   enabled: ['*']
 ```
 

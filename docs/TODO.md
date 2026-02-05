@@ -1,6 +1,6 @@
 # Project TODO
 
-**Updated:** 2026-02-03
+**Updated:** 2026-02-04
 
 ## Completed Decisions
 
@@ -159,7 +159,7 @@
   - Error handling and recovery
   - Event emission throughout execution
 
-### Stage 4: Extensibility
+### Stage 4: Extensibility ✅ COMPLETE
 
 #### 4.1 Plugin Manager ✅
 - [x] Directory scanning
@@ -187,10 +187,22 @@
   - Integration with Agent execution loop
   - Tool not found and validation error handling
 
-#### 4.3 Default Plugins
-- [ ] **file-ops**: read_file, write_file, list_directory
-- [ ] **shell**: exec_command
-- [ ] **web-search**: search, fetch_url
+#### 4.3 Default Plugins ✅
+- [x] **file-ops**: read_file, write_file, list_directory
+  - [x] Tests written first (TDD) - 33 unit + 11 integration tests
+  - [x] Handlers implemented with platform-specific paths
+  - [x] Recursive directory listing support
+  - [x] Path validation and error handling
+- [x] **shell**: shell_exec
+  - [x] Tests written first (TDD) - 23 unit tests
+  - [x] Handler implemented for linux/darwin only
+  - [x] Command validation and exit code handling
+  - [x] Stdout/stderr capture
+- [x] **web-search**: web_search, fetch_url
+  - [x] Tests written first (TDD) - 27 unit tests
+  - [x] web_search stub (returns config message for MVP)
+  - [x] fetch_url with html/text/markdown format support
+  - [x] HTML-to-markdown conversion using turndown
 
 ### Stage 5: Persistence
 - [ ] Implement JSONL session store
