@@ -13,9 +13,9 @@ A CLI-based AI agent that:
 ## Status
 
 **Phase:** Implementation (Post-Design)
-**Current Stage:** Stage 5.1 Complete (Session Store - JSONL Persistence)
+**Current Stage:** Stage 5.1 Complete (Session Store - JSONL Persistence with Security Hardening)
 
-All architecture decisions finalized. Core agent execution loop, multi-provider support, plugin system, and JSONL session persistence fully implemented. Three default plugins (file-ops, shell, web-search) included. See `/docs/ARCHITECTURE.md`.
+All architecture decisions finalized. Core agent execution loop, multi-provider support, plugin system, and JSONL session persistence fully implemented with security hardening (TOCTOU fixes, resource limits, secure permissions, symlink protection). Three default plugins (file-ops, shell, web-search) included. See `/docs/ARCHITECTURE.md`.
 
 ## Quick Start
 
@@ -77,7 +77,7 @@ docs/                # Documentation
 - **Multi-Provider** - Anthropic Claude + OpenAI GPT
 - **Plugin System** - Manifest-based, extensible tools
 - **Default Plugins** - file-ops, shell, web-search included
-- **JSONL Sessions** - Human-readable, append-only storage (coming soon)
+- **JSONL Sessions** - Human-readable, append-only storage with security hardening
 - **Event-Driven** - Hooks for logging, UI, extensions
 
 ## Default Plugins
