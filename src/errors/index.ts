@@ -35,3 +35,16 @@ export {
   isPluginError,
   isRecoverablePluginError,
 } from './plugin.js';
+
+export {
+  SessionError,
+  SessionErrorCode,
+  SessionNotFoundError,
+  SessionLoadError,
+  SessionSaveError,
+  SessionCorruptedError,
+  InvalidSessionIdError,
+  SessionDeleteError,
+  isSessionError,
+  isRecoverableSessionError,
+} from './session.js';

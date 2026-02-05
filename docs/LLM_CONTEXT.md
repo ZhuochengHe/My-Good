@@ -7,7 +7,7 @@
 **Name:** Custom Agent Execution Loop
 **Language:** TypeScript (strict, ESM)
 **Runtime:** Node.js ≥18.0.0
-**Status:** Stage 4 complete (Plugin System + Default Plugins), Stage 5 next (Persistence)
+**Status:** Stage 5.1 complete (JSONL Session Store), Stage 5.2 next (Session Lifecycle)
 
 ## What We're Building
 
@@ -83,7 +83,8 @@ interface SessionStore {
 
 ## Implementation Priority
 
-1. ✅ Types → 2. ✅ Config → 3. ✅ Logger → 4. ✅ Providers → 5. ✅ Agent Loop → 6. ✅ Plugin Manager → 7. ✅ Tool Executor → 8. ✅ Default Plugins → 9. Sessions → 10. CLI
+1. ✅ Types → 2. ✅ Config → 3. ✅ Logger → 4. ✅ Providers → 5. ✅ Agent Loop → 6. ✅ Plugin Manager → 7. ✅ Tool Executor → 8. ✅ Default Plugins → 9. ✅ Session Store → 10. Session Lifecycle → 11. CLI
+
 
 ## Default Plugins ✅
 
