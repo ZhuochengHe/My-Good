@@ -85,6 +85,7 @@ interface SessionStore {
 
 1. ✅ Types → 2. ✅ Config → 3. ✅ Logger → 4. ✅ Providers → 5. ✅ Agent Loop → 6. ✅ Plugin Manager → 7. ✅ Tool Executor → 8. ✅ Default Plugins → 9. ✅ Session Store → 10. Session Lifecycle → 11. CLI
 
+
 ## Default Plugins ✅
 
 | Plugin | Tools | Status |

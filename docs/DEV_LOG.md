@@ -1,5 +1,6 @@
 # Development Log
 
+
 ## 2026-02-04 (Part 2) - Stage 5.1: JSONL Session Store (Complete)
 
 **Branch:** `stage-5.1-session-store`
