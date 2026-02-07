@@ -28,7 +28,7 @@ describe('EventEmitter', () => {
       expect(unsubscribe).toBeTypeOf('function');
     });
 
-    it('allows multiple subscribers', () => {
+    it('allows multiple subscribers', async () => {
       const subscriber1: EventSubscriber = { onEvent: vi.fn() };
       const subscriber2: EventSubscriber = { onEvent: vi.fn() };
 
@@ -41,7 +41,7 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      await emitter.emit(event);
 
       expect(subscriber1.onEvent).toHaveBeenCalledWith(event);
       expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
@@ -49,7 +49,7 @@ describe('EventEmitter', () => {
   });
 
   describe('emit', () => {
-    it('calls all subscribers synchronously', () => {
+    it('calls all subscribers sequentially', async () => {
       const callOrder: number[] = [];
       const subscriber1: EventSubscriber = {
         onEvent: vi.fn(() => callOrder.push(1)),
@@ -67,14 +67,14 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      await emitter.emit(event);
 
       expect(callOrder).toEqual([1, 2]);
       expect(subscriber1.onEvent).toHaveBeenCalledTimes(1);
       expect(subscriber2.onEvent).toHaveBeenCalledTimes(1);
     });
 
-    it('passes event to all subscribers', () => {
+    it('passes event to all subscribers', async () => {
       const subscriber1: EventSubscriber = { onEvent: vi.fn() };
       const subscriber2: EventSubscriber = { onEvent: vi.fn() };
 
@@ -91,7 +91,7 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      await emitter.emit(event);
 
       expect(subscriber1.onEvent).toHaveBeenCalledWith(event);
       expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
@@ -99,17 +99,17 @@ describe('EventEmitter', () => {
       expect(subscriber2.onEvent).toHaveBeenCalledTimes(1);
     });
 
-    it('does not throw with empty subscribers list', () => {
+    it('does not throw with empty subscribers list', async () => {
       const event: AgentStartEvent = {
         type: 'agent_start',
         sessionId: 'test-session',
         timestamp: Date.now(),
       };
 
-      expect(() => emitter.emit(event)).not.toThrow();
+      await expect(emitter.emit(event)).resolves.not.toThrow();
     });
 
-    it('handles multiple events to same subscriber', () => {
+    it('handles multiple events to same subscriber', async () => {
       const subscriber: EventSubscriber = { onEvent: vi.fn() };
 
       emitter.subscribe(subscriber);
@@ -125,8 +125,8 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event1);
-      emitter.emit(event2);
+      await emitter.emit(event1);
+      await emitter.emit(event2);
 
       expect(subscriber.onEvent).toHaveBeenCalledTimes(2);
       expect(subscriber.onEvent).toHaveBeenNthCalledWith(1, event1);
@@ -135,7 +135,7 @@ describe('EventEmitter', () => {
   });
 
   describe('unsubscribe', () => {
-    it('removes only that subscriber', () => {
+    it('removes only that subscriber', async () => {
       const subscriber1: EventSubscriber = { onEvent: vi.fn() };
       const subscriber2: EventSubscriber = { onEvent: vi.fn() };
 
@@ -150,13 +150,13 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      await emitter.emit(event);
 
       expect(subscriber1.onEvent).not.toHaveBeenCalled();
       expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
     });
 
-    it('is safe to call multiple times', () => {
+    it('is safe to call multiple times', async () => {
       const subscriber: EventSubscriber = { onEvent: vi.fn() };
 
       const unsubscribe = emitter.subscribe(subscriber);
@@ -170,11 +170,11 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      expect(() => emitter.emit(event)).not.toThrow();
+      await expect(emitter.emit(event)).resolves.not.toThrow();
       expect(subscriber.onEvent).not.toHaveBeenCalled();
     });
 
-    it('does not affect other subscribers when called', () => {
+    it('does not affect other subscribers when called', async () => {
       const subscriber1: EventSubscriber = { onEvent: vi.fn() };
       const subscriber2: EventSubscriber = { onEvent: vi.fn() };
       const subscriber3: EventSubscriber = { onEvent: vi.fn() };
@@ -191,7 +191,7 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      await emitter.emit(event);
 
       expect(subscriber1.onEvent).not.toHaveBeenCalled();
       expect(subscriber2.onEvent).toHaveBeenCalledWith(event);
@@ -223,22 +223,20 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      // Await emit to ensure ordering
+      await emitter.emit(event);
 
-      // Sync subscriber should be called immediately
+      // Both subscribers should be called and completed
+      expect(asyncSubscriber.onEvent).toHaveBeenCalled();
       expect(syncSubscriber.onEvent).toHaveBeenCalled();
 
-      // Wait for async to complete
-      await new Promise((resolve) => setTimeout(resolve, 20));
-
-      expect(asyncSubscriber.onEvent).toHaveBeenCalled();
-      expect(results).toContain('sync');
-      expect(results).toContain('async');
+      // Results should be in subscription order: async first, then sync
+      expect(results).toEqual(['async', 'sync']);
     });
   });
 
   describe('error handling', () => {
-    it('continues to other subscribers if one throws', () => {
+    it('continues to other subscribers if one throws', async () => {
       const errorSubscriber: EventSubscriber = {
         onEvent: vi.fn(() => {
           throw new Error('Subscriber error');
@@ -258,13 +256,13 @@ describe('EventEmitter', () => {
       };
 
       // Should not throw despite subscriber error
-      expect(() => emitter.emit(event)).not.toThrow();
+      await expect(emitter.emit(event)).resolves.not.toThrow();
 
       expect(errorSubscriber.onEvent).toHaveBeenCalled();
       expect(successSubscriber.onEvent).toHaveBeenCalled();
     });
 
-    it('handles errors from subscribers without throwing', () => {
+    it('handles errors from subscribers without throwing', async () => {
       const errorSubscriber: EventSubscriber = {
         onEvent: vi.fn(() => {
           throw new Error('Subscriber error');
@@ -285,7 +283,7 @@ describe('EventEmitter', () => {
       };
 
       // Should not throw
-      expect(() => emitter.emit(event)).not.toThrow();
+      await expect(emitter.emit(event)).resolves.not.toThrow();
 
       // Normal subscriber should still be called
       expect(normalSubscriber.onEvent).toHaveBeenCalledWith(event);
@@ -293,7 +291,7 @@ describe('EventEmitter', () => {
   });
 
   describe('subscriber order', () => {
-    it('calls subscribers in subscription order', () => {
+    it('calls subscribers in subscription order', async () => {
       const callOrder: number[] = [];
       const subscribers = [1, 2, 3, 4, 5].map((num) => ({
         onEvent: vi.fn(() => callOrder.push(num)),
@@ -307,7 +305,7 @@ describe('EventEmitter', () => {
         timestamp: Date.now(),
       };
 
-      emitter.emit(event);
+      await emitter.emit(event);
 
       expect(callOrder).toEqual([1, 2, 3, 4, 5]);
     });

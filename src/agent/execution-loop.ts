@@ -96,7 +96,7 @@ export class ExecutionLoop implements Agent {
     let error: AgentError | undefined;
 
     // Emit agent_start event
-    this.emitEvent(
+    await this.emitEvent(
       {
         type: 'agent_start',
         sessionId,
@@ -140,7 +140,7 @@ export class ExecutionLoop implements Agent {
         turnNumber++;
 
         // Emit turn_start
-        this.emitEvent(
+        await this.emitEvent(
           {
             type: 'turn_start',
             turnNumber,
@@ -179,7 +179,7 @@ export class ExecutionLoop implements Agent {
         messages.push(assistantMessage);
 
         // Emit turn_end
-        this.emitEvent(
+        await this.emitEvent(
           {
             type: 'turn_end',
             turnNumber,
@@ -228,7 +228,7 @@ export class ExecutionLoop implements Agent {
           // Execute each tool call
           for (const toolCall of response.message.toolCalls) {
             // Emit tool_call_start
-            this.emitEvent(
+            await this.emitEvent(
               {
                 type: 'tool_call_start',
                 toolCall,
@@ -248,7 +248,7 @@ export class ExecutionLoop implements Agent {
             toolCalls.push(result);
 
             // Emit tool_call_end
-            this.emitEvent(
+            await this.emitEvent(
               {
                 type: 'tool_call_end',
                 result,
@@ -293,7 +293,7 @@ export class ExecutionLoop implements Agent {
       };
 
       // Emit error event
-      this.emitEvent(
+      await this.emitEvent(
         {
           type: 'error',
           error,
@@ -315,7 +315,7 @@ export class ExecutionLoop implements Agent {
     );
 
     // Emit agent_end
-    this.emitEvent(
+    await this.emitEvent(
       {
         type: 'agent_end',
         result,
@@ -566,14 +566,19 @@ export class ExecutionLoop implements Agent {
 
   /**
    * Emit event if handler is provided.
+   * Awaits async handlers to ensure event ordering.
    */
-  private emitEvent(
+  private async emitEvent(
     event: AgentEvent,
-    handler?: (event: AgentEvent) => void
-  ): void {
+    handler?: (event: AgentEvent) => void | Promise<void>
+  ): Promise<void> {
     if (handler) {
       try {
-        handler(event);
+        const result = handler(event);
+        // Await if handler is async to maintain ordering
+        if (result instanceof Promise) {
+          await result;
+        }
       } catch (err) {
         // Log but don't throw - event handler errors should not crash the agent
         // eslint-disable-next-line no-console
