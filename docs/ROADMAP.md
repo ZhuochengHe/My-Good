@@ -193,6 +193,25 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [ ] Plugin development guide
 - [ ] Configuration reference
 
+### 7.4 Event Persistence (Optional Enhancement)
+**Goal:** Add turn-level execution metrics and error logs to JSONL sessions.
+
+- [ ] Extend JSONL format with `turn_metadata` and `error_log` record types
+- [ ] Create `PersistenceSubscriber` that listens to `turn_end` and `error` events
+- [ ] Add `appendTurnMetadata()` and `appendErrorLog()` methods to JsonlSessionStore
+- [ ] Implement `loadWithTrace()` for loading sessions with full execution trace
+- [ ] Make opt-in via `config.persistEvents` flag (default: false)
+- [ ] Write tests for new record types and backward compatibility
+- [ ] Document session analytics use cases
+
+**Benefits:**
+- Complete execution trace for debugging
+- Per-turn token usage and latency metrics
+- Error logs with context and timestamps
+- Self-contained audit logs without external metrics systems
+
+**See:** `docs/ARCHITECTURE.md` → Future Work: Event Persistence
+
 ---
 
 ## Future Stages (Post-MVP)
