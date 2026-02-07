@@ -31,28 +31,24 @@ export class EventEmitter implements IEventEmitter {
 
   /**
    * Emit an event to all subscribers.
-   * Subscribers are called synchronously in subscription order.
+   * Subscribers are called sequentially in subscription order.
+   * Awaits async subscribers to maintain event ordering.
    * If a subscriber throws, the error is logged and execution continues.
    */
-  emit(event: AgentEvent): void {
-    // Call subscribers in order
+  async emit(event: AgentEvent): Promise<void> {
+    // Call subscribers in order, awaiting each one
     for (const subscriber of this.subscribers) {
       try {
         const result = subscriber.onEvent(event);
-        // Handle async subscribers without blocking
+        // Await if subscriber is async to maintain ordering
         if (result instanceof Promise) {
-          void result.catch((error: unknown) => {
-            // Async error - log but don't throw
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            // Use void to explicitly ignore the promise
-            void errorMessage;
-          });
+          await result;
         }
       } catch (error) {
-        // Sync error - log but continue to other subscribers
+        // Log error but continue to other subscribers
         const errorMessage = error instanceof Error ? error.message : String(error);
-        // Use void to explicitly ignore the value
-        void errorMessage;
+        // eslint-disable-next-line no-console
+        console.error('Error in event subscriber:', errorMessage);
       }
     }
   }

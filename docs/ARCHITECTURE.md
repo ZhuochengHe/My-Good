@@ -645,3 +645,220 @@ plugins/
 └── subagent/
     └── plugin.json      # spawn_agent tool definition
 ```
+
+---
+
+## Future Work: Event Persistence
+
+### Motivation
+
+Currently, session JSONL files only store `session_start` and `message` records, capturing conversation history but not execution metrics. Adding event persistence would create a complete execution trace for debugging, analysis, and performance monitoring.
+
+### Design Overview
+
+Extend the JSONL session format to include turn-level metadata and error logs:
+
+```typescript
+/** Extended JSONL record types */
+type JsonlRecordType =
+  | 'session_start'    // Existing: session metadata
+  | 'message'          // Existing: conversation messages
+  | 'turn_metadata'    // New: turn-level execution metrics
+  | 'error_log';       // New: timestamped error events
+
+/** Turn metadata record */
+interface TurnMetadataRecord extends JsonlRecord {
+  readonly type: 'turn_metadata';
+  readonly turnNumber: number;
+  readonly usage: TokenUsage;              // Input/output/total tokens
+  readonly durationMs: number;             // Turn execution time
+  readonly toolCallCount: number;          // Number of tools called
+  readonly timestamp: number;
+}
+
+/** Error log record */
+interface ErrorLogRecord extends JsonlRecord {
+  readonly type: 'error_log';
+  readonly turnNumber: number;
+  readonly errorCode: string;              // E.g., 'PROVIDER_ERROR', 'TOOL_ERROR'
+  readonly errorMessage: string;
+  readonly recoverable: boolean;
+  readonly timestamp: number;
+}
+```
+
+### JSONL File Format
+
+```jsonl
+{"type":"session_start","sessionId":"abc","agentId":"main","metadata":{...},"createdAt":...,"updatedAt":...}
+{"type":"message","message":{"role":"user","content":"Fix the bug in file.ts",...}}
+{"type":"message","message":{"role":"assistant","content":"Let me read the file",...}}
+{"type":"turn_metadata","turnNumber":1,"usage":{"inputTokens":150,"outputTokens":50,"totalTokens":200},"durationMs":1234,"toolCallCount":1,"timestamp":...}
+{"type":"message","message":{"role":"tool","toolCallId":"tc_001","content":"[file contents]",...}}
+{"type":"message","message":{"role":"assistant","content":"I found the issue",...}}
+{"type":"turn_metadata","turnNumber":2,"usage":{"inputTokens":300,"outputTokens":80,"totalTokens":380},"durationMs":987,"toolCallCount":0,"timestamp":...}
+```
+
+### Benefits
+
+1. **Complete Execution Trace**
+   - Reconstruct full agent execution timeline
+   - Analyze token usage per turn
+   - Measure turn latency and tool call overhead
+
+2. **Performance Analysis**
+   - Identify slow turns or expensive tool calls
+   - Track token costs across sessions
+   - Detect performance regressions
+
+3. **Error Debugging**
+   - Timestamped error logs with context
+   - Correlate errors with specific turns
+   - Distinguish transient vs fatal errors
+
+4. **Metrics & Monitoring**
+   - Aggregate metrics from session files
+   - Build dashboards without external metrics systems
+   - Session files are self-contained audit logs
+
+### Implementation Approach
+
+#### Phase 1: EventSubscriber for Persistence
+
+Create a `PersistenceSubscriber` that listens to events and writes records:
+
+```typescript
+// src/events/persistence-subscriber.ts
+export function createPersistenceSubscriber(
+  store: JsonlSessionStore,
+  sessionId: string
+): EventSubscriber {
+  return {
+    async onEvent(event: AgentEvent): Promise<void> {
+      switch (event.type) {
+        case 'turn_end':
+          await store.appendTurnMetadata(sessionId, {
+            type: 'turn_metadata',
+            turnNumber: event.turnNumber,
+            usage: event.usage,
+            durationMs: calculateDuration(event),  // From turn_start timestamp
+            toolCallCount: getToolCallCount(event),
+            timestamp: event.timestamp,
+          });
+          break;
+
+        case 'error':
+          await store.appendErrorLog(sessionId, {
+            type: 'error_log',
+            turnNumber: getCurrentTurn(),
+            errorCode: event.error.code,
+            errorMessage: event.error.message,
+            recoverable: event.error.recoverable,
+            timestamp: event.timestamp,
+          });
+          break;
+      }
+    },
+  };
+}
+```
+
+#### Phase 2: Extend JsonlSessionStore
+
+Add methods to write new record types:
+
+```typescript
+// src/session/jsonl-store.ts
+export class JsonlSessionStore implements SessionStore {
+  /**
+   * Append turn metadata record to session.
+   */
+  async appendTurnMetadata(
+    sessionId: string,
+    metadata: TurnMetadataRecord
+  ): Promise<void> {
+    // Similar to appendMessage: read lines, append record, atomic write
+  }
+
+  /**
+   * Append error log record to session.
+   */
+  async appendErrorLog(
+    sessionId: string,
+    error: ErrorLogRecord
+  ): Promise<void> {
+    // Similar to appendMessage
+  }
+
+  /**
+   * Load session with full execution trace.
+   */
+  async loadWithTrace(sessionId: string): Promise<SessionWithTrace | null> {
+    // Parse all record types, return messages + metadata + errors
+  }
+}
+```
+
+#### Phase 3: Opt-in Configuration
+
+Make event persistence opt-in via config:
+
+```typescript
+// src/types/config.ts
+export interface AgentConfig {
+  // ... existing fields
+  persistEvents?: boolean;  // Default: false for backward compatibility
+}
+
+// Usage
+const agent = new ExecutionLoop(config, provider);
+if (config.persistEvents) {
+  const persistenceSubscriber = createPersistenceSubscriber(store, sessionId);
+  emitter.subscribe(persistenceSubscriber);
+}
+```
+
+### Backward Compatibility
+
+- Existing sessions without `turn_metadata`/`error_log` load normally
+- New record types are optional - parsers skip unknown types
+- No breaking changes to Session interface
+- Performance impact: ~5-10% overhead per turn (two extra JSONL appends)
+
+### File Size Considerations
+
+For a typical 50-turn session:
+- Current: ~500 KB (messages only)
+- With events: ~550 KB (+10% overhead)
+  - turn_metadata: ~100 bytes/turn × 50 = 5 KB
+  - error_log: rare, negligible
+
+Still well under MAX_SESSION_SIZE (100 MB).
+
+### Analysis Tools
+
+Once implemented, enable powerful analysis:
+
+```typescript
+// Example: Session analytics
+const trace = await store.loadWithTrace(sessionId);
+
+// Aggregate token usage
+const totalTokens = trace.turnMetadata
+  .reduce((sum, t) => sum + t.usage.totalTokens, 0);
+
+// Find slow turns
+const slowTurns = trace.turnMetadata
+  .filter(t => t.durationMs > 5000);
+
+// Error frequency
+const errorCount = trace.errorLogs.length;
+const recoverableErrors = trace.errorLogs
+  .filter(e => e.recoverable).length;
+```
+
+### Timeline
+
+- **Stage 6 or 7**: Implement event persistence
+- **Prerequisites**: Current event system (BP5) is already designed to support this
+- **Effort**: ~2-3 days (subscriber + store methods + tests)

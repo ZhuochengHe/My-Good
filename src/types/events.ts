@@ -92,6 +92,7 @@ export interface EventEmitter {
 
   /**
    * Emit an event to all subscribers.
+   * Awaits async subscribers to maintain event ordering.
    */
-  emit(event: AgentEvent): void;
+  emit(event: AgentEvent): Promise<void>;
 }
