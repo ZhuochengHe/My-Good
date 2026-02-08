@@ -14,9 +14,9 @@ A CLI-based AI agent that:
 
 **Phase:** Implementation (Post-Design)
 
-**Current Stage:** Stage 5.1 Complete (Session Store - JSONL Persistence with Security Hardening)
+**Current Stage:** Stage 5.2 Complete (Session Lifecycle - SessionManager with AI Features)
 
-All architecture decisions finalized. Core agent execution loop, multi-provider support, plugin system, and JSONL session persistence fully implemented with security hardening (TOCTOU fixes, resource limits, secure permissions, symlink protection). Three default plugins (file-ops, shell, web-search) included. See `/docs/ARCHITECTURE.md`.
+All architecture decisions finalized. Core agent execution loop, multi-provider support, plugin system, JSONL session persistence with security hardening, and full session lifecycle management fully implemented. SessionManager provides session creation, resumption, auto-save, AI-generated descriptions/tags, and searchable session history. Three default plugins (file-ops, shell, web-search) included. See `/docs/ARCHITECTURE.md`.
 
 
 ## Quick Start
@@ -80,6 +80,7 @@ docs/                # Documentation
 - **Plugin System** - Manifest-based, extensible tools
 - **Default Plugins** - file-ops, shell, web-search included
 - **JSONL Sessions** - Human-readable, append-only storage with security hardening
+- **Session Lifecycle** - Create, resume, auto-save, AI descriptions/tags, searchable history
 - **Event-Driven** - Hooks for logging, UI, extensions
 
 ## Default Plugins
@@ -98,6 +99,56 @@ Three plugins are included out of the box:
 ### web-search
 - `web_search` - Search stub (returns config message for MVP)
 - `fetch_url` - Fetch URLs and convert to html/text/markdown
+
+## Session Management
+
+SessionManager provides full lifecycle management for conversation sessions:
+
+```typescript
+import { SessionManager } from './session/SessionManager.js';
+import { Agent } from './agent/Agent.js';
+import { JsonlSessionStore } from './session/JsonlSessionStore.js';
+import { AnthropicProvider } from './providers/anthropic/AnthropicProvider.js';
+
+// Initialize
+const store = new JsonlSessionStore('~/.my-agent/sessions');
+const provider = new AnthropicProvider({ apiKey: 'your-key' });
+const agent = new Agent(provider, { /* config */ });
+const sessionManager = new SessionManager(agent, store);
+
+// Create new session
+const session = await sessionManager.createSession({
+  title: 'Debug API Issue',
+  initialMessage: 'Help me debug the authentication error'
+});
+console.log(`Session created: ${session.id}`);
+
+// Resume existing session
+const resumed = await sessionManager.resumeSession(session.id);
+const result = await resumed.sendMessage('Check the logs in /var/log/app.log');
+
+// Session auto-saves after each turn
+// AI generates description (first 3 turns) and tags (first 5 turns)
+
+// Search sessions
+const found = await sessionManager.searchSessions({
+  tags: ['api', 'debugging'],
+  description: 'authentication'
+});
+
+// Rename session
+await sessionManager.rename(session.id, 'Fixed Auth Issue');
+
+// Manage tags
+await sessionManager.addTags(session.id, ['resolved', 'production']);
+await sessionManager.removeTags(session.id, ['debugging']);
+
+// View session metadata
+const metadata = await store.load(session.id);
+console.log(metadata?.description); // AI-generated description
+console.log(metadata?.tags);        // AI-generated + manual tags
+console.log(metadata?.usage);       // Token/turn/tool usage
+```
 
 ## Configuration
 

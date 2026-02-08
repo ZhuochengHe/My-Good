@@ -1,0 +1,512 @@
+/**
+ * Session lifecycle manager.
+ * Handles session creation, execution, metadata management, and search.
+ */
+
+import type {
+  Session,
+  SessionStore,
+  SessionMetadata,
+} from '../types/sessions.js';
+import type { ModelProvider, CompletionRequest } from '../types/providers.js';
+import type { UserMessage, AssistantMessage } from '../types/messages.js';
+import { SessionNotFoundError } from '../errors/session.js';
+import { randomUUID } from 'crypto';
+
+/** Options for creating a new session */
+export interface CreateSessionOptions {
+  /** Custom session ID (default: auto-generated UUID) */
+  readonly sessionId?: string;
+  /** Initial tags (default: ['common']) */
+  readonly tags?: readonly string[];
+  /** Initial description (default: '') */
+  readonly description?: string;
+}
+
+/** Options for running the agent */
+export interface RunOptions {
+  /** Maximum tokens for response */
+  readonly maxTokens?: number;
+  /** Temperature for sampling */
+  readonly temperature?: number;
+  /** System prompt override */
+  readonly systemPrompt?: string;
+}
+
+/** Result from agent run */
+export interface RunResult {
+  /** Whether the run was successful */
+  readonly success: boolean;
+  /** Response from the assistant */
+  readonly response: string;
+  /** Error message if not successful */
+  readonly error?: string;
+  /** Token usage for this turn */
+  readonly tokenUsage?: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly totalTokens: number;
+  };
+}
+
+/** Session search filters */
+export interface SearchFilters {
+  /** Filter by tag */
+  readonly tag?: string;
+  /** Filter by description text (case-insensitive) */
+  readonly query?: string;
+}
+
+/** Session search result */
+export interface SearchResult {
+  readonly id: string;
+  readonly description: string;
+  readonly tags: readonly string[];
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly messageCount: number;
+}
+
+/** Configuration for SessionManager */
+export interface SessionManagerConfig {
+  /** Model to use for completions */
+  readonly model: string;
+  /** Agent ID for session tracking */
+  readonly agentId: string;
+}
+
+/**
+ * Session lifecycle manager.
+ *
+ * Manages session creation, execution, and metadata updates.
+ * Automatically saves sessions after each turn and generates
+ * AI-powered descriptions and tags.
+ *
+ * @example
+ * ```typescript
+ * const manager = new SessionManager(store, provider, {
+ *   model: 'claude-sonnet-4-20250514',
+ *   agentId: 'my-agent'
+ * });
+ *
+ * // Create a new session
+ * const sessionId = await manager.createSession();
+ *
+ * // Run the agent
+ * const result = await manager.run(sessionId, 'Hello');
+ *
+ * // Search sessions
+ * const sessions = await manager.searchSessions({ tag: 'coding' });
+ * ```
+ */
+export class SessionManager {
+  private readonly store: SessionStore;
+  private readonly provider: ModelProvider;
+  private readonly config: SessionManagerConfig;
+
+  /**
+   * Create a new SessionManager.
+   *
+   * @param store - Session store for persistence
+   * @param provider - Model provider for completions
+   * @param config - Configuration options
+   */
+  constructor(
+    store: SessionStore,
+    provider: ModelProvider,
+    config: SessionManagerConfig
+  ) {
+    this.store = store;
+    this.provider = provider;
+    this.config = config;
+  }
+
+  /**
+   * Create a new session.
+   *
+   * Generates a UUID, initializes metadata, and persists to store.
+   *
+   * @param options - Session creation options
+   * @returns Session ID
+   * @throws {Error} If session ID already exists
+   */
+  async createSession(options?: CreateSessionOptions): Promise<string> {
+    const sessionId = options?.sessionId ?? randomUUID();
+
+    // Check if session already exists
+    const existing = await this.store.load(sessionId);
+    if (existing !== null) {
+      throw new Error(`Session ${sessionId} already exists`);
+    }
+
+    const now = Date.now();
+    const metadata: SessionMetadata = {
+      model: this.config.model,
+      provider: this.provider.type,
+      totalTokens: 0,
+      toolCallCount: 0,
+      turnCount: 0,
+      description: options?.description ?? '',
+      tags: options?.tags ?? ['common'],
+    };
+
+    const session: Session = {
+      id: sessionId,
+      agentId: this.config.agentId,
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+      metadata,
+    };
+
+    await this.store.save(session);
+    return sessionId;
+  }
+
+  /**
+   * Resume an existing session.
+   *
+   * Loads the session with full conversation history.
+   *
+   * @param sessionId - Session ID to resume
+   * @returns Session object
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async resumeSession(sessionId: string): Promise<Session> {
+    const session = await this.store.load(sessionId);
+    if (session === null) {
+      throw new SessionNotFoundError(sessionId);
+    }
+    return session;
+  }
+
+  /**
+   * Load a session (returns null if not found).
+   *
+   * @param sessionId - Session ID to load
+   * @returns Session object or null
+   */
+  async loadSession(sessionId: string): Promise<Session | null> {
+    return this.store.load(sessionId);
+  }
+
+  /**
+   * Run the agent with user input.
+   *
+   * Executes the agent, saves the session, and updates metadata.
+   * Generates description and tags after the first turn.
+   *
+   * @param sessionId - Session ID to run
+   * @param input - User input message
+   * @param options - Run options
+   * @returns Run result with response
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async run(
+    sessionId: string,
+    input: string,
+    options?: RunOptions
+  ): Promise<RunResult> {
+    const session = await this.resumeSession(sessionId);
+
+    // Create user message
+    const userMessage: UserMessage = {
+      id: randomUUID(),
+      role: 'user',
+      content: input,
+      timestamp: Date.now(),
+    };
+
+    // Append user message
+    await this.store.appendMessage(sessionId, userMessage);
+
+    try {
+      // Build request
+      const request: CompletionRequest = {
+        model: this.config.model,
+        messages: [...session.messages, userMessage],
+        ...(options?.maxTokens !== undefined && { maxTokens: options.maxTokens }),
+        ...(options?.temperature !== undefined && { temperature: options.temperature }),
+        ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
+      };
+
+      // Get completion from provider
+      const response = await this.provider.complete(request);
+
+      // Create assistant message
+      const assistantMessage: AssistantMessage = {
+        id: response.message.id,
+        role: 'assistant',
+        content: response.message.content,
+        ...(response.message.toolCalls !== undefined && { toolCalls: response.message.toolCalls }),
+        stopReason: response.message.stopReason,
+        timestamp: response.message.timestamp,
+      };
+
+      // Append assistant message
+      await this.store.appendMessage(sessionId, assistantMessage);
+
+      // Update metadata and generate description/tags if first turn
+      const toolCallCount = assistantMessage.toolCalls?.length ?? 0;
+      const isFirstTurn = session.metadata.turnCount === 0;
+
+      // Calculate updated metadata
+      let updatedMetadata: SessionMetadata = {
+        ...session.metadata,
+        totalTokens: session.metadata.totalTokens + response.usage.totalTokens,
+        toolCallCount: session.metadata.toolCallCount + toolCallCount,
+        turnCount: session.metadata.turnCount + 1,
+      };
+
+      // Generate description and tags after first turn (with error handling)
+      if (isFirstTurn) {
+        try {
+          const description = await this.generateDescription(input);
+          const tags = await this.generateTags(description);
+          updatedMetadata = {
+            ...updatedMetadata,
+            description,
+            tags,
+          };
+        } catch (error) {
+          // If description/tags generation fails, continue with existing values
+          // (they will remain empty string and ['common'])
+        }
+      }
+
+      // Load latest session state and save with updated metadata
+      const latestSession = await this.resumeSession(sessionId);
+      const updatedSession: Session = {
+        ...latestSession,
+        updatedAt: Date.now(),
+        metadata: updatedMetadata,
+      };
+      await this.store.save(updatedSession);
+
+      return {
+        success: true,
+        response: response.message.content,
+        tokenUsage: response.usage,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        response: '',
+        error: (error as Error).message,
+      };
+    }
+  }
+
+
+  /**
+   * Generate a session description.
+   *
+   * Uses the LLM to create a concise description based on the first user input.
+   * Falls back to a simple description if generation fails.
+   *
+   * @param firstInput - First user input
+   * @returns Generated description
+   */
+  async generateDescription(firstInput: string): Promise<string> {
+    try {
+      const prompt = `Generate a brief 5-10 word description for a conversation that starts with: "${firstInput}"
+
+Return ONLY the description, no quotes or extra text.`;
+
+      const request: CompletionRequest = {
+        model: this.config.model,
+        messages: [
+          {
+            id: randomUUID(),
+            role: 'user',
+            content: prompt,
+            timestamp: Date.now(),
+          },
+        ],
+        maxTokens: 50,
+        temperature: 0.3,
+      };
+
+      const response = await this.provider.complete(request);
+      return response.message.content.trim();
+    } catch (error) {
+      // Fallback to simple description
+      const truncated = firstInput.length > 50
+        ? firstInput.slice(0, 50) + '...'
+        : firstInput;
+      return `Session started with: ${truncated}`;
+    }
+  }
+
+  /**
+   * Generate tags from a description.
+   *
+   * Uses the LLM to extract relevant tags from the description.
+   * Falls back to ['common'] if generation fails.
+   *
+   * @param description - Session description
+   * @returns Array of tags
+   */
+  async generateTags(description: string): Promise<readonly string[]> {
+    try {
+      const prompt = `Extract 3-5 relevant tags from this description: "${description}"
+
+Return ONLY comma-separated tags in lowercase, no quotes or extra text.
+Example: coding, typescript, help`;
+
+      const request: CompletionRequest = {
+        model: this.config.model,
+        messages: [
+          {
+            id: randomUUID(),
+            role: 'user',
+            content: prompt,
+            timestamp: Date.now(),
+          },
+        ],
+        maxTokens: 50,
+        temperature: 0.3,
+      };
+
+      const response = await this.provider.complete(request);
+      const tags = response.message.content
+        .trim()
+        .split(',')
+        .map(tag => tag.trim().toLowerCase())
+        .filter(tag => tag.length > 0);
+
+      return tags.length > 0 ? tags : ['common'];
+    } catch (error) {
+      // Fallback to common tag
+      return ['common'];
+    }
+  }
+
+  /**
+   * Update session description.
+   *
+   * @param sessionId - Session ID
+   * @param description - New description
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async updateDescription(sessionId: string, description: string): Promise<void> {
+    const session = await this.resumeSession(sessionId);
+
+    const updatedMetadata: SessionMetadata = {
+      ...session.metadata,
+      description,
+    };
+
+    const updatedSession: Session = {
+      ...session,
+      updatedAt: Date.now(),
+      metadata: updatedMetadata,
+    };
+
+    await this.store.save(updatedSession);
+  }
+
+  /**
+   * Update session tags.
+   *
+   * Tags are normalized to lowercase and deduplicated.
+   *
+   * @param sessionId - Session ID
+   * @param tags - New tags
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async updateTags(sessionId: string, tags: readonly string[]): Promise<void> {
+    const session = await this.resumeSession(sessionId);
+
+    // Normalize tags: lowercase, deduplicate
+    const normalizedTags = [...new Set(tags.map(tag => tag.toLowerCase()))];
+
+    const updatedMetadata: SessionMetadata = {
+      ...session.metadata,
+      tags: normalizedTags,
+    };
+
+    const updatedSession: Session = {
+      ...session,
+      updatedAt: Date.now(),
+      metadata: updatedMetadata,
+    };
+
+    await this.store.save(updatedSession);
+  }
+
+  /**
+   * Rename a session.
+   *
+   * Loads the session, saves it with the new ID, and deletes the old one.
+   * This operation is NOT atomic.
+   *
+   * @param oldId - Current session ID
+   * @param newId - New session ID
+   * @throws {SessionNotFoundError} If old session does not exist
+   * @throws {Error} If new ID already exists or is invalid
+   */
+  async renameSession(oldId: string, newId: string): Promise<void> {
+    // Load old session
+    const session = await this.resumeSession(oldId);
+
+    // Check if new ID already exists
+    const existing = await this.store.load(newId);
+    if (existing !== null) {
+      throw new Error(`Session ${newId} already exists`);
+    }
+
+    // Create new session with updated ID
+    const renamedSession: Session = {
+      ...session,
+      id: newId,
+      updatedAt: Date.now(),
+    };
+
+    // Save with new ID and delete old
+    await this.store.save(renamedSession);
+    await this.store.delete(oldId);
+  }
+
+  /**
+   * Search sessions by tags and description.
+   *
+   * @param filters - Search filters
+   * @returns Array of matching sessions
+   */
+  async searchSessions(filters: SearchFilters): Promise<readonly SearchResult[]> {
+    const allSessions = await this.store.list();
+    const results: SearchResult[] = [];
+
+    for (const summary of allSessions) {
+      const session = await this.store.load(summary.id);
+      if (session === null) continue;
+
+      // Filter by tag
+      if (filters.tag) {
+        if (!session.metadata.tags.includes(filters.tag.toLowerCase())) {
+          continue;
+        }
+      }
+
+      // Filter by description query (case-insensitive)
+      if (filters.query) {
+        const query = filters.query.toLowerCase();
+        if (!session.metadata.description.toLowerCase().includes(query)) {
+          continue;
+        }
+      }
+
+      results.push({
+        id: session.id,
+        description: session.metadata.description,
+        tags: session.metadata.tags,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        messageCount: session.messages.length,
+      });
+    }
+
+    return results;
+  }
+}

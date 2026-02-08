@@ -12,6 +12,8 @@ export interface SessionMetadata {
   readonly totalTokens: number;
   readonly toolCallCount: number;
   readonly turnCount: number;
+  readonly description: string;
+  readonly tags: readonly string[];
 }
 
 /** Session state */
