@@ -7,6 +7,8 @@ import type {
   Session,
   SessionStore,
   SessionMetadata,
+  SessionGroup,
+  SessionGroupStore,
 } from '../types/sessions.js';
 import type { ModelProvider, CompletionRequest } from '../types/providers.js';
 import type { UserMessage, AssistantMessage } from '../types/messages.js';
@@ -97,6 +99,7 @@ export class SessionManager {
   private readonly store: SessionStore;
   private readonly provider: ModelProvider;
   private readonly config: SessionManagerConfig;
+  private readonly groupStore: SessionGroupStore | null;
 
   /**
    * Create a new SessionManager.
@@ -104,15 +107,18 @@ export class SessionManager {
    * @param store - Session store for persistence
    * @param provider - Model provider for completions
    * @param config - Configuration options
+   * @param groupStore - Optional group store for session organization
    */
   constructor(
     store: SessionStore,
     provider: ModelProvider,
-    config: SessionManagerConfig
+    config: SessionManagerConfig,
+    groupStore?: SessionGroupStore
   ) {
     this.store = store;
     this.provider = provider;
     this.config = config;
+    this.groupStore = groupStore ?? null;
   }
 
   /**
@@ -563,5 +569,178 @@ Example: coding, typescript, help`;
     }
 
     return results;
+  }
+
+  // ============================================================
+  // Session Group Management
+  // ============================================================
+
+  /**
+   * Create a new session group.
+   *
+   * Groups are manually created by users to organize sessions.
+   * Group names must be unique and can contain any characters.
+   *
+   * @param name - Group name (unique identifier)
+   * @param sessionIds - Optional initial session IDs to add to group
+   * @throws {Error} If group store is not configured
+   * @throws {Error} If group name already exists
+   */
+  async createGroup(name: string, sessionIds?: readonly string[]): Promise<void> {
+    if (!this.groupStore) {
+      throw new Error('Group store not configured. Pass groupStore to SessionManager constructor.');
+    }
+
+    // Check if group already exists
+    const existing = await this.groupStore.loadGroup(name);
+    if (existing !== null) {
+      throw new Error(`Group "${name}" already exists`);
+    }
+
+    const now = Date.now();
+    const group: SessionGroup = {
+      name,
+      sessionIds: sessionIds ?? [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.groupStore.saveGroup(group);
+  }
+
+  /**
+   * Add session to a group.
+   *
+   * If the session is already in the group, this is a no-op.
+   *
+   * @param sessionId - Session ID to add
+   * @param groupName - Group name
+   * @throws {Error} If group store is not configured
+   * @throws {Error} If group does not exist
+   */
+  async addSessionToGroup(sessionId: string, groupName: string): Promise<void> {
+    if (!this.groupStore) {
+      throw new Error('Group store not configured. Pass groupStore to SessionManager constructor.');
+    }
+
+    const group = await this.groupStore.loadGroup(groupName);
+    if (group === null) {
+      throw new Error(`Group "${groupName}" does not exist`);
+    }
+
+    // Check if session already in group
+    if (group.sessionIds.includes(sessionId)) {
+      return; // Already in group, no-op
+    }
+
+    const updatedGroup: SessionGroup = {
+      ...group,
+      sessionIds: [...group.sessionIds, sessionId],
+      updatedAt: Date.now(),
+    };
+
+    await this.groupStore.saveGroup(updatedGroup);
+  }
+
+  /**
+   * Remove session from a group.
+   *
+   * If the session is not in the group, this is a no-op.
+   *
+   * @param sessionId - Session ID to remove
+   * @param groupName - Group name
+   * @throws {Error} If group store is not configured
+   * @throws {Error} If group does not exist
+   */
+  async removeSessionFromGroup(sessionId: string, groupName: string): Promise<void> {
+    if (!this.groupStore) {
+      throw new Error('Group store not configured. Pass groupStore to SessionManager constructor.');
+    }
+
+    const group = await this.groupStore.loadGroup(groupName);
+    if (group === null) {
+      throw new Error(`Group "${groupName}" does not exist`);
+    }
+
+    // Filter out the session
+    const updatedSessionIds = group.sessionIds.filter(id => id !== sessionId);
+
+    // If no change, return early
+    if (updatedSessionIds.length === group.sessionIds.length) {
+      return; // Session not in group, no-op
+    }
+
+    const updatedGroup: SessionGroup = {
+      ...group,
+      sessionIds: updatedSessionIds,
+      updatedAt: Date.now(),
+    };
+
+    await this.groupStore.saveGroup(updatedGroup);
+  }
+
+  /**
+   * Get a group by name.
+   *
+   * @param name - Group name
+   * @returns Group object or null if not found
+   * @throws {Error} If group store is not configured
+   */
+  async getGroup(name: string): Promise<SessionGroup | null> {
+    if (!this.groupStore) {
+      throw new Error('Group store not configured. Pass groupStore to SessionManager constructor.');
+    }
+
+    return this.groupStore.loadGroup(name);
+  }
+
+  /**
+   * List all groups.
+   *
+   * @returns Array of all groups
+   * @throws {Error} If group store is not configured
+   */
+  async listGroups(): Promise<readonly SessionGroup[]> {
+    if (!this.groupStore) {
+      throw new Error('Group store not configured. Pass groupStore to SessionManager constructor.');
+    }
+
+    return this.groupStore.listGroups();
+  }
+
+  /**
+   * Delete a group.
+   *
+   * This only deletes the group, not the sessions in it.
+   *
+   * @param name - Group name to delete
+   * @throws {Error} If group store is not configured
+   */
+  async deleteGroup(name: string): Promise<void> {
+    if (!this.groupStore) {
+      throw new Error('Group store not configured. Pass groupStore to SessionManager constructor.');
+    }
+
+    await this.groupStore.deleteGroup(name);
+  }
+
+  /**
+   * Get all groups that contain a specific session.
+   *
+   * @param sessionId - Session ID to search for
+   * @returns Array of group names containing the session
+   * @throws {Error} If group store is not configured
+   */
+  async getSessionGroups(sessionId: string): Promise<readonly string[]> {
+    if (!this.groupStore) {
+      throw new Error('Group store not configured. Pass groupStore to SessionManager constructor.');
+    }
+
+    const allGroups = await this.groupStore.listGroups();
+    const containingGroups = allGroups
+      .filter(group => group.sessionIds.includes(sessionId))
+      .map(group => group.name);
+
+    return containingGroups;
   }
 }

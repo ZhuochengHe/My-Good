@@ -35,6 +35,14 @@ export interface SessionSummary {
   readonly messageCount: number;
 }
 
+/** Session group for manual organization */
+export interface SessionGroup {
+  readonly name: string;
+  readonly sessionIds: readonly string[];
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 /** Session store interface */
 export interface SessionStore {
   /**
@@ -66,4 +74,27 @@ export interface SessionStore {
    * Clear all messages but keep session.
    */
   clear(sessionId: string): Promise<void>;
+}
+
+/** Session group store interface */
+export interface SessionGroupStore {
+  /**
+   * Load group by name.
+   */
+  loadGroup(name: string): Promise<SessionGroup | null>;
+
+  /**
+   * Save group.
+   */
+  saveGroup(group: SessionGroup): Promise<void>;
+
+  /**
+   * List all groups.
+   */
+  listGroups(): Promise<readonly SessionGroup[]>;
+
+  /**
+   * Delete group.
+   */
+  deleteGroup(name: string): Promise<void>;
 }

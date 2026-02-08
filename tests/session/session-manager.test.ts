@@ -667,4 +667,161 @@ describe('SessionManager', () => {
       expect(session?.id).toBe(sessionId);
     });
   });
+
+  describe('Group Management', () => {
+    let groupStore: any;
+    let managerWithGroups: any;
+
+    beforeEach(async () => {
+      // Create group store
+      const { JsonGroupStore } = await import('../../src/session/group-store.js');
+      groupStore = new JsonGroupStore(testDir);
+
+      // Create manager with group store
+      const store = new JsonlSessionStore(testDir);
+      managerWithGroups = new SessionManager(store, mockProvider, {
+        model: 'claude-sonnet-4-20250514',
+        agentId: 'test-agent',
+      }, groupStore);
+    });
+
+    describe('createGroup', () => {
+      it('should create a new group without sessions', async () => {
+        await managerWithGroups.createGroup('work-projects');
+
+        const group = await managerWithGroups.getGroup('work-projects');
+        expect(group).toBeDefined();
+        expect(group?.name).toBe('work-projects');
+        expect(group?.sessionIds).toEqual([]);
+      });
+
+      it('should create a group with initial sessions', async () => {
+        await managerWithGroups.createGroup('my-group', ['session-1', 'session-2']);
+
+        const group = await managerWithGroups.getGroup('my-group');
+        expect(group?.sessionIds).toEqual(['session-1', 'session-2']);
+      });
+
+      it('should throw error if group already exists', async () => {
+        await managerWithGroups.createGroup('duplicate');
+
+        await expect(
+          managerWithGroups.createGroup('duplicate')
+        ).rejects.toThrow('already exists');
+      });
+
+      it('should throw error if group store not configured', async () => {
+        await expect(
+          sessionManager.createGroup('test')
+        ).rejects.toThrow('Group store not configured');
+      });
+    });
+
+    describe('addSessionToGroup', () => {
+      it('should add session to group', async () => {
+        await managerWithGroups.createGroup('my-group');
+        await managerWithGroups.addSessionToGroup('session-1', 'my-group');
+
+        const group = await managerWithGroups.getGroup('my-group');
+        expect(group?.sessionIds).toContain('session-1');
+      });
+
+      it('should not duplicate session if already in group', async () => {
+        await managerWithGroups.createGroup('my-group', ['session-1']);
+        await managerWithGroups.addSessionToGroup('session-1', 'my-group');
+
+        const group = await managerWithGroups.getGroup('my-group');
+        expect(group?.sessionIds).toEqual(['session-1']);
+      });
+
+      it('should throw error if group does not exist', async () => {
+        await expect(
+          managerWithGroups.addSessionToGroup('session-1', 'nonexistent')
+        ).rejects.toThrow('does not exist');
+      });
+    });
+
+    describe('removeSessionFromGroup', () => {
+      it('should remove session from group', async () => {
+        await managerWithGroups.createGroup('my-group', ['session-1', 'session-2']);
+        await managerWithGroups.removeSessionFromGroup('session-1', 'my-group');
+
+        const group = await managerWithGroups.getGroup('my-group');
+        expect(group?.sessionIds).toEqual(['session-2']);
+      });
+
+      it('should be no-op if session not in group', async () => {
+        await managerWithGroups.createGroup('my-group', ['session-1']);
+        await managerWithGroups.removeSessionFromGroup('session-2', 'my-group');
+
+        const group = await managerWithGroups.getGroup('my-group');
+        expect(group?.sessionIds).toEqual(['session-1']);
+      });
+
+      it('should throw error if group does not exist', async () => {
+        await expect(
+          managerWithGroups.removeSessionFromGroup('session-1', 'nonexistent')
+        ).rejects.toThrow('does not exist');
+      });
+    });
+
+    describe('listGroups', () => {
+      it('should return empty array if no groups exist', async () => {
+        const groups = await managerWithGroups.listGroups();
+        expect(groups).toEqual([]);
+      });
+
+      it('should list all groups', async () => {
+        await managerWithGroups.createGroup('group-1');
+        await managerWithGroups.createGroup('group-2');
+
+        const groups = await managerWithGroups.listGroups();
+        expect(groups.length).toBe(2);
+        expect(groups.map((g: any) => g.name)).toContain('group-1');
+        expect(groups.map((g: any) => g.name)).toContain('group-2');
+      });
+    });
+
+    describe('deleteGroup', () => {
+      it('should delete a group', async () => {
+        await managerWithGroups.createGroup('to-delete');
+        await managerWithGroups.deleteGroup('to-delete');
+
+        const group = await managerWithGroups.getGroup('to-delete');
+        expect(group).toBeNull();
+      });
+
+      it('should not affect sessions when deleting group', async () => {
+        const sessionId = await managerWithGroups.createSession();
+        await managerWithGroups.createGroup('my-group', [sessionId]);
+        await managerWithGroups.deleteGroup('my-group');
+
+        const session = await managerWithGroups.loadSession(sessionId);
+        expect(session).not.toBeNull();
+      });
+    });
+
+    describe('getSessionGroups', () => {
+      it('should return empty array if session not in any group', async () => {
+        const sessionId = await managerWithGroups.createSession();
+        const groups = await managerWithGroups.getSessionGroups(sessionId);
+
+        expect(groups).toEqual([]);
+      });
+
+      it('should return all groups containing the session', async () => {
+        const sessionId = await managerWithGroups.createSession();
+        await managerWithGroups.createGroup('group-1', [sessionId]);
+        await managerWithGroups.createGroup('group-2', [sessionId, 'other-session']);
+        await managerWithGroups.createGroup('group-3', ['different-session']);
+
+        const groups = await managerWithGroups.getSessionGroups(sessionId);
+
+        expect(groups.length).toBe(2);
+        expect(groups).toContain('group-1');
+        expect(groups).toContain('group-2');
+        expect(groups).not.toContain('group-3');
+      });
+    });
+  });
 });
