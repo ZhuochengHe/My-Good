@@ -77,11 +77,11 @@ describe('SessionManager', () => {
       expect(sessionId).toBe(customId);
     });
 
-    it('should allow custom tags', async () => {
-      const sessionId = await sessionManager.createSession({ tags: ['custom', 'test'] });
+    it('should initialize with common tag only', async () => {
+      const sessionId = await sessionManager.createSession();
       const session = await sessionManager.loadSession(sessionId);
 
-      expect(session?.metadata.tags).toEqual(['custom', 'test']);
+      expect(session?.metadata.tags).toEqual(['common']);
     });
 
     it('should throw error if session ID already exists', async () => {
@@ -182,18 +182,32 @@ describe('SessionManager', () => {
         model: 'claude-sonnet-4-20250514',
       };
 
-      // Mock responses: chat1, description, tags, chat2
-      const mockDescResponse: CompletionResponse = {
+      // Mock responses for turn 1: chat, description
+      const mockDescResponse1: CompletionResponse = {
         message: {
-          id: 'desc',
+          id: 'desc1',
           role: 'assistant',
-          content: 'Session description',
+          content: 'First description',
           stopReason: 'end_turn',
           timestamp: Date.now(),
         },
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, // Don't count metadata generation
         model: 'claude-sonnet-4-20250514',
       };
+
+      // Mock responses for turn 2: chat, updated description, tags
+      const mockDescResponse2: CompletionResponse = {
+        message: {
+          id: 'desc2',
+          role: 'assistant',
+          content: 'Updated description',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, // Don't count metadata generation
+        model: 'claude-sonnet-4-20250514',
+      };
+
       const mockTagsResponse: CompletionResponse = {
         message: {
           id: 'tags',
@@ -202,21 +216,22 @@ describe('SessionManager', () => {
           stopReason: 'end_turn',
           timestamp: Date.now(),
         },
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, // Don't count metadata generation
         model: 'claude-sonnet-4-20250514',
       };
 
       vi.mocked(mockProvider.complete)
         .mockResolvedValueOnce(mockResponse1)
-        .mockResolvedValueOnce(mockDescResponse)
-        .mockResolvedValueOnce(mockTagsResponse)
-        .mockResolvedValueOnce(mockResponse2);
+        .mockResolvedValueOnce(mockDescResponse1)
+        .mockResolvedValueOnce(mockResponse2)
+        .mockResolvedValueOnce(mockDescResponse2)
+        .mockResolvedValueOnce(mockTagsResponse);
 
       await sessionManager.run(sessionId, 'First input');
       await sessionManager.run(sessionId, 'Second input');
 
       const session = await sessionManager.loadSession(sessionId);
-      expect(session?.metadata.totalTokens).toBe(45); // 15 + 30
+      expect(session?.metadata.totalTokens).toBe(45); // 15 + 30 (only conversation tokens)
       expect(session?.metadata.turnCount).toBe(2);
     });
 
@@ -281,6 +296,7 @@ describe('SessionManager', () => {
 
       const session = await sessionManager.loadSession(sessionId);
       expect(session?.metadata.description).toBe('Weather forecast inquiry');
+      expect(session?.metadata.tags).toEqual(['common']); // Tags not generated yet
     });
 
     it('should use fallback description if generation fails', async () => {
@@ -308,14 +324,14 @@ describe('SessionManager', () => {
       expect(session?.metadata.description).toMatch(/Session started with: What is the weather/);
     });
 
-    it('should generate tags from description', async () => {
+    it('should generate tags after second turn', async () => {
       const sessionId = await sessionManager.createSession();
 
-      const mockChatResponse: CompletionResponse = {
+      const mockChatResponse1: CompletionResponse = {
         message: {
           id: 'msg-1',
           role: 'assistant',
-          content: 'Response',
+          content: 'Response 1',
           stopReason: 'end_turn',
           timestamp: Date.now(),
         },
@@ -335,11 +351,35 @@ describe('SessionManager', () => {
         model: 'claude-sonnet-4-20250514',
       };
 
-      const mockTagsResponse: CompletionResponse = {
+      const mockChatResponse2: CompletionResponse = {
         message: {
           id: 'msg-3',
           role: 'assistant',
-          content: 'weather, forecast, inquiry',
+          content: 'Response 2',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        model: 'claude-sonnet-4-20250514',
+      };
+
+      const mockUpdatedDescriptionResponse: CompletionResponse = {
+        message: {
+          id: 'msg-4',
+          role: 'assistant',
+          content: 'Weather forecast and temperature',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        model: 'claude-sonnet-4-20250514',
+      };
+
+      const mockTagsResponse: CompletionResponse = {
+        message: {
+          id: 'msg-5',
+          role: 'assistant',
+          content: 'weather, forecast, temperature',
           stopReason: 'end_turn',
           timestamp: Date.now(),
         },
@@ -348,24 +388,33 @@ describe('SessionManager', () => {
       };
 
       vi.mocked(mockProvider.complete)
-        .mockResolvedValueOnce(mockChatResponse)
+        .mockResolvedValueOnce(mockChatResponse1)
         .mockResolvedValueOnce(mockDescriptionResponse)
+        .mockResolvedValueOnce(mockChatResponse2)
+        .mockResolvedValueOnce(mockUpdatedDescriptionResponse)
         .mockResolvedValueOnce(mockTagsResponse);
 
+      // First turn - generates description
       await sessionManager.run(sessionId, 'What is the weather?');
+      let session = await sessionManager.loadSession(sessionId);
+      expect(session?.metadata.description).toBe('Weather forecast inquiry');
+      expect(session?.metadata.tags).toEqual(['common']); // Tags not yet generated
 
-      const session = await sessionManager.loadSession(sessionId);
-      expect(session?.metadata.tags).toEqual(['weather', 'forecast', 'inquiry']);
+      // Second turn - regenerates description with both inputs and generates tags
+      await sessionManager.run(sessionId, 'What about temperature?');
+      session = await sessionManager.loadSession(sessionId);
+      expect(session?.metadata.description).toBe('Weather forecast and temperature');
+      expect(session?.metadata.tags).toEqual(['weather', 'forecast', 'temperature']);
     });
 
     it('should use fallback tags if generation fails', async () => {
       const sessionId = await sessionManager.createSession();
 
-      const mockChatResponse: CompletionResponse = {
+      const mockChatResponse1: CompletionResponse = {
         message: {
           id: 'msg-1',
           role: 'assistant',
-          content: 'Response',
+          content: 'Response 1',
           stopReason: 'end_turn',
           timestamp: Date.now(),
         },
@@ -385,15 +434,45 @@ describe('SessionManager', () => {
         model: 'claude-sonnet-4-20250514',
       };
 
+      const mockChatResponse2: CompletionResponse = {
+        message: {
+          id: 'msg-3',
+          role: 'assistant',
+          content: 'Response 2',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        model: 'claude-sonnet-4-20250514',
+      };
+
+      const mockUpdatedDescriptionResponse: CompletionResponse = {
+        message: {
+          id: 'msg-4',
+          role: 'assistant',
+          content: 'Weather inquiry continued',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        model: 'claude-sonnet-4-20250514',
+      };
+
       vi.mocked(mockProvider.complete)
-        .mockResolvedValueOnce(mockChatResponse)
+        .mockResolvedValueOnce(mockChatResponse1)
         .mockResolvedValueOnce(mockDescriptionResponse)
+        .mockResolvedValueOnce(mockChatResponse2)
+        .mockResolvedValueOnce(mockUpdatedDescriptionResponse)
         .mockRejectedValueOnce(new Error('API failure'));
 
+      // First turn
       await sessionManager.run(sessionId, 'What is the weather?');
 
+      // Second turn - tags generation fails
+      await sessionManager.run(sessionId, 'Tell me more');
+
       const session = await sessionManager.loadSession(sessionId);
-      expect(session?.metadata.tags).toEqual(['common']);
+      expect(session?.metadata.tags).toEqual(['common']); // Fallback to common
     });
   });
 
@@ -473,17 +552,43 @@ describe('SessionManager', () => {
     });
   });
 
+  describe('listSessions', () => {
+    it('should return all sessions', async () => {
+      const session1 = await sessionManager.createSession();
+      await sessionManager.updateDescription(session1, 'First session');
+      await sessionManager.updateTags(session1, ['test', 'one']);
+
+      const session2 = await sessionManager.createSession();
+      await sessionManager.updateDescription(session2, 'Second session');
+      await sessionManager.updateTags(session2, ['test', 'two']);
+
+      const results = await sessionManager.listSessions();
+
+      expect(results.length).toBe(2);
+      expect(results.map(s => s.description)).toContain('First session');
+      expect(results.map(s => s.description)).toContain('Second session');
+    });
+
+    it('should return empty array if no sessions exist', async () => {
+      const results = await sessionManager.listSessions();
+      expect(results).toEqual([]);
+    });
+  });
+
   describe('searchSessions', () => {
     beforeEach(async () => {
       // Create multiple sessions with different tags and descriptions
-      const session1 = await sessionManager.createSession({ tags: ['weather', 'forecast'] });
+      const session1 = await sessionManager.createSession();
       await sessionManager.updateDescription(session1, 'Weather forecast for tomorrow');
+      await sessionManager.updateTags(session1, ['weather', 'forecast']);
 
-      const session2 = await sessionManager.createSession({ tags: ['coding', 'typescript'] });
+      const session2 = await sessionManager.createSession();
       await sessionManager.updateDescription(session2, 'TypeScript coding help');
+      await sessionManager.updateTags(session2, ['coding', 'typescript']);
 
-      const session3 = await sessionManager.createSession({ tags: ['weather', 'data'] });
+      const session3 = await sessionManager.createSession();
       await sessionManager.updateDescription(session3, 'Historical weather data analysis');
+      await sessionManager.updateTags(session3, ['weather', 'data']);
     });
 
     it('should filter sessions by tag', async () => {
