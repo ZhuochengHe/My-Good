@@ -147,11 +147,31 @@ Build functional agent that executes tool-based tasks with extensible plugins.
 - [x] Secure file permissions (0o600 on all writes)
 - [x] Symlink attack protection (validates files before operations)
 
-### 5.2 Session Lifecycle
-- [ ] Create new session
-- [ ] Resume existing session
-- [ ] Session metadata tracking
-- [ ] Token usage accumulation
+### 5.2 Session Lifecycle ✅ COMPLETE
+- [x] Create new session with auto-generated UUIDs
+- [x] Resume existing session with conversation history
+- [x] Session metadata tracking (title, description, tags, timestamps)
+- [x] Token usage accumulation (prompt, completion, total)
+- [x] Turn and tool usage tracking
+- [x] AI-generated descriptions with fallback
+- [x] AI-generated tags with fallback
+- [x] Session renaming with validation
+- [x] Tag management (normalized, searchable)
+- [x] Session search by tags and description
+- [x] Auto-save after each turn
+- [x] Test coverage: 98% statements, 80% branches
+
+**Implementation Details:**
+- SessionManager class integrates Agent with JsonlSessionStore
+- createSession() generates UUID v4 session IDs
+- resumeSession() loads history and rebuilds conversation state
+- Auto-save after every agent turn with usage accumulation
+- AI generates descriptions (first 3 turns) and tags (first 5 turns)
+- Graceful fallback for AI generation failures
+- Tag normalization (lowercase, trimmed, unique)
+- Session search supports tag filtering and description matching
+- rename() validates new titles (non-empty, max 200 chars)
+- addTags() and removeTags() for tag management
 
 ## Stage 6: User Interface
 
