@@ -633,6 +633,14 @@ describe('SessionManager', () => {
 
       expect(results.length).toBe(1);
     });
+
+    it('should not filter by group if groupStore not configured', async () => {
+      // sessionManager doesn't have groupStore, so group filter is ignored
+      const results = await sessionManager.searchSessions({ group: 'any-group' });
+
+      // Should return all sessions (group filter ignored)
+      expect(results.length).toBe(3);
+    });
   });
 
   describe('updateDescription', () => {
@@ -821,6 +829,56 @@ describe('SessionManager', () => {
         expect(groups).toContain('group-1');
         expect(groups).toContain('group-2');
         expect(groups).not.toContain('group-3');
+      });
+    });
+
+    describe('searchSessions with groups', () => {
+      it('should filter sessions by group', async () => {
+        const session1 = await managerWithGroups.createSession();
+        const session2 = await managerWithGroups.createSession();
+        const session3 = await managerWithGroups.createSession();
+
+        await managerWithGroups.updateDescription(session1, 'Session 1');
+        await managerWithGroups.updateDescription(session2, 'Session 2');
+        await managerWithGroups.updateDescription(session3, 'Session 3');
+
+        await managerWithGroups.createGroup('work', [session1, session2]);
+        await managerWithGroups.createGroup('personal', [session3]);
+
+        const results = await managerWithGroups.searchSessions({ group: 'work' });
+
+        expect(results.length).toBe(2);
+        expect(results.map((s: any) => s.id)).toContain(session1);
+        expect(results.map((s: any) => s.id)).toContain(session2);
+        expect(results.map((s: any) => s.id)).not.toContain(session3);
+      });
+
+      it('should combine group and tag filters', async () => {
+        const session1 = await managerWithGroups.createSession();
+        const session2 = await managerWithGroups.createSession();
+        const session3 = await managerWithGroups.createSession();
+
+        await managerWithGroups.updateTags(session1, ['typescript', 'coding']);
+        await managerWithGroups.updateTags(session2, ['python', 'coding']);
+        await managerWithGroups.updateTags(session3, ['typescript', 'testing']);
+
+        await managerWithGroups.createGroup('project-x', [session1, session2, session3]);
+
+        const results = await managerWithGroups.searchSessions({
+          group: 'project-x',
+          tag: 'typescript'
+        });
+
+        expect(results.length).toBe(2);
+        expect(results.map((s: any) => s.id)).toContain(session1);
+        expect(results.map((s: any) => s.id)).not.toContain(session2);
+        expect(results.map((s: any) => s.id)).toContain(session3);
+      });
+
+      it('should return empty array if group does not exist', async () => {
+        const results = await managerWithGroups.searchSessions({ group: 'nonexistent' });
+
+        expect(results).toEqual([]);
       });
     });
   });

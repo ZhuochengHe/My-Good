@@ -53,6 +53,8 @@ export interface SearchFilters {
   readonly tag?: string;
   /** Filter by description text (case-insensitive) */
   readonly query?: string;
+  /** Filter by group name */
+  readonly group?: string;
 }
 
 /** Session search result */
@@ -530,18 +532,38 @@ Example: coding, typescript, help`;
   }
 
   /**
-   * Search sessions by tags and description.
+   * Search sessions by tags, description, and group.
    *
    * @param filters - Search filters
    * @returns Array of matching sessions
    */
   async searchSessions(filters: SearchFilters): Promise<readonly SearchResult[]> {
     const allSessions = await this.store.list();
+
+    // If filtering by group, get sessions in that group first
+    let groupSessionIds: Set<string> | null = null;
+    if (filters.group && this.groupStore) {
+      const group = await this.groupStore.loadGroup(filters.group);
+      if (group) {
+        groupSessionIds = new Set(group.sessionIds);
+      } else {
+        // Group doesn't exist, return empty results
+        return [];
+      }
+    }
+
     const results: SearchResult[] = [];
 
     for (const summary of allSessions) {
       const session = await this.store.load(summary.id);
       if (session === null) continue;
+
+      // Filter by group (if specified)
+      if (groupSessionIds !== null) {
+        if (!groupSessionIds.has(session.id)) {
+          continue;
+        }
+      }
 
       // Filter by tag
       if (filters.tag) {
