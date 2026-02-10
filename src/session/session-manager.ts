@@ -765,4 +765,30 @@ Example: coding, typescript, help`;
 
     return containingGroups;
   }
+
+  /**
+   * Delete a session.
+   * Removes the session from storage and all associated groups.
+   *
+   * @param sessionId - Session ID to delete
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    // Check if session exists
+    const session = await this.store.load(sessionId);
+    if (!session) {
+      throw new SessionNotFoundError(sessionId);
+    }
+
+    // Remove from all groups if group store is configured
+    if (this.groupStore) {
+      const groups = await this.getSessionGroups(sessionId);
+      for (const groupName of groups) {
+        await this.removeSessionFromGroup(sessionId, groupName);
+      }
+    }
+
+    // Delete the session
+    await this.store.delete(sessionId);
+  }
 }

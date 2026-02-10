@@ -1,6 +1,6 @@
 # Project TODO
 
-**Updated:** 2026-02-04
+**Updated:** 2026-02-09
 
 ## Completed Decisions
 
@@ -256,20 +256,34 @@
   - Tag normalization and management
   - Session search by tags and description
 
-### Stage 6: CLI
-- [ ] Set up Commander.js
-- [ ] Implement `chat` command
-- [ ] Implement `run` command
-- [ ] Implement `plugins` commands
-- [ ] Implement `config` commands
-- [ ] Implement `session` commands
+### Stage 6: CLI ✅ COMPLETE
+- [x] Set up Commander.js
+- [x] Implement `chat` command (interactive and single-message mode)
+- [x] Implement `plugin` commands (list, info)
+- [x] Implement `config` commands (show, init)
+- [x] Implement `session` commands (list, show, delete)
+- [x] Bootstrap system for dependency initialization
+- [x] OutputAdapter and InputReader abstractions
+- [x] Multi-line input support with '---' terminator
+- [x] Streaming text output
+- [x] Tool execution progress messages
+- [x] Ctrl+C handling
+- [x] Session filtering (by tag and query)
+- [x] Tests written first (TDD) - 105 tests, 86.14% coverage
+  - Bootstrap tests with config/plugin/session initialization
+  - Input reader tests (single-line, multi-line, EOF)
+  - Output adapter tests (write, error, success, section)
+  - Command tests (config, plugin, session, chat)
+  - Integration tests (end-to-end CLI scenarios)
 
 ### Stage 7: Polish
-- [ ] Comprehensive error handling
-- [ ] Streaming support
-- [ ] Unit tests (≥80% coverage)
-- [ ] Integration tests
-- [ ] README and quickstart guide
+- [ ] Comprehensive error handling review
+- [x] Streaming support ✅
+- [x] Unit tests (≥80% coverage) ✅ (86.14% overall, 830 tests)
+- [x] Integration tests ✅
+- [ ] README quickstart guide update
+- [ ] Performance optimization review
+- [ ] Security audit
 
 ---
 

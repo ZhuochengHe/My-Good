@@ -17,7 +17,11 @@ export * from './plugins/index.js';
 // Session module
 export * from './session/index.js';
 
-// TODO: Export other modules as they are implemented
-// export * from './providers/index.js';
-// export * from './config/index.js';
-// export * from './events/index.js';
+// CLI module
+export { main } from './cli/index.js';
+export { bootstrap } from './cli/bootstrap.js';
+export type { BootstrapOptions, BootstrapResult } from './cli/bootstrap.js';
+export type { OutputAdapter, TokenUsage } from './cli/output-adapter.js';
+export type { InputReader } from './cli/input-reader.js';
+export { PlainTextOutput } from './cli/plain-text-output.js';
+export { StdinInputReader } from './cli/stdin-input-reader.js';
