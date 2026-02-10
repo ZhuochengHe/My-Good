@@ -1,6 +1,30 @@
 # Development Log
 
 
+## 2026-02-10 - Stage 6: CLI Interface - Test Fix
+
+**Branch:** `stage-6-cli-interface`
+**PR:** #14
+
+### Issue Fixed
+
+Fixed flaky timing test failing on Node.js 18.x in CI:
+- **Test:** `tests/plugins/tool-executor.test.ts` - "tracks execution duration accurately"
+- **Problem:** Timer resolution differences between Node.js versions
+  - Test expected exactly 100ms after `setTimeout(resolve, 100)`
+  - Node.js 18.x measured 99ms, causing assertion failure
+- **Solution:** Added 5ms tolerance (`toBeGreaterThanOrEqual(95)`)
+- **Result:** All CI checks passing (build, lint, test 18.x, test 20.x) ✅
+
+### Test Results
+- All 830 tests passing on Node.js 18.x, 20.x, and 24.x
+- CI: ✅ Build, ✅ Lint, ✅ Test (18.x), ✅ Test (20.x)
+
+### Key Learning
+Timing-based tests need tolerance for platform/version differences. Timer precision can vary across Node.js versions and operating systems.
+
+---
+
 ## 2026-02-04 (Part 2) - Stage 5.1: JSONL Session Store (Complete)
 
 **Branch:** `stage-5.1-session-store`
