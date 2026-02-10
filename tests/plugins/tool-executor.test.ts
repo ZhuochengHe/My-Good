@@ -806,7 +806,8 @@ describe('ToolExecutor', () => {
       const result = await executor.executeTool(toolCall, mockContext);
 
       expect(result.success).toBe(true);
-      expect(result.durationMs).toBeGreaterThanOrEqual(100);
+      // Allow small tolerance for timer resolution differences across Node versions
+      expect(result.durationMs).toBeGreaterThanOrEqual(95);
       expect(result.durationMs).toBeLessThan(200); // Should not be way off
     });
   });
