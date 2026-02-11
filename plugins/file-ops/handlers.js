@@ -5,7 +5,88 @@
  */
 
 import { readFile as fsReadFile, writeFile as fsWriteFile, readdir, stat, mkdir } from 'fs/promises';
-import { resolve, dirname, join, isAbsolute } from 'path';
+import { resolve, dirname, join, isAbsolute, basename, extname } from 'path';
+
+/**
+ * Credential detection patterns (duplicated from credential-detector.ts for JS compatibility).
+ */
+const CREDENTIAL_PATTERNS = [
+  /sk-ant-api03-[a-zA-Z0-9_-]{20,}/g,
+  /sk-proj-[a-zA-Z0-9_-]{20,}/g,
+  /sk-(?!ant-|proj-)[a-zA-Z0-9_-]{20,}/g,
+  /gh[posr]_[a-zA-Z0-9]{20,}/g,
+  /AKIA[0-9A-Z]{16}/g,
+  /Bearer\s+[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/gi,
+];
+
+/**
+ * Redact credentials from a string.
+ *
+ * @param {string} input - String potentially containing credentials
+ * @returns {string} String with credentials replaced
+ */
+function detectAndRedactCredentials(input) {
+  let result = input;
+  for (const pattern of CREDENTIAL_PATTERNS) {
+    result = result.replace(pattern, '***REDACTED***');
+  }
+  return result;
+}
+
+/**
+ * Patterns for files that should be blocked from reading due to sensitive content.
+ */
+const BLOCKED_FILE_PATTERNS = [
+  /^\.env(\..+)?$/i,         // .env, .env.local, .env.production, etc.
+  /^config\.ya?ml$/i,        // config.yaml, config.yml
+  /^\.npmrc$/i,              // npm config
+  /^\.gitconfig$/i,          // git config
+  /\.pem$/i,                 // PEM certificates
+  /\.key$/i,                 // Private keys
+  /^id_rsa$/i,               // SSH private key
+  /^id_dsa$/i,               // SSH DSA key
+  /^id_ecdsa$/i,             // SSH ECDSA key
+  /^id_ed25519$/i,           // SSH Ed25519 key
+  /^credentials$/i,          // AWS credentials
+];
+
+/**
+ * Blocked directory patterns that contain sensitive files.
+ */
+const BLOCKED_PATHS = [
+  '.aws/credentials',
+  '.ssh/id_rsa',
+  '.ssh/id_dsa',
+  '.ssh/id_ecdsa',
+  '.ssh/id_ed25519',
+];
+
+/**
+ * Check if a file path should be blocked from reading.
+ *
+ * @param {string} filePath - The file path to check.
+ * @returns {boolean} True if file should be blocked.
+ */
+function isBlockedFile(filePath) {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const fileName = basename(filePath);
+
+  // Check blocked path patterns
+  for (const blockedPath of BLOCKED_PATHS) {
+    if (normalizedPath.includes(blockedPath) || normalizedPath.endsWith(blockedPath)) {
+      return true;
+    }
+  }
+
+  // Check blocked file name patterns
+  for (const pattern of BLOCKED_FILE_PATTERNS) {
+    if (pattern.test(fileName)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 /**
  * Resolves a path relative to the working directory.
@@ -37,6 +118,13 @@ export async function read_file(args, context) {
       };
     }
 
+    // Check if file is blocked due to sensitive content
+    if (isBlockedFile(args.path)) {
+      return {
+        output: `Error: Access to file "${args.path}" is blocked for security reasons (sensitive credential file)`,
+      };
+    }
+
     const encoding = args.encoding || 'utf-8';
     const filePath = resolvePath(args.path, context.workingDirectory);
 
@@ -49,8 +137,12 @@ export async function read_file(args, context) {
     }
 
     const content = await fsReadFile(filePath, encoding);
+
+    // Sanitize any credentials that might be in the file content
+    const sanitizedContent = detectAndRedactCredentials(content);
+
     return {
-      output: content,
+      output: sanitizedContent,
     };
   } catch (error) {
     return {

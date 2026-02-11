@@ -9,11 +9,21 @@ import type {
   SessionMetadata,
   SessionGroup,
   SessionGroupStore,
+  TurnMetadataRecord,
+  ErrorLogRecord,
 } from '../types/sessions.js';
 import type { ModelProvider, CompletionRequest } from '../types/providers.js';
 import type { UserMessage, AssistantMessage } from '../types/messages.js';
+import type {
+  AgentEvent,
+  EventSubscriber,
+  TurnStartEvent,
+  TurnEndEvent,
+  ErrorEvent,
+} from '../types/events.js';
 import { SessionNotFoundError } from '../errors/session.js';
 import { randomUUID } from 'crypto';
+import { JsonlSessionStore } from './jsonl-store.js';
 
 /** Options for creating a new session */
 export interface CreateSessionOptions {
@@ -82,6 +92,9 @@ export interface SessionManagerConfig {
  * Automatically saves sessions after each turn and generates
  * AI-powered descriptions and tags.
  *
+ * Also implements EventSubscriber to persist trace data (turn metadata
+ * and error logs) for debugging and analysis.
+ *
  * Example:
  *   const manager = new SessionManager(store, provider, {
  *     model: 'claude-sonnet-4-20250514',
@@ -97,11 +110,16 @@ export interface SessionManagerConfig {
  *   // Search sessions
  *   const sessions = await manager.searchSessions({ tag: 'coding' });
  */
-export class SessionManager {
+export class SessionManager implements EventSubscriber {
   private readonly store: SessionStore;
   private readonly provider: ModelProvider;
   private readonly config: SessionManagerConfig;
   private readonly groupStore: SessionGroupStore | null;
+
+  // Event tracking state
+  private currentSessionId: string | null = null;
+  private turnStartTimes: Map<number, number> = new Map();
+  private currentTurnNumber: number | null = null;
 
   /**
    * Create a new SessionManager.
@@ -790,5 +808,143 @@ Example: coding, typescript, help`;
 
     // Delete the session
     await this.store.delete(sessionId);
+  }
+
+  // ============================================================
+  // Event Handling - Trace Data Persistence
+  // ============================================================
+
+  /**
+   * Set the current session ID for event tracking.
+   *
+   * Events will be associated with this session until changed or cleared.
+   * Call with null to clear the current session.
+   *
+   * @param sessionId - Session ID to track events for, or null to clear
+   */
+  setCurrentSessionId(sessionId: string | null): void {
+    this.currentSessionId = sessionId;
+    if (sessionId === null) {
+      this.turnStartTimes.clear();
+      this.currentTurnNumber = null;
+    }
+  }
+
+  /**
+   * Handle agent events for trace data persistence.
+   *
+   * Implements EventSubscriber interface to listen to agent lifecycle events
+   * and persist turn metadata and error logs for debugging.
+   *
+   * @param event - Agent event to handle
+   */
+  async onEvent(event: AgentEvent): Promise<void> {
+    // Only process events if we have a current session
+    if (!this.currentSessionId) {
+      return;
+    }
+
+    switch (event.type) {
+      case 'turn_start':
+        this.handleTurnStart(event);
+        break;
+
+      case 'turn_end':
+        await this.handleTurnEnd(event);
+        break;
+
+      case 'error':
+        await this.handleError(event);
+        break;
+
+      // Ignore other event types (text_delta, tool_call_start, etc.)
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Handle turn_start event.
+   * Tracks the start timestamp for duration calculation.
+   */
+  private handleTurnStart(event: TurnStartEvent): void {
+    this.turnStartTimes.set(event.turnNumber, event.timestamp);
+    this.currentTurnNumber = event.turnNumber;
+  }
+
+  /**
+   * Handle turn_end event.
+   * Calculates duration and persists turn metadata.
+   */
+  private async handleTurnEnd(
+    event: TurnEndEvent
+  ): Promise<void> {
+    if (!this.currentSessionId) {
+      return;
+    }
+
+    // Calculate duration
+    const startTime = this.turnStartTimes.get(event.turnNumber);
+    const durationMs = startTime ? event.timestamp - startTime : 0;
+
+    // Create turn metadata record
+    const metadata: TurnMetadataRecord = {
+      type: 'turn_metadata',
+      turnNumber: event.turnNumber,
+      usage: {
+        promptTokens: event.usage.inputTokens,
+        completionTokens: event.usage.outputTokens,
+        totalTokens: event.usage.totalTokens,
+      },
+      durationMs,
+      toolCount: 0, // Default to 0, could be enhanced to track tool calls
+      stopReason: 'end_turn', // Default, could be enhanced with actual stop reason
+      timestamp: event.timestamp,
+    };
+
+    // Persist to store if it's a JsonlSessionStore
+    if (this.store instanceof JsonlSessionStore) {
+      try {
+        await this.store.appendTurnMetadata(this.currentSessionId, metadata);
+      } catch (error) {
+        // Silently fail - trace data is optional
+        // Could add debug logging here
+      }
+    }
+
+    // Clean up start time
+    this.turnStartTimes.delete(event.turnNumber);
+  }
+
+  /**
+   * Handle error event.
+   * Persists error log for debugging.
+   */
+  private async handleError(
+    event: ErrorEvent
+  ): Promise<void> {
+    if (!this.currentSessionId) {
+      return;
+    }
+
+    // Create error log record with conditional properties
+    const errorLog: ErrorLogRecord = {
+      type: 'error_log',
+      ...(this.currentTurnNumber !== null && { turnNumber: this.currentTurnNumber }),
+      error: event.error.code,
+      message: event.error.message,
+      ...(event.error.cause?.message && { context: event.error.cause.message }),
+      timestamp: event.timestamp,
+    };
+
+    // Persist to store if it's a JsonlSessionStore
+    if (this.store instanceof JsonlSessionStore) {
+      try {
+        await this.store.appendErrorLog(this.currentSessionId, errorLog);
+      } catch (error) {
+        // Silently fail - trace data is optional
+        // Could add debug logging here
+      }
+    }
   }
 }

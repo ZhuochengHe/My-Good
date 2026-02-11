@@ -40,18 +40,53 @@ import {
  */
 export class OpenAIProvider extends BaseProvider {
   private readonly client: OpenAI;
+  private readonly models: readonly ModelInfo[];
+  private readonly healthCheckModel: string;
 
   constructor(
     apiKey: string,
     timeout = 30000,
     maxRetries = 3,
-    baseUrl?: string
+    baseUrl?: string,
+    models?: readonly ModelInfo[],
+    healthCheckModel?: string
   ) {
     super('openai', apiKey, timeout, maxRetries);
     this.client = new OpenAI({
       apiKey,
       baseURL: baseUrl,
     });
+    this.models = models ?? this.getDefaultModels();
+    this.healthCheckModel = healthCheckModel ?? 'gpt-3.5-turbo';
+  }
+
+  /**
+   * Get default OpenAI models.
+   */
+  private getDefaultModels(): readonly ModelInfo[] {
+    return [
+      {
+        id: 'gpt-4-turbo',
+        name: 'GPT-4 Turbo',
+        contextWindow: 128000,
+        supportsTools: true,
+        supportsStreaming: true,
+      },
+      {
+        id: 'gpt-4',
+        name: 'GPT-4',
+        contextWindow: 8192,
+        supportsTools: true,
+        supportsStreaming: true,
+      },
+      {
+        id: 'gpt-3.5-turbo',
+        name: 'GPT-3.5 Turbo',
+        contextWindow: 16385,
+        supportsTools: true,
+        supportsStreaming: true,
+      },
+    ];
   }
 
   /**
@@ -171,45 +206,24 @@ export class OpenAIProvider extends BaseProvider {
   /**
    * List available GPT models.
    *
-   * Returns hardcoded list of current GPT models with metadata.
+   * Returns injected models or default hardcoded list of current GPT models with metadata.
    * Note: OpenAI API doesn't provide detailed model metadata, so this is static.
    */
   protected doListModels(): Promise<readonly ModelInfo[]> {
-    return Promise.resolve([
-      {
-        id: 'gpt-4-turbo',
-        name: 'GPT-4 Turbo',
-        contextWindow: 128000,
-        supportsTools: true,
-        supportsStreaming: true,
-      },
-      {
-        id: 'gpt-4',
-        name: 'GPT-4',
-        contextWindow: 8192,
-        supportsTools: true,
-        supportsStreaming: true,
-      },
-      {
-        id: 'gpt-3.5-turbo',
-        name: 'GPT-3.5 Turbo',
-        contextWindow: 16385,
-        supportsTools: true,
-        supportsStreaming: true,
-      },
-    ]);
+    return Promise.resolve(this.models);
   }
 
   /**
    * Check if the OpenAI API is accessible.
    *
    * Makes a minimal request to verify API key and connectivity.
+   * Uses injected health check model or default cheapest model.
    */
   protected async doHealthCheck(): Promise<boolean> {
     try {
       await this.client.chat.completions.create(
         {
-          model: 'gpt-3.5-turbo', // Use cheapest model
+          model: this.healthCheckModel,
           max_tokens: 1,
           messages: [{ role: 'user', content: 'ping' }],
         },

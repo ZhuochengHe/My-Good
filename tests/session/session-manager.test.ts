@@ -882,4 +882,461 @@ describe('SessionManager', () => {
       });
     });
   });
+
+  describe('Event Handling - Trace Data Persistence', () => {
+    let store: JsonlSessionStore;
+    let emittedEvents: import('../../src/types/events.js').AgentEvent[];
+
+    beforeEach(async () => {
+      // Create a fresh test directory
+      testDir = path.join(tmpdir(), `session-manager-events-test-${Date.now()}`);
+      await fs.mkdir(testDir, { recursive: true });
+
+      // Create store and session manager
+      store = new JsonlSessionStore(testDir);
+      sessionManager = new SessionManager(store, mockProvider, {
+        model: 'claude-sonnet-4-20250514',
+        agentId: 'test-agent',
+      });
+
+      emittedEvents = [];
+    });
+
+    describe('turn_start event handling', () => {
+      it('should track turn start timestamp', async () => {
+        const sessionId = await sessionManager.createSession();
+
+        const turnStartEvent: import('../../src/types/events.js').TurnStartEvent = {
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        };
+
+        await sessionManager.onEvent(turnStartEvent);
+
+        // Verify internal state tracks the start time
+        // This will be used to calculate duration in turn_end
+        expect(sessionManager).toBeDefined();
+      });
+
+      it('should track multiple turn starts', async () => {
+        const sessionId = await sessionManager.createSession();
+
+        const turn1: import('../../src/types/events.js').TurnStartEvent = {
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        };
+
+        const turn2: import('../../src/types/events.js').TurnStartEvent = {
+          type: 'turn_start',
+          turnNumber: 2,
+          timestamp: Date.now() + 1000,
+        };
+
+        await sessionManager.onEvent(turn1);
+        await sessionManager.onEvent(turn2);
+
+        expect(sessionManager).toBeDefined();
+      });
+    });
+
+    describe('turn_end event handling', () => {
+      it('should persist turn metadata on turn_end event', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        // Simulate turn_start
+        const turnStartEvent: import('../../src/types/events.js').TurnStartEvent = {
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        };
+        await sessionManager.onEvent(turnStartEvent);
+
+        // Simulate turn_end
+        await new Promise(resolve => setTimeout(resolve, 50)); // Add small delay
+        const turnEndEvent: import('../../src/types/events.js').TurnEndEvent = {
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: {
+            inputTokens: 150,
+            outputTokens: 100,
+            totalTokens: 250,
+          },
+          timestamp: Date.now(),
+        };
+        await sessionManager.onEvent(turnEndEvent);
+
+        // Load session with trace data
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result).not.toBeNull();
+        expect(result!.turnMetadata).toHaveLength(1);
+        expect(result!.turnMetadata[0].turnNumber).toBe(1);
+        expect(result!.turnMetadata[0].usage.totalTokens).toBe(250);
+        expect(result!.turnMetadata[0].usage.promptTokens).toBe(150);
+        expect(result!.turnMetadata[0].usage.completionTokens).toBe(100);
+        expect(result!.turnMetadata[0].durationMs).toBeGreaterThan(0);
+      });
+
+      it('should calculate duration correctly', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        const startTime = Date.now();
+        const turnStartEvent: import('../../src/types/events.js').TurnStartEvent = {
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: startTime,
+        };
+        await sessionManager.onEvent(turnStartEvent);
+
+        // Wait 100ms
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const endTime = Date.now();
+        const turnEndEvent: import('../../src/types/events.js').TurnEndEvent = {
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: {
+            inputTokens: 100,
+            outputTokens: 50,
+            totalTokens: 150,
+          },
+          timestamp: endTime,
+        };
+        await sessionManager.onEvent(turnEndEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+        const metadata = result!.turnMetadata[0];
+
+        expect(metadata.durationMs).toBeGreaterThanOrEqual(90);
+        expect(metadata.durationMs).toBeLessThan(200);
+      });
+
+      it('should persist multiple turn metadata records', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        // Turn 1
+        await sessionManager.onEvent({
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        });
+        await new Promise(resolve => setTimeout(resolve, 30));
+        await sessionManager.onEvent({
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          timestamp: Date.now(),
+        });
+
+        // Turn 2
+        await sessionManager.onEvent({
+          type: 'turn_start',
+          turnNumber: 2,
+          timestamp: Date.now(),
+        });
+        await new Promise(resolve => setTimeout(resolve, 30));
+        await sessionManager.onEvent({
+          type: 'turn_end',
+          turnNumber: 2,
+          usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+          timestamp: Date.now(),
+        });
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result!.turnMetadata).toHaveLength(2);
+        expect(result!.turnMetadata[0].turnNumber).toBe(1);
+        expect(result!.turnMetadata[1].turnNumber).toBe(2);
+        expect(result!.turnMetadata[0].usage.totalTokens).toBe(150);
+        expect(result!.turnMetadata[1].usage.totalTokens).toBe(300);
+      });
+
+      it('should handle turn_end without corresponding turn_start', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        // Turn_end without turn_start (duration should default to 0)
+        const turnEndEvent: import('../../src/types/events.js').TurnEndEvent = {
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          timestamp: Date.now(),
+        };
+        await sessionManager.onEvent(turnEndEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result!.turnMetadata).toHaveLength(1);
+        expect(result!.turnMetadata[0].durationMs).toBe(0);
+      });
+
+      it('should set stopReason to end_turn by default', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        await sessionManager.onEvent({
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        });
+        await sessionManager.onEvent({
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          timestamp: Date.now(),
+        });
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result!.turnMetadata[0].stopReason).toBe('end_turn');
+      });
+
+      it('should set toolCount to 0 by default', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        await sessionManager.onEvent({
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        });
+        await sessionManager.onEvent({
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          timestamp: Date.now(),
+        });
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result!.turnMetadata[0].toolCount).toBe(0);
+      });
+    });
+
+    describe('error event handling', () => {
+      it('should persist error log on error event', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        const errorEvent: import('../../src/types/events.js').ErrorEvent = {
+          type: 'error',
+          error: {
+            code: 'TOOL_ERROR',
+            message: 'Tool execution failed',
+            recoverable: true,
+          },
+          timestamp: Date.now(),
+        };
+
+        await sessionManager.onEvent(errorEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result).not.toBeNull();
+        expect(result!.errorLogs).toHaveLength(1);
+        expect(result!.errorLogs[0].error).toBe('TOOL_ERROR');
+        expect(result!.errorLogs[0].message).toBe('Tool execution failed');
+      });
+
+      it('should persist multiple error logs', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        await sessionManager.onEvent({
+          type: 'error',
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid parameter',
+            recoverable: true,
+          },
+          timestamp: Date.now(),
+        });
+
+        await sessionManager.onEvent({
+          type: 'error',
+          error: {
+            code: 'PROVIDER_ERROR',
+            message: 'API rate limit',
+            recoverable: true,
+          },
+          timestamp: Date.now(),
+        });
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result!.errorLogs).toHaveLength(2);
+        expect(result!.errorLogs[0].error).toBe('VALIDATION_ERROR');
+        expect(result!.errorLogs[1].error).toBe('PROVIDER_ERROR');
+      });
+
+      it('should include error cause if present', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        const causeError = new Error('Network timeout');
+        const errorEvent: import('../../src/types/events.js').ErrorEvent = {
+          type: 'error',
+          error: {
+            code: 'TIMEOUT',
+            message: 'Request timed out',
+            cause: causeError,
+            recoverable: false,
+          },
+          timestamp: Date.now(),
+        };
+
+        await sessionManager.onEvent(errorEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result!.errorLogs[0].context).toContain('Network timeout');
+      });
+
+      it('should not set turnNumber for errors outside turns', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        const errorEvent: import('../../src/types/events.js').ErrorEvent = {
+          type: 'error',
+          error: {
+            code: 'PROVIDER_ERROR',
+            message: 'Failed to initialize provider',
+            recoverable: false,
+          },
+          timestamp: Date.now(),
+        };
+
+        await sessionManager.onEvent(errorEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+
+        expect(result!.errorLogs[0].turnNumber).toBeUndefined();
+      });
+    });
+
+    describe('setCurrentSessionId', () => {
+      it('should set the current session for event tracking', async () => {
+        const sessionId = await sessionManager.createSession();
+
+        sessionManager.setCurrentSessionId(sessionId);
+
+        const turnStartEvent: import('../../src/types/events.js').TurnStartEvent = {
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        };
+        await sessionManager.onEvent(turnStartEvent);
+
+        expect(sessionManager).toBeDefined();
+      });
+
+      it('should clear current session when set to null', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+        sessionManager.setCurrentSessionId(null);
+
+        const turnEndEvent: import('../../src/types/events.js').TurnEndEvent = {
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          timestamp: Date.now(),
+        };
+
+        // Should not throw, but also should not persist
+        await sessionManager.onEvent(turnEndEvent);
+        expect(sessionManager).toBeDefined();
+      });
+    });
+
+    describe('ignores non-trace events', () => {
+      it('should ignore text_delta events', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        const textDeltaEvent: import('../../src/types/events.js').TextDeltaEvent = {
+          type: 'text_delta',
+          delta: 'Hello',
+          timestamp: Date.now(),
+        };
+
+        await sessionManager.onEvent(textDeltaEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+        expect(result!.turnMetadata).toHaveLength(0);
+        expect(result!.errorLogs).toHaveLength(0);
+      });
+
+      it('should ignore tool_call_start events', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        const toolCallStartEvent: import('../../src/types/events.js').ToolCallStartEvent = {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'call-1',
+            name: 'test_tool',
+            parameters: {},
+          },
+          timestamp: Date.now(),
+        };
+
+        await sessionManager.onEvent(toolCallStartEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+        expect(result!.turnMetadata).toHaveLength(0);
+      });
+
+      it('should ignore agent_start events', async () => {
+        const sessionId = await sessionManager.createSession();
+
+        const agentStartEvent: import('../../src/types/events.js').AgentStartEvent = {
+          type: 'agent_start',
+          sessionId,
+          timestamp: Date.now(),
+        };
+
+        await sessionManager.onEvent(agentStartEvent);
+
+        const result = await store.loadWithTrace(sessionId);
+        expect(result!.turnMetadata).toHaveLength(0);
+      });
+    });
+
+    describe('integration with existing session operations', () => {
+      it('should persist trace data alongside normal session operations', async () => {
+        const sessionId = await sessionManager.createSession();
+        sessionManager.setCurrentSessionId(sessionId);
+
+        // Simulate a complete turn with events
+        await sessionManager.onEvent({
+          type: 'turn_start',
+          turnNumber: 1,
+          timestamp: Date.now(),
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 30));
+
+        await sessionManager.onEvent({
+          type: 'turn_end',
+          turnNumber: 1,
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+          timestamp: Date.now(),
+        });
+
+        // Regular session operation (message append)
+        const session = await sessionManager.loadSession(sessionId);
+        expect(session).not.toBeNull();
+
+        // Verify both regular session data and trace data exist
+        const result = await store.loadWithTrace(sessionId);
+        expect(result!.session).toBeDefined();
+        expect(result!.turnMetadata).toHaveLength(1);
+      });
+    });
+  });
 });

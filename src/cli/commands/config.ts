@@ -7,6 +7,7 @@ import { access, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { stringify } from 'yaml';
 import { getDefaultConfig } from '../../config/defaults.js';
+import { CredentialDetector } from '../../security/credential-detector.js';
 import type { OutputAdapter } from '../output-adapter.js';
 
 /**
@@ -36,10 +37,13 @@ export async function configShow(options: ConfigCommandOptions): Promise<void> {
     // Read config file
     const content = await readFile(options.configPath, 'utf-8');
 
+    // Sanitize credentials before displaying
+    const sanitizedContent = CredentialDetector.detectAndRedact(content);
+
     // Display config path and contents
     options.output.write(`\nConfiguration (${options.configPath}):\n`);
     options.output.write('---');
-    options.output.write(content.trimEnd());
+    options.output.write(sanitizedContent.trimEnd());
     options.output.write('---\n');
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {

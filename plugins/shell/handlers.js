@@ -25,6 +25,44 @@ function resolvePath(targetPath, workingDirectory) {
 }
 
 /**
+ * Sanitizes environment variables by filtering out sensitive credentials.
+ *
+ * Removes environment variables that match sensitive patterns:
+ * - Variables containing: API_KEY, SECRET, TOKEN, PASSWORD, AUTH
+ * - Preserves safe variables: PATH, HOME, USER, PWD, SHELL, LANG, etc.
+ *
+ * @param {Record<string, string>} env - Environment variables object.
+ * @returns {Record<string, string>} Sanitized environment variables.
+ */
+function sanitizeEnv(env) {
+  if (!env || typeof env !== 'object') {
+    return {};
+  }
+
+  const sanitized = {};
+
+  // Patterns that indicate sensitive environment variables
+  const sensitivePatterns = [
+    /API_KEY/i,
+    /SECRET/i,
+    /TOKEN/i,
+    /PASSWORD/i,
+    /AUTH/i,
+  ];
+
+  for (const [key, value] of Object.entries(env)) {
+    // Check if key matches any sensitive pattern
+    const isSensitive = sensitivePatterns.some((pattern) => pattern.test(key));
+
+    if (!isSensitive) {
+      sanitized[key] = value;
+    }
+  }
+
+  return sanitized;
+}
+
+/**
  * Executes a shell command and returns its output.
  *
  * @param {Record<string, unknown>} args - Tool arguments.
@@ -71,10 +109,10 @@ export async function execCommand(args, context) {
     }
 
     try {
-      // Execute the command
+      // Execute the command with sanitized environment
       const { stdout, stderr } = await execAsync(args.command, {
         cwd,
-        env: context.env,
+        env: sanitizeEnv(context.env),
         signal: controller.signal,
         encoding: 'utf-8',
       });

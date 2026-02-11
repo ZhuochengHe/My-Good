@@ -156,6 +156,106 @@ describe('isProviderError', () => {
   });
 });
 
+describe('User Message Formatting', () => {
+  describe('ProviderError.toUserMessage', () => {
+    it('returns user-friendly message for base ProviderError', () => {
+      const error = new ProviderError('Test error', ProviderErrorCode.UNKNOWN);
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E100');
+      expect(msg.message).toBe('Provider API error');
+      expect(msg.context).toBeDefined();
+      expect(msg.technicalDetails).toContain('Test error');
+    });
+  });
+
+  describe('AuthenticationError.toUserMessage', () => {
+    it('returns user-friendly message with API key suggestion', () => {
+      const error = new AuthenticationError('Invalid API key');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E101');
+      expect(msg.message).toBe('Authentication failed');
+      expect(msg.context).toContain('Invalid API key');
+      expect(msg.suggestion).toContain('API key');
+      expect(msg.technicalDetails).toContain('AuthenticationError');
+    });
+  });
+
+  describe('RateLimitError.toUserMessage', () => {
+    it('returns user-friendly message without retry-after', () => {
+      const error = new RateLimitError('Rate limit exceeded');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E102');
+      expect(msg.message).toBe('Rate limit exceeded');
+      expect(msg.context).toContain('Rate limit exceeded');
+      expect(msg.suggestion).toContain('retry');
+      expect(msg.technicalDetails).toContain('RateLimitError');
+    });
+
+    it('includes retry-after time in message', () => {
+      const error = new RateLimitError('Rate limit exceeded', 60);
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E102');
+      expect(msg.suggestion).toContain('60 seconds');
+    });
+  });
+
+  describe('TimeoutError.toUserMessage', () => {
+    it('returns user-friendly message with retry suggestion', () => {
+      const error = new TimeoutError('Request timed out after 30s');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E103');
+      expect(msg.message).toBe('Request timed out');
+      expect(msg.context).toContain('Request timed out after 30s');
+      expect(msg.suggestion).toContain('retry');
+      expect(msg.technicalDetails).toContain('TimeoutError');
+    });
+  });
+
+  describe('NetworkError.toUserMessage', () => {
+    it('returns user-friendly message with connection suggestion', () => {
+      const error = new NetworkError('Connection refused');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E104');
+      expect(msg.message).toBe('Network connection failed');
+      expect(msg.context).toContain('Connection refused');
+      expect(msg.suggestion).toContain('network');
+      expect(msg.technicalDetails).toContain('NetworkError');
+    });
+  });
+
+  describe('InvalidRequestError.toUserMessage', () => {
+    it('returns user-friendly message with config suggestion', () => {
+      const error = new InvalidRequestError('Invalid model: gpt-5');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E105');
+      expect(msg.message).toBe('Invalid API request');
+      expect(msg.context).toContain('Invalid model: gpt-5');
+      expect(msg.suggestion).toContain('configuration');
+      expect(msg.technicalDetails).toContain('InvalidRequestError');
+    });
+  });
+
+  describe('ModelError.toUserMessage', () => {
+    it('returns user-friendly message with retry suggestion', () => {
+      const error = new ModelError('Model is overloaded');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E106');
+      expect(msg.message).toBe('Model service error');
+      expect(msg.context).toContain('Model is overloaded');
+      expect(msg.suggestion).toContain('retry');
+      expect(msg.technicalDetails).toContain('ModelError');
+    });
+  });
+});
+
 describe('isRecoverableError', () => {
   it('returns true for recoverable errors', () => {
     expect(isRecoverableError(new RateLimitError('test'))).toBe(true);

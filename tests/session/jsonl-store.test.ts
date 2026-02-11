@@ -15,7 +15,10 @@ import type { Session, SessionSummary } from '../../src/types/sessions.js';
 import type { ConversationMessage } from '../../src/types/messages.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+
+const { join } = path;
 
 // Test fixtures directory
 const testSessionsDir = path.join(process.cwd(), 'tests', 'fixtures', 'test-sessions');
@@ -458,6 +461,399 @@ describe('JsonlSessionStore', () => {
       expect(loaded!.messages.length).toBe(6); // 1 original + 5 appended
     });
   });
+
+  describe('appendTurnMetadata', () => {
+    it('appends turn metadata to existing session', async () => {
+      const session = createTestSession('turn-metadata-test');
+      await store.save(session);
+
+      const metadata: import('../../src/types/sessions.js').TurnMetadataRecord = {
+        type: 'turn_metadata',
+        turnNumber: 1,
+        usage: {
+          promptTokens: 150,
+          completionTokens: 100,
+          totalTokens: 250,
+        },
+        durationMs: 1200,
+        toolCount: 2,
+        stopReason: 'tool_use',
+        timestamp: Date.now(),
+      };
+
+      await store.appendTurnMetadata('turn-metadata-test', metadata);
+
+      // Verify file contains the metadata record
+      const sessionFile = path.join(testSessionsDir, 'turn-metadata-test.jsonl');
+      const content = await fs.readFile(sessionFile, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      expect(lines.length).toBeGreaterThan(1);
+      const lastLine = JSON.parse(lines[lines.length - 1]);
+      expect(lastLine.type).toBe('turn_metadata');
+      expect(lastLine.turnNumber).toBe(1);
+      expect(lastLine.usage.totalTokens).toBe(250);
+      expect(lastLine.durationMs).toBe(1200);
+      expect(lastLine.toolCount).toBe(2);
+      expect(lastLine.stopReason).toBe('tool_use');
+    });
+
+    it('appends multiple turn metadata records', async () => {
+      const session = createTestSession('multi-turn-test');
+      await store.save(session);
+
+      const metadata1: import('../../src/types/sessions.js').TurnMetadataRecord = {
+        type: 'turn_metadata',
+        turnNumber: 1,
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        durationMs: 800,
+        toolCount: 0,
+        stopReason: 'end_turn',
+        timestamp: Date.now(),
+      };
+
+      const metadata2: import('../../src/types/sessions.js').TurnMetadataRecord = {
+        type: 'turn_metadata',
+        turnNumber: 2,
+        usage: { promptTokens: 200, completionTokens: 150, totalTokens: 350 },
+        durationMs: 1500,
+        toolCount: 3,
+        stopReason: 'tool_use',
+        timestamp: Date.now(),
+      };
+
+      await store.appendTurnMetadata('multi-turn-test', metadata1);
+      await store.appendTurnMetadata('multi-turn-test', metadata2);
+
+      const sessionFile = path.join(testSessionsDir, 'multi-turn-test.jsonl');
+      const content = await fs.readFile(sessionFile, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      const metadataRecords = lines
+        .map(line => JSON.parse(line))
+        .filter(record => record.type === 'turn_metadata');
+
+      expect(metadataRecords).toHaveLength(2);
+      expect(metadataRecords[0].turnNumber).toBe(1);
+      expect(metadataRecords[1].turnNumber).toBe(2);
+    });
+
+    it('throws SessionNotFoundError for non-existent session', async () => {
+      const metadata: import('../../src/types/sessions.js').TurnMetadataRecord = {
+        type: 'turn_metadata',
+        turnNumber: 1,
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        durationMs: 1000,
+        toolCount: 0,
+        stopReason: 'end_turn',
+        timestamp: Date.now(),
+      };
+
+      await expect(
+        store.appendTurnMetadata('non-existent', metadata)
+      ).rejects.toThrow(SessionNotFoundError);
+    });
+
+    it('throws InvalidSessionIdError for invalid session ID', async () => {
+      const metadata: import('../../src/types/sessions.js').TurnMetadataRecord = {
+        type: 'turn_metadata',
+        turnNumber: 1,
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        durationMs: 1000,
+        toolCount: 0,
+        stopReason: 'end_turn',
+        timestamp: Date.now(),
+      };
+
+      await expect(
+        store.appendTurnMetadata('../etc/passwd', metadata)
+      ).rejects.toThrow(InvalidSessionIdError);
+    });
+
+    it('handles all stop reason types', async () => {
+      const session = createTestSession('stop-reason-test');
+      await store.save(session);
+
+      const stopReasons = ['end_turn', 'tool_use', 'max_tokens', 'error'];
+
+      for (let i = 0; i < stopReasons.length; i++) {
+        const metadata: import('../../src/types/sessions.js').TurnMetadataRecord = {
+          type: 'turn_metadata',
+          turnNumber: i + 1,
+          usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          durationMs: 1000,
+          toolCount: 0,
+          stopReason: stopReasons[i],
+          timestamp: Date.now(),
+        };
+
+        await store.appendTurnMetadata('stop-reason-test', metadata);
+      }
+
+      const sessionFile = path.join(testSessionsDir, 'stop-reason-test.jsonl');
+      const content = await fs.readFile(sessionFile, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      const metadataRecords = lines
+        .map(line => JSON.parse(line))
+        .filter(record => record.type === 'turn_metadata');
+
+      expect(metadataRecords).toHaveLength(4);
+      expect(metadataRecords.map(r => r.stopReason)).toEqual(stopReasons);
+    });
+  });
+
+  describe('appendErrorLog', () => {
+    it('appends error log to existing session', async () => {
+      const session = createTestSession('error-log-test');
+      await store.save(session);
+
+      const errorLog: import('../../src/types/sessions.js').ErrorLogRecord = {
+        type: 'error_log',
+        turnNumber: 2,
+        error: 'ToolExecutionError',
+        message: 'Command timeout after 30s',
+        context: 'during shell execution',
+        stack: 'Error: Command timeout\n  at execute()',
+        timestamp: Date.now(),
+      };
+
+      await store.appendErrorLog('error-log-test', errorLog);
+
+      const sessionFile = path.join(testSessionsDir, 'error-log-test.jsonl');
+      const content = await fs.readFile(sessionFile, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      const lastLine = JSON.parse(lines[lines.length - 1]);
+      expect(lastLine.type).toBe('error_log');
+      expect(lastLine.turnNumber).toBe(2);
+      expect(lastLine.error).toBe('ToolExecutionError');
+      expect(lastLine.message).toBe('Command timeout after 30s');
+      expect(lastLine.context).toBe('during shell execution');
+      expect(lastLine.stack).toContain('Error: Command timeout');
+    });
+
+    it('appends error log without turn number', async () => {
+      const session = createTestSession('error-no-turn-test');
+      await store.save(session);
+
+      const errorLog: import('../../src/types/sessions.js').ErrorLogRecord = {
+        type: 'error_log',
+        error: 'ProviderError',
+        message: 'API key invalid',
+        timestamp: Date.now(),
+      };
+
+      await store.appendErrorLog('error-no-turn-test', errorLog);
+
+      const sessionFile = path.join(testSessionsDir, 'error-no-turn-test.jsonl');
+      const content = await fs.readFile(sessionFile, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      const lastLine = JSON.parse(lines[lines.length - 1]);
+      expect(lastLine.type).toBe('error_log');
+      expect(lastLine.turnNumber).toBeUndefined();
+      expect(lastLine.error).toBe('ProviderError');
+    });
+
+    it('appends multiple error logs', async () => {
+      const session = createTestSession('multi-error-test');
+      await store.save(session);
+
+      const error1: import('../../src/types/sessions.js').ErrorLogRecord = {
+        type: 'error_log',
+        turnNumber: 1,
+        error: 'ValidationError',
+        message: 'Invalid parameter',
+        timestamp: Date.now(),
+      };
+
+      const error2: import('../../src/types/sessions.js').ErrorLogRecord = {
+        type: 'error_log',
+        turnNumber: 3,
+        error: 'NetworkError',
+        message: 'Connection timeout',
+        timestamp: Date.now(),
+      };
+
+      await store.appendErrorLog('multi-error-test', error1);
+      await store.appendErrorLog('multi-error-test', error2);
+
+      const sessionFile = path.join(testSessionsDir, 'multi-error-test.jsonl');
+      const content = await fs.readFile(sessionFile, 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      const errorRecords = lines
+        .map(line => JSON.parse(line))
+        .filter(record => record.type === 'error_log');
+
+      expect(errorRecords).toHaveLength(2);
+      expect(errorRecords[0].error).toBe('ValidationError');
+      expect(errorRecords[1].error).toBe('NetworkError');
+    });
+
+    it('throws SessionNotFoundError for non-existent session', async () => {
+      const errorLog: import('../../src/types/sessions.js').ErrorLogRecord = {
+        type: 'error_log',
+        error: 'TestError',
+        message: 'Test',
+        timestamp: Date.now(),
+      };
+
+      await expect(
+        store.appendErrorLog('non-existent', errorLog)
+      ).rejects.toThrow(SessionNotFoundError);
+    });
+
+    it('throws InvalidSessionIdError for invalid session ID', async () => {
+      const errorLog: import('../../src/types/sessions.js').ErrorLogRecord = {
+        type: 'error_log',
+        error: 'TestError',
+        message: 'Test',
+        timestamp: Date.now(),
+      };
+
+      await expect(
+        store.appendErrorLog('../etc/passwd', errorLog)
+      ).rejects.toThrow(InvalidSessionIdError);
+    });
+  });
+
+  describe('loadWithTrace', () => {
+    it('loads session with turn metadata and error logs', async () => {
+      const session = createTestSession('trace-test');
+      await store.save(session);
+
+      const metadata: import('../../src/types/sessions.js').TurnMetadataRecord = {
+        type: 'turn_metadata',
+        turnNumber: 1,
+        usage: { promptTokens: 150, completionTokens: 100, totalTokens: 250 },
+        durationMs: 1200,
+        toolCount: 2,
+        stopReason: 'tool_use',
+        timestamp: Date.now(),
+      };
+
+      const errorLog: import('../../src/types/sessions.js').ErrorLogRecord = {
+        type: 'error_log',
+        turnNumber: 1,
+        error: 'ToolExecutionError',
+        message: 'Test error',
+        timestamp: Date.now(),
+      };
+
+      await store.appendTurnMetadata('trace-test', metadata);
+      await store.appendErrorLog('trace-test', errorLog);
+
+      const result = await store.loadWithTrace('trace-test');
+
+      expect(result).not.toBeNull();
+      expect(result!.session.id).toBe('trace-test');
+      expect(result!.turnMetadata).toHaveLength(1);
+      expect(result!.errorLogs).toHaveLength(1);
+      expect(result!.turnMetadata[0].turnNumber).toBe(1);
+      expect(result!.errorLogs[0].error).toBe('ToolExecutionError');
+    });
+
+    it('loads session with multiple trace records', async () => {
+      const session = createTestSession('multi-trace-test');
+      await store.save(session);
+
+      for (let i = 1; i <= 3; i++) {
+        const metadata: import('../../src/types/sessions.js').TurnMetadataRecord = {
+          type: 'turn_metadata',
+          turnNumber: i,
+          usage: { promptTokens: 100 * i, completionTokens: 50 * i, totalTokens: 150 * i },
+          durationMs: 1000 * i,
+          toolCount: i,
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        };
+        await store.appendTurnMetadata('multi-trace-test', metadata);
+      }
+
+      for (let i = 1; i <= 2; i++) {
+        const errorLog: import('../../src/types/sessions.js').ErrorLogRecord = {
+          type: 'error_log',
+          turnNumber: i,
+          error: `Error${i}`,
+          message: `Test error ${i}`,
+          timestamp: Date.now(),
+        };
+        await store.appendErrorLog('multi-trace-test', errorLog);
+      }
+
+      const result = await store.loadWithTrace('multi-trace-test');
+
+      expect(result!.turnMetadata).toHaveLength(3);
+      expect(result!.errorLogs).toHaveLength(2);
+      expect(result!.turnMetadata[0].turnNumber).toBe(1);
+      expect(result!.turnMetadata[2].turnNumber).toBe(3);
+    });
+
+    it('loads session with no trace data', async () => {
+      const session = createTestSession('no-trace-test');
+      await store.save(session);
+
+      const result = await store.loadWithTrace('no-trace-test');
+
+      expect(result).not.toBeNull();
+      expect(result!.session.id).toBe('no-trace-test');
+      expect(result!.turnMetadata).toHaveLength(0);
+      expect(result!.errorLogs).toHaveLength(0);
+    });
+
+    it('returns null for non-existent session', async () => {
+      const result = await store.loadWithTrace('non-existent');
+      expect(result).toBeNull();
+    });
+
+    it('throws InvalidSessionIdError for invalid session ID', async () => {
+      await expect(store.loadWithTrace('../etc/passwd')).rejects.toThrow(
+        InvalidSessionIdError
+      );
+    });
+
+    it('handles backward compatibility with old sessions', async () => {
+      // Create an old-style session without trace records
+      const session = createTestSession('old-session');
+      await store.save(session);
+
+      const result = await store.loadWithTrace('old-session');
+
+      expect(result).not.toBeNull();
+      expect(result!.session.id).toBe('old-session');
+      expect(result!.turnMetadata).toHaveLength(0);
+      expect(result!.errorLogs).toHaveLength(0);
+    });
+
+    it('preserves message order when loading with trace', async () => {
+      const messages: ConversationMessage[] = [
+        createTestMessage('user', 'First'),
+        createTestMessage('assistant', 'Second'),
+        createTestMessage('user', 'Third'),
+      ];
+      const session = createTestSession('order-trace-test', messages);
+      await store.save(session);
+
+      const metadata: import('../../src/types/sessions.js').TurnMetadataRecord = {
+        type: 'turn_metadata',
+        turnNumber: 1,
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        durationMs: 1000,
+        toolCount: 0,
+        stopReason: 'end_turn',
+        timestamp: Date.now(),
+      };
+      await store.appendTurnMetadata('order-trace-test', metadata);
+
+      const result = await store.loadWithTrace('order-trace-test');
+
+      expect(result!.session.messages[0].content).toBe('First');
+      expect(result!.session.messages[1].content).toBe('Second');
+      expect(result!.session.messages[2].content).toBe('Third');
+    });
+  });
 });
 
 // Helper functions for creating test data
@@ -505,3 +901,220 @@ function createTestMessage(
     };
   }
 }
+
+/**
+ * Security tests for credential sanitization in session files.
+ */
+describe('JsonlSessionStore - Security', () => {
+  let store: JsonlSessionStore;
+  let testDir: string;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `session-security-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    store = new JsonlSessionStore(testDir);
+  });
+
+  afterEach(async () => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  describe('save() credential sanitization', () => {
+    it('should sanitize credentials in assistant message content before saving', async () => {
+      const session: Session = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [
+          createTestMessage('assistant', [
+            {
+              type: 'text',
+              text: 'Here is your API key: sk-ant-api03-test123456789012345678901234567890123456789',
+            },
+          ]),
+        ],
+        metadata: {},
+      };
+
+      await store.save(session);
+      const loaded = await store.load('test-session');
+
+      expect(loaded).not.toBeNull();
+      const assistantMsg = loaded!.messages[0];
+      if (assistantMsg.role === 'assistant') {
+        const textContent = assistantMsg.content.find(c => c.type === 'text');
+        if (textContent && textContent.type === 'text') {
+          expect(textContent.text).toContain('***REDACTED***');
+          expect(textContent.text).not.toContain('sk-ant-api03');
+        }
+      }
+    });
+
+    it('should sanitize credentials in tool result messages before saving', async () => {
+      const session: Session = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                toolCallId: 'test-call',
+                output: 'API Key: sk-proj-test123456789012345678901234567890123456789',
+                success: true,
+              },
+            ],
+          },
+        ],
+        metadata: {},
+      };
+
+      await store.save(session);
+      const loaded = await store.load('test-session');
+
+      expect(loaded).not.toBeNull();
+      const userMsg = loaded!.messages[0];
+      if (userMsg.role === 'user') {
+        const toolResult = userMsg.content.find(c => c.type === 'tool_result');
+        if (toolResult && toolResult.type === 'tool_result') {
+          expect(toolResult.output).toContain('***REDACTED***');
+          expect(toolResult.output).not.toContain('sk-proj');
+        }
+      }
+    });
+
+    it('should preserve non-sensitive content', async () => {
+      const session: Session = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [
+          createTestMessage('assistant', [
+            {
+              type: 'text',
+              text: 'This is normal text without credentials',
+            },
+          ]),
+        ],
+        metadata: {},
+      };
+
+      await store.save(session);
+      const loaded = await store.load('test-session');
+
+      expect(loaded).not.toBeNull();
+      const assistantMsg = loaded!.messages[0];
+      if (assistantMsg.role === 'assistant') {
+        const textContent = assistantMsg.content.find(c => c.type === 'text');
+        if (textContent && textContent.type === 'text') {
+          expect(textContent.text).toBe('This is normal text without credentials');
+          expect(textContent.text).not.toContain('***REDACTED***');
+        }
+      }
+    });
+
+    it('should handle messages without credentials', async () => {
+      const session: Session = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [
+          createTestMessage('user', [{ type: 'text', text: 'Hello' }]),
+          createTestMessage('assistant', [{ type: 'text', text: 'Hi there!' }]),
+        ],
+        metadata: {},
+      };
+
+      await store.save(session);
+      const loaded = await store.load('test-session');
+
+      expect(loaded).not.toBeNull();
+      expect(loaded!.messages).toHaveLength(2);
+      expect(loaded!.messages[0].content[0]).toEqual({ type: 'text', text: 'Hello' });
+    });
+  });
+
+  describe('appendMessage() credential sanitization', () => {
+    it('should sanitize credentials in appended messages', async () => {
+      const session: Session = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [
+          createTestMessage('user', [{ type: 'text', text: 'Initial message' }]),
+        ],
+        metadata: {},
+      };
+
+      await store.save(session);
+
+      const newMessage = createTestMessage('assistant', [
+        {
+          type: 'text',
+          text: 'Your GitHub token is ghp_test123456789012345678901234567890',
+        },
+      ]);
+
+      await store.appendMessage('test-session', newMessage);
+      const loaded = await store.load('test-session');
+
+      expect(loaded).not.toBeNull();
+      expect(loaded!.messages).toHaveLength(2);
+      const appendedMsg = loaded!.messages[1];
+      if (appendedMsg.role === 'assistant') {
+        const textContent = appendedMsg.content.find(c => c.type === 'text');
+        if (textContent && textContent.type === 'text') {
+          expect(textContent.text).toContain('***REDACTED***');
+          expect(textContent.text).not.toContain('ghp_');
+        }
+      }
+    });
+
+    it('should sanitize multiple credentials in tool results', async () => {
+      const session: Session = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [],
+        metadata: {},
+      };
+
+      await store.save(session);
+
+      const toolResultMessage: ConversationMessage = {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            toolCallId: 'env-call',
+            output: 'ANTHROPIC_API_KEY=sk-ant-api03-test123456789012345678901234567890123456789\nOPENAI_API_KEY=sk-proj-test123456789012345678901234567890123456789',
+            success: true,
+          },
+        ],
+      };
+
+      await store.appendMessage('test-session', toolResultMessage);
+      const loaded = await store.load('test-session');
+
+      expect(loaded).not.toBeNull();
+      const msg = loaded!.messages[0];
+      if (msg.role === 'user') {
+        const toolResult = msg.content.find(c => c.type === 'tool_result');
+        if (toolResult && toolResult.type === 'tool_result') {
+          expect(toolResult.output).toContain('***REDACTED***');
+          expect(toolResult.output).not.toContain('sk-ant-api03');
+          expect(toolResult.output).not.toContain('sk-proj');
+        }
+      }
+    });
+  });
+});

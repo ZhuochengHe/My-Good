@@ -860,6 +860,159 @@ describe('AnthropicProvider', () => {
     });
   });
 
+  describe('constructor with custom models', () => {
+    it('accepts custom models array', () => {
+      const customModels: readonly ModelInfo[] = [
+        {
+          id: 'custom-claude-1',
+          name: 'Custom Claude 1',
+          contextWindow: 300000,
+          supportsTools: true,
+          supportsStreaming: true,
+        },
+        {
+          id: 'custom-claude-2',
+          name: 'Custom Claude 2',
+          contextWindow: 150000,
+          supportsTools: false,
+          supportsStreaming: true,
+        },
+      ];
+
+      const customProvider = new AnthropicProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        customModels
+      );
+
+      expect(customProvider).toBeDefined();
+      expect(customProvider.type).toBe('anthropic');
+    });
+
+    it('accepts custom health check model', () => {
+      const customProvider = new AnthropicProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        undefined,
+        'custom-health-model'
+      );
+
+      expect(customProvider).toBeDefined();
+    });
+
+    it('uses default models when none provided', () => {
+      const defaultProvider = new AnthropicProvider('test-key');
+      expect(defaultProvider).toBeDefined();
+    });
+  });
+
+  describe('doListModels() with custom models', () => {
+    it('returns custom models when provided', async () => {
+      const customModels: readonly ModelInfo[] = [
+        {
+          id: 'custom-claude-sonnet',
+          name: 'Custom Claude Sonnet',
+          contextWindow: 250000,
+          supportsTools: true,
+          supportsStreaming: true,
+        },
+        {
+          id: 'custom-claude-opus',
+          name: 'Custom Claude Opus',
+          contextWindow: 300000,
+          supportsTools: true,
+          supportsStreaming: false,
+        },
+      ];
+
+      const customProvider = new AnthropicProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        customModels
+      );
+
+      const models = await customProvider.listModels();
+
+      expect(models).toEqual(customModels);
+      expect(models).toHaveLength(2);
+      expect(models[0].id).toBe('custom-claude-sonnet');
+      expect(models[1].id).toBe('custom-claude-opus');
+    });
+
+    it('returns default models when custom models not provided', async () => {
+      const defaultProvider = new AnthropicProvider('test-key');
+      const models = await defaultProvider.listModels();
+
+      expect(models.length).toBeGreaterThan(0);
+      expect(models.some((m) => m.id.includes('claude'))).toBe(true);
+    });
+  });
+
+  describe('doHealthCheck() with custom model', () => {
+    it('uses custom health check model when provided', async () => {
+      const mockResponse: Anthropic.Message = {
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+        model: 'custom-health-model',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 1 },
+      };
+
+      mockCreate.mockResolvedValue(mockResponse);
+
+      const customProvider = new AnthropicProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        undefined,
+        'custom-health-model'
+      );
+
+      const healthy = await customProvider.healthCheck();
+
+      expect(healthy).toBe(true);
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'custom-health-model',
+          max_tokens: 1,
+        })
+      );
+    });
+
+    it('uses default health check model when not provided', async () => {
+      const mockResponse: Anthropic.Message = {
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+        model: 'claude-3-haiku-20240307',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 1 },
+      };
+
+      mockCreate.mockResolvedValue(mockResponse);
+
+      const defaultProvider = new AnthropicProvider('test-key');
+      const healthy = await defaultProvider.healthCheck();
+
+      expect(healthy).toBe(true);
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'claude-3-haiku-20240307',
+        })
+      );
+    });
+  });
+
   describe('edge cases', () => {
     it('handles empty message content', async () => {
       const mockResponse: Anthropic.Message = {

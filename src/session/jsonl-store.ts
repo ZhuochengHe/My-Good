@@ -7,6 +7,8 @@ import type {
   Session,
   SessionStore,
   SessionSummary,
+  TurnMetadataRecord,
+  ErrorLogRecord,
 } from '../types/sessions.js';
 import type { ConversationMessage } from '../types/messages.js';
 import {
@@ -18,6 +20,7 @@ import {
   SessionDeleteError,
   SessionTooLargeError,
 } from '../errors/session.js';
+import { CredentialDetector } from '../security/credential-detector.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createReadStream } from 'fs';
@@ -30,8 +33,45 @@ const MAX_MESSAGE_COUNT = 10000;
 /** Maximum session file size in bytes (100 MB, prevents resource exhaustion) */
 const MAX_SESSION_SIZE = 100 * 1024 * 1024;
 
+/** Content block types for structured message content */
+interface TextBlock {
+  readonly type: 'text';
+  readonly text: string;
+}
+
+interface ToolResultBlock {
+  readonly type: 'tool_result';
+  readonly toolCallId: string;
+  readonly output: string;
+  readonly success: boolean;
+}
+
+/** Type guard to check if value is a text block */
+function isTextBlock(block: unknown): block is TextBlock {
+  return (
+    typeof block === 'object' &&
+    block !== null &&
+    'type' in block &&
+    block.type === 'text' &&
+    'text' in block &&
+    typeof block.text === 'string'
+  );
+}
+
+/** Type guard to check if value is a tool result block */
+function isToolResultBlock(block: unknown): block is ToolResultBlock {
+  return (
+    typeof block === 'object' &&
+    block !== null &&
+    'type' in block &&
+    block.type === 'tool_result' &&
+    'output' in block &&
+    typeof block.output === 'string'
+  );
+}
+
 /** JSONL record types */
-type JsonlRecordType = 'session_start' | 'message';
+type JsonlRecordType = 'session_start' | 'message' | 'turn_metadata' | 'error_log';
 
 /** Base JSONL record */
 interface JsonlRecord {
@@ -94,6 +134,53 @@ export class JsonlSessionStore implements SessionStore {
   constructor(sessionsDir?: string) {
     this.sessionsDir =
       sessionsDir ?? path.join(homedir(), '.my-agent', 'sessions');
+  }
+
+  /**
+   * Sanitize a message by redacting credentials from its content.
+   *
+   * This prevents credentials from being stored in session files.
+   * Handles both string content and array-based content structures.
+   *
+   * @param message - Message to sanitize
+   * @returns Sanitized copy of the message
+   */
+  private sanitizeMessage(message: ConversationMessage): ConversationMessage {
+    // Handle string content (simple messages)
+    if (typeof message.content === 'string') {
+      return {
+        ...message,
+        content: CredentialDetector.detectAndRedact(message.content),
+      };
+    }
+
+    // Handle array content (structured messages with text blocks, tool results, etc.)
+    // Runtime data can have content as array for Anthropic API compatibility
+    const content = message.content as unknown;
+    if (Array.isArray(content)) {
+      const sanitizedContent = content.map((block: unknown): unknown => {
+        if (isTextBlock(block)) {
+          return {
+            ...block,
+            text: CredentialDetector.detectAndRedact(block.text),
+          };
+        } else if (isToolResultBlock(block)) {
+          return {
+            ...block,
+            output: CredentialDetector.detectAndRedact(block.output),
+          };
+        }
+        return block;
+      });
+
+      return {
+        ...message,
+        content: sanitizedContent as unknown as string,
+      };
+    }
+
+    // Return message as-is if content type is unexpected
+    return message;
   }
 
   /**
@@ -358,12 +445,13 @@ export class JsonlSessionStore implements SessionStore {
       };
       lines.push(JSON.stringify(sessionStart));
 
-      // Write message records
+      // Write message records (sanitize credentials before saving)
       for (const message of session.messages) {
+        const sanitizedMessage = this.sanitizeMessage(message);
         const messageRecord: MessageRecord = {
           type: 'message',
           timestamp: Date.now(),
-          message,
+          message: sanitizedMessage,
         };
         lines.push(JSON.stringify(messageRecord));
       }
@@ -449,11 +537,12 @@ export class JsonlSessionStore implements SessionStore {
       };
       lines[0] = JSON.stringify(updatedSessionStart);
 
-      // Create new message record
+      // Create new message record (sanitize credentials before saving)
+      const sanitizedMessage = this.sanitizeMessage(message);
       const messageRecord: MessageRecord = {
         type: 'message',
         timestamp: Date.now(),
-        message,
+        message: sanitizedMessage,
       };
       lines.push(JSON.stringify(messageRecord));
 
@@ -585,6 +674,258 @@ export class JsonlSessionStore implements SessionStore {
     };
 
     await this.save(clearedSession);
+  }
+
+  /**
+   * Append turn metadata to session (for trace/debug data).
+   *
+   * Writes a turn_metadata record to the JSONL file containing
+   * metrics about an LLM turn (tokens, duration, tool count, etc.).
+   *
+   * @param sessionId - Session ID to append to
+   * @param metadata - Turn metadata record
+   * @throws {InvalidSessionIdError} If session ID is invalid
+   * @throws {SessionNotFoundError} If session doesn't exist
+   * @throws {SessionSaveError} If append fails
+   */
+  async appendTurnMetadata(
+    sessionId: string,
+    metadata: TurnMetadataRecord
+  ): Promise<void> {
+    this.validateSessionId(sessionId);
+
+    try {
+      // Verify session exists
+      const session = await this.load(sessionId);
+      if (session === null) {
+        throw new SessionNotFoundError(sessionId);
+      }
+
+      const sessionPath = this.getSessionPath(sessionId);
+      const line = JSON.stringify(metadata) + '\n';
+
+      // Append to file atomically
+      await fs.appendFile(sessionPath, line, {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+    } catch (error) {
+      if (
+        error instanceof InvalidSessionIdError ||
+        error instanceof SessionNotFoundError
+      ) {
+        throw error;
+      }
+
+      throw new SessionSaveError(
+        sessionId,
+        `Failed to append turn metadata: ${(error as Error).message}`,
+        error as Error
+      );
+    }
+  }
+
+  /**
+   * Append error log to session (for trace/debug data).
+   *
+   * Writes an error_log record to the JSONL file containing
+   * error information for debugging session failures.
+   *
+   * @param sessionId - Session ID to append to
+   * @param errorLog - Error log record
+   * @throws {InvalidSessionIdError} If session ID is invalid
+   * @throws {SessionNotFoundError} If session doesn't exist
+   * @throws {SessionSaveError} If append fails
+   */
+  async appendErrorLog(
+    sessionId: string,
+    errorLog: ErrorLogRecord
+  ): Promise<void> {
+    this.validateSessionId(sessionId);
+
+    try {
+      // Verify session exists
+      const session = await this.load(sessionId);
+      if (session === null) {
+        throw new SessionNotFoundError(sessionId);
+      }
+
+      const sessionPath = this.getSessionPath(sessionId);
+      const line = JSON.stringify(errorLog) + '\n';
+
+      // Append to file atomically
+      await fs.appendFile(sessionPath, line, {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+    } catch (error) {
+      if (
+        error instanceof InvalidSessionIdError ||
+        error instanceof SessionNotFoundError
+      ) {
+        throw error;
+      }
+
+      throw new SessionSaveError(
+        sessionId,
+        `Failed to append error log: ${(error as Error).message}`,
+        error as Error
+      );
+    }
+  }
+
+  /**
+   * Load session with trace data (turn metadata and error logs).
+   *
+   * Similar to load(), but also extracts and returns turn_metadata
+   * and error_log records for debugging and analysis.
+   *
+   * @param sessionId - Unique session identifier
+   * @returns Session with trace data arrays, or null if not found
+   * @throws {InvalidSessionIdError} If session ID is invalid
+   * @throws {SessionCorruptedError} If JSONL file is corrupted
+   * @throws {SessionLoadError} If loading fails for other reasons
+   */
+  async loadWithTrace(sessionId: string): Promise<{
+    session: Session;
+    turnMetadata: TurnMetadataRecord[];
+    errorLogs: ErrorLogRecord[];
+  } | null> {
+    this.validateSessionId(sessionId);
+
+    const sessionPath = this.getSessionPath(sessionId);
+
+    try {
+      // Try to access the file to check if it exists
+      await fs.access(sessionPath);
+    } catch (error) {
+      // File doesn't exist
+      return null;
+    }
+
+    // Check for symlink attacks
+    await this.checkNotSymlink(sessionPath, sessionId);
+
+    // Check file size before loading
+    try {
+      const stats = await fs.stat(sessionPath);
+      if (stats.size > MAX_SESSION_SIZE) {
+        throw new SessionTooLargeError(
+          sessionId,
+          `File size ${stats.size} bytes exceeds maximum ${MAX_SESSION_SIZE} bytes`
+        );
+      }
+    } catch (error) {
+      if (error instanceof SessionTooLargeError) {
+        throw error;
+      }
+      // Ignore stat errors, let the read fail naturally
+    }
+
+    try {
+      const fileStream = createReadStream(sessionPath, { encoding: 'utf-8' });
+      const rl = readline.createInterface({
+        input: fileStream,
+        crlfDelay: Infinity,
+      });
+
+      let sessionStart: SessionStartRecord | null = null;
+      const messages: ConversationMessage[] = [];
+      const turnMetadata: TurnMetadataRecord[] = [];
+      const errorLogs: ErrorLogRecord[] = [];
+      let lineNumber = 0;
+
+      for await (const line of rl) {
+        lineNumber++;
+
+        if (!line.trim()) {
+          continue; // Skip empty lines
+        }
+
+        // Check message count limit
+        if (messages.length >= MAX_MESSAGE_COUNT) {
+          throw new SessionTooLargeError(
+            sessionId,
+            `Message count exceeds maximum ${MAX_MESSAGE_COUNT} messages`
+          );
+        }
+
+        try {
+          const record = JSON.parse(line) as JsonlRecord;
+
+          if (record.type === 'session_start') {
+            if (sessionStart !== null) {
+              throw new SessionCorruptedError(
+                sessionId,
+                'Multiple session_start records found',
+                lineNumber
+              );
+            }
+            sessionStart = record as SessionStartRecord;
+          } else if (record.type === 'message') {
+            const messageRecord = record as MessageRecord;
+            messages.push(messageRecord.message);
+          } else if (record.type === 'turn_metadata') {
+            const metadataRecord = record as TurnMetadataRecord;
+            turnMetadata.push(metadataRecord);
+          } else if (record.type === 'error_log') {
+            const errorLogRecord = record as ErrorLogRecord;
+            errorLogs.push(errorLogRecord);
+          }
+          // Silently ignore unknown record types for forward compatibility
+        } catch (error) {
+          if (error instanceof SessionCorruptedError) {
+            throw error;
+          }
+
+          // Backup corrupted file
+          await this.backupCorruptedFile(sessionPath);
+
+          throw new SessionCorruptedError(
+            sessionId,
+            `Invalid JSON at line ${lineNumber}: ${(error as Error).message}`,
+            lineNumber
+          );
+        }
+      }
+
+      if (sessionStart === null) {
+        await this.backupCorruptedFile(sessionPath);
+        throw new SessionCorruptedError(
+          sessionId,
+          'Missing session_start record'
+        );
+      }
+
+      const session: Session = {
+        id: sessionStart.sessionId,
+        agentId: sessionStart.agentId,
+        createdAt: sessionStart.createdAt,
+        updatedAt: sessionStart.updatedAt,
+        messages,
+        metadata: sessionStart.metadata,
+      };
+
+      return {
+        session,
+        turnMetadata,
+        errorLogs,
+      };
+    } catch (error) {
+      if (
+        error instanceof InvalidSessionIdError ||
+        error instanceof SessionCorruptedError ||
+        error instanceof SessionTooLargeError
+      ) {
+        throw error;
+      }
+
+      throw new SessionLoadError(
+        sessionId,
+        `Failed to read session file: ${(error as Error).message}`,
+        error as Error
+      );
+    }
   }
 
   /**

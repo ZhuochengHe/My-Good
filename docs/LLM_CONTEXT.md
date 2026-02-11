@@ -7,7 +7,7 @@
 **Name:** Custom Agent Execution Loop
 **Language:** TypeScript (strict, ESM)
 **Runtime:** Node.js ≥18.0.0
-**Status:** Stage 6 complete (CLI Interface), Stage 7 next (Polish & Documentation)
+**Status:** Stage 7 complete (Event Persistence), Stage 8 next (Polish & Documentation)
 
 ## What We're Building
 
@@ -71,6 +71,13 @@ interface SessionStore {
   load(sessionId: string): Promise<Session | null>;
   appendMessage(sessionId: string, message: ConversationMessage): Promise<void>;
 }
+
+// Extended store with event persistence
+interface SessionStoreWithTrace extends SessionStore {
+  loadWithTrace(sessionId: string): Promise<SessionWithTrace | null>;
+  appendTurnMetadata(sessionId: string, metadata: TurnMetadataRecord): Promise<void>;
+  appendErrorLog(sessionId: string, error: ErrorLogRecord): Promise<void>;
+}
 ```
 
 ## Code Standards
@@ -83,7 +90,7 @@ interface SessionStore {
 
 ## Implementation Priority
 
-1. ✅ Types → 2. ✅ Config → 3. ✅ Logger → 4. ✅ Providers → 5. ✅ Agent Loop → 6. ✅ Plugin Manager → 7. ✅ Tool Executor → 8. ✅ Default Plugins → 9. ✅ Session Store → 10. ✅ Session Lifecycle → 11. ✅ CLI → 12. Polish & Docs
+1. ✅ Types → 2. ✅ Config → 3. ✅ Logger → 4. ✅ Providers → 5. ✅ Agent Loop → 6. ✅ Plugin Manager → 7. ✅ Tool Executor → 8. ✅ Default Plugins → 9. ✅ Session Store → 10. ✅ Session Lifecycle → 11. ✅ CLI → 12. ✅ Event Persistence → 13. Polish & Docs
 
 
 ## Default Plugins ✅
@@ -96,6 +103,9 @@ interface SessionStore {
 
 ## Error Handling
 
+- **Error Codes:** Unique codes for all errors (AGENT_001, PROVIDER_001, etc.)
+- **Structured Context:** All errors include context objects
+- **Always-On Logging:** Errors automatically logged to session JSONL
 - Provider errors: Retry 3x with exponential backoff
 - Tool errors: Return to model as tool result
 - Config errors: Abort startup with clear message
@@ -104,7 +114,7 @@ interface SessionStore {
 ## Testing
 
 - Framework: Vitest
-- Coverage target: ≥80%
+- Coverage: 85.82% (982 tests across 41 test files)
 - Approach: TDD (write tests first)
 
 ## Quick Reference
@@ -120,7 +130,9 @@ my-agent plugins info file-ops
 
 # Manage sessions
 my-agent session list
-my-agent session clear
+my-agent session show <id>       # View session details
+my-agent session show <id> --trace  # View with turn metrics and errors
+my-agent session delete <id>
 ```
 
 ## File Locations

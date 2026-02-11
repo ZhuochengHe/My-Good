@@ -1285,6 +1285,185 @@ describe('OpenAIProvider', () => {
     });
   });
 
+  describe('constructor with custom models', () => {
+    it('accepts custom models array', () => {
+      const customModels: readonly ModelInfo[] = [
+        {
+          id: 'custom-model-1',
+          name: 'Custom Model 1',
+          contextWindow: 100000,
+          supportsTools: true,
+          supportsStreaming: true,
+        },
+        {
+          id: 'custom-model-2',
+          name: 'Custom Model 2',
+          contextWindow: 50000,
+          supportsTools: false,
+          supportsStreaming: true,
+        },
+      ];
+
+      const customProvider = new OpenAIProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        customModels
+      );
+
+      expect(customProvider).toBeDefined();
+      expect(customProvider.type).toBe('openai');
+    });
+
+    it('accepts custom health check model', () => {
+      const customProvider = new OpenAIProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        undefined,
+        'custom-health-model'
+      );
+
+      expect(customProvider).toBeDefined();
+    });
+
+    it('uses default models when none provided', () => {
+      const defaultProvider = new OpenAIProvider('test-key');
+      expect(defaultProvider).toBeDefined();
+    });
+  });
+
+  describe('doListModels() with custom models', () => {
+    it('returns custom models when provided', async () => {
+      const customModels: readonly ModelInfo[] = [
+        {
+          id: 'custom-gpt-1',
+          name: 'Custom GPT 1',
+          contextWindow: 200000,
+          supportsTools: true,
+          supportsStreaming: true,
+        },
+        {
+          id: 'custom-gpt-2',
+          name: 'Custom GPT 2',
+          contextWindow: 150000,
+          supportsTools: true,
+          supportsStreaming: false,
+        },
+      ];
+
+      const customProvider = new OpenAIProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        customModels
+      );
+
+      const models = await customProvider.listModels();
+
+      expect(models).toEqual(customModels);
+      expect(models).toHaveLength(2);
+      expect(models[0].id).toBe('custom-gpt-1');
+      expect(models[1].id).toBe('custom-gpt-2');
+    });
+
+    it('returns default models when custom models not provided', async () => {
+      const defaultProvider = new OpenAIProvider('test-key');
+      const models = await defaultProvider.listModels();
+
+      expect(models.length).toBeGreaterThan(0);
+      expect(models.some((m) => m.id.includes('gpt'))).toBe(true);
+    });
+  });
+
+  describe('doHealthCheck() with custom model', () => {
+    it('uses custom health check model when provided', async () => {
+      const mockResponse: OpenAI.Chat.Completions.ChatCompletion = {
+        id: 'chatcmpl-test',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'custom-health-model',
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: 'ok',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 1,
+          total_tokens: 11,
+        },
+      };
+
+      mockCreate.mockResolvedValue(mockResponse);
+
+      const customProvider = new OpenAIProvider(
+        'test-key',
+        30000,
+        3,
+        undefined,
+        undefined,
+        'custom-health-model'
+      );
+
+      const healthy = await customProvider.healthCheck();
+
+      expect(healthy).toBe(true);
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'custom-health-model',
+          max_tokens: 1,
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it('uses default health check model when not provided', async () => {
+      const mockResponse: OpenAI.Chat.Completions.ChatCompletion = {
+        id: 'chatcmpl-test',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'gpt-3.5-turbo',
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: 'ok',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 1,
+          total_tokens: 11,
+        },
+      };
+
+      mockCreate.mockResolvedValue(mockResponse);
+
+      const defaultProvider = new OpenAIProvider('test-key');
+      const healthy = await defaultProvider.healthCheck();
+
+      expect(healthy).toBe(true);
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gpt-3.5-turbo',
+        }),
+        expect.any(Object)
+      );
+    });
+  });
+
   describe('edge cases', () => {
     it('handles empty message content', async () => {
       const mockResponse: OpenAI.Chat.Completions.ChatCompletion = {

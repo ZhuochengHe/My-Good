@@ -300,4 +300,163 @@ describe('shell plugin', { skip: shouldSkip }, () => {
       expect(result.output).toContain('exit code: 0');
     });
   });
+
+  describe('environment variable security', () => {
+    it('filters ANTHROPIC_API_KEY from environment', async () => {
+      const contextWithApiKey: ToolContext = {
+        ...mockContext,
+        env: {
+          ...mockContext.env,
+          ANTHROPIC_API_KEY: 'sk-ant-api03-secret123456789012345678901234567890',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'printenv ANTHROPIC_API_KEY' },
+        contextWithApiKey
+      );
+
+      // Should not contain the API key value
+      expect(result.output).not.toContain('sk-ant-api03-secret');
+      // Should show environment variable is not set
+      expect(result.output).toContain('exit code:');
+    });
+
+    it('filters OPENAI_API_KEY from environment', async () => {
+      const contextWithApiKey: ToolContext = {
+        ...mockContext,
+        env: {
+          ...mockContext.env,
+          OPENAI_API_KEY: 'sk-proj-secret123456789012345678901234567890',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'printenv OPENAI_API_KEY' },
+        contextWithApiKey
+      );
+
+      expect(result.output).not.toContain('sk-proj-secret');
+      expect(result.output).toContain('exit code:');
+    });
+
+    it('filters all *_API_KEY variables', async () => {
+      const contextWithApiKeys: ToolContext = {
+        ...mockContext,
+        env: {
+          ...mockContext.env,
+          GITHUB_API_KEY: 'ghp_secret123456789012345678901234567890',
+          CUSTOM_API_KEY: 'custom-secret-value',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'printenv | grep API_KEY' },
+        contextWithApiKeys
+      );
+
+      expect(result.output).not.toContain('ghp_secret');
+      expect(result.output).not.toContain('custom-secret-value');
+    });
+
+    it('filters all *_SECRET variables', async () => {
+      const contextWithSecrets: ToolContext = {
+        ...mockContext,
+        env: {
+          ...mockContext.env,
+          DATABASE_SECRET: 'db-password-123',
+          APP_SECRET: 'app-secret-xyz',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'printenv | grep SECRET' },
+        contextWithSecrets
+      );
+
+      expect(result.output).not.toContain('db-password-123');
+      expect(result.output).not.toContain('app-secret-xyz');
+    });
+
+    it('filters all *_TOKEN variables', async () => {
+      const contextWithTokens: ToolContext = {
+        ...mockContext,
+        env: {
+          ...mockContext.env,
+          AUTH_TOKEN: 'token-abc-123',
+          ACCESS_TOKEN: 'access-xyz-789',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'printenv | grep TOKEN' },
+        contextWithTokens
+      );
+
+      expect(result.output).not.toContain('token-abc-123');
+      expect(result.output).not.toContain('access-xyz-789');
+    });
+
+    it('filters all *_PASSWORD variables', async () => {
+      const contextWithPasswords: ToolContext = {
+        ...mockContext,
+        env: {
+          ...mockContext.env,
+          DB_PASSWORD: 'secure-password-123',
+          ADMIN_PASSWORD: 'admin-pass-xyz',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'printenv | grep PASSWORD' },
+        contextWithPasswords
+      );
+
+      expect(result.output).not.toContain('secure-password-123');
+      expect(result.output).not.toContain('admin-pass-xyz');
+    });
+
+    it('preserves safe environment variables (PATH, HOME, USER)', async () => {
+      const contextWithMixedVars: ToolContext = {
+        ...mockContext,
+        env: {
+          PATH: '/usr/bin:/bin',
+          HOME: '/home/testuser',
+          USER: 'testuser',
+          PWD: testDir,
+          SHELL: '/bin/bash',
+          LANG: 'en_US.UTF-8',
+          API_KEY: 'should-be-filtered',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'echo $PATH' },
+        contextWithMixedVars
+      );
+
+      // Safe variables should be accessible
+      expect(result.output).toContain('/usr/bin');
+      expect(result.output).toContain('exit code: 0');
+    });
+
+    it('filters variables containing AUTH', async () => {
+      const contextWithAuth: ToolContext = {
+        ...mockContext,
+        env: {
+          ...mockContext.env,
+          AUTHORIZATION: 'Bearer token-123',
+          AUTH_HEADER: 'auth-value',
+        },
+      };
+
+      const result: ToolHandlerResult = await execCommand(
+        { command: 'printenv | grep AUTH' },
+        contextWithAuth
+      );
+
+      expect(result.output).not.toContain('Bearer token-123');
+      expect(result.output).not.toContain('auth-value');
+    });
+  });
 });

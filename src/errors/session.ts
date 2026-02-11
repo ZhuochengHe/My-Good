@@ -2,6 +2,8 @@
  * Session error types for session storage, loading, and persistence.
  */
 
+import type { UserErrorMessage } from './types.js';
+
 /** Session error codes */
 export type SessionErrorCode =
   | 'SESSION_NOT_FOUND'
@@ -37,6 +39,21 @@ export class SessionError extends Error {
       Error.captureStackTrace(this, this.constructor);
     }
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E300',
+      message: 'Session operation failed',
+      context: `A session operation encountered an error: ${this.message}`,
+      suggestion: 'Check the session ID and try again',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -53,6 +70,21 @@ export class SessionNotFoundError extends SessionError {
     );
     this.name = 'SessionNotFoundError';
     this.sessionId = sessionId;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E301',
+      message: 'Session not found',
+      context: `The session "${this.sessionId}" does not exist in the session store`,
+      suggestion: "Use 'my-agent session list' to see available sessions, or omit --session to create a new session",
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
@@ -72,6 +104,22 @@ export class SessionLoadError extends SessionError {
     this.name = 'SessionLoadError';
     this.sessionId = sessionId;
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const details = this.details as { sessionId: string; reason: string };
+    return {
+      code: 'E302',
+      message: 'Failed to load session',
+      context: `Session "${details.sessionId}" could not be loaded: ${details.reason}`,
+      suggestion: 'Check file permissions and ensure the session file is not corrupted. Try listing sessions with "my-agent session list"',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -89,6 +137,22 @@ export class SessionSaveError extends SessionError {
     );
     this.name = 'SessionSaveError';
     this.sessionId = sessionId;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const details = this.details as { sessionId: string; reason: string };
+    return {
+      code: 'E303',
+      message: 'Failed to save session',
+      context: `Session "${details.sessionId}" could not be saved: ${details.reason}`,
+      suggestion: 'Check available disk space and file permissions. Ensure the session directory is writable',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
@@ -112,6 +176,23 @@ export class SessionCorruptedError extends SessionError {
       this.lineNumber = lineNumber;
     }
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const details = this.details as { sessionId: string; reason: string; lineNumber?: number };
+    const lineInfo = details.lineNumber !== undefined ? ` at line ${details.lineNumber}` : '';
+    return {
+      code: 'E304',
+      message: 'Session file is corrupted',
+      context: `Session "${details.sessionId}"${lineInfo} contains invalid data: ${details.reason}`,
+      suggestion: 'The session file may be corrupted. Consider deleting it with "my-agent session delete" and creating a new session',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -128,6 +209,22 @@ export class InvalidSessionIdError extends SessionError {
     );
     this.name = 'InvalidSessionIdError';
     this.sessionId = sessionId;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const details = this.details as { sessionId: string; reason: string };
+    return {
+      code: 'E305',
+      message: 'Invalid session ID',
+      context: `The session ID "${details.sessionId}" is not valid: ${details.reason}`,
+      suggestion: 'Session IDs must be valid identifiers. Use "my-agent session list" to see valid session IDs',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
@@ -146,6 +243,22 @@ export class SessionDeleteError extends SessionError {
     );
     this.name = 'SessionDeleteError';
     this.sessionId = sessionId;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const details = this.details as { sessionId: string; reason: string };
+    return {
+      code: 'E306',
+      message: 'Failed to delete session',
+      context: `Session "${details.sessionId}" could not be deleted: ${details.reason}`,
+      suggestion: 'Check file permissions and ensure the session file is not in use. Try again with appropriate permissions',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
@@ -170,6 +283,22 @@ export class SessionTooLargeError extends SessionError {
     );
     this.name = 'SessionTooLargeError';
     this.sessionId = sessionId;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const details = this.details as { sessionId: string; reason: string };
+    return {
+      code: 'E307',
+      message: 'Session exceeds resource limits',
+      context: `Session "${details.sessionId}" has grown too large: ${details.reason}`,
+      suggestion: 'Create a new session to continue. Long-running sessions can consume significant resources',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 

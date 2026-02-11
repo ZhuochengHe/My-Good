@@ -46,6 +46,63 @@ describe('config commands', () => {
       );
     });
 
+    it('should sanitize Anthropic API keys in config show output', async () => {
+      const configContent = 'providers:\n  anthropic:\n    apiKey: sk-ant-api03-test123456789012345678901234567890123456789\n';
+      writeFileSync(configPath, configContent, 'utf-8');
+
+      await configShow({ configPath, output: mockOutput });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      expect(allOutput).toContain('***REDACTED***');
+      expect(allOutput).not.toContain('sk-ant-api03');
+      expect(allOutput).toContain('apiKey');
+    });
+
+    it('should sanitize OpenAI API keys in config show output', async () => {
+      const configContent = 'providers:\n  openai:\n    apiKey: sk-proj-test123456789012345678901234567890123456789\n';
+      writeFileSync(configPath, configContent, 'utf-8');
+
+      await configShow({ configPath, output: mockOutput });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      expect(allOutput).toContain('***REDACTED***');
+      expect(allOutput).not.toContain('sk-proj');
+      expect(allOutput).toContain('apiKey');
+    });
+
+    it('should preserve non-sensitive config values', async () => {
+      const configContent = 'agent:\n  name: MyAgent\n  model: claude-sonnet-4\nproviders:\n  anthropic:\n    apiKey: sk-ant-api03-test123456789012345678901234567890123456789\n';
+      writeFileSync(configPath, configContent, 'utf-8');
+
+      await configShow({ configPath, output: mockOutput });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      expect(allOutput).toContain('MyAgent');
+      expect(allOutput).toContain('claude-sonnet-4');
+      expect(allOutput).toContain('***REDACTED***');
+      expect(allOutput).not.toContain('sk-ant-api03');
+    });
+
+    it('should handle config files without API keys', async () => {
+      const configContent = 'agent:\n  name: Test\n  maxTurns: 10\n';
+      writeFileSync(configPath, configContent, 'utf-8');
+
+      await configShow({ configPath, output: mockOutput });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      expect(allOutput).toContain('Test');
+      expect(allOutput).toContain('maxTurns');
+      expect(allOutput).not.toContain('***REDACTED***');
+    });
+
     it('should handle missing config file', async () => {
       await configShow({ configPath, output: mockOutput });
 
