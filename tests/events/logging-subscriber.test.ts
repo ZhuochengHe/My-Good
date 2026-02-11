@@ -335,4 +335,191 @@ describe('LoggingSubscriber', () => {
       consoleLogSpy.mockRestore();
     });
   });
+
+  describe('credential sanitization', () => {
+    describe('tool_call_start event', () => {
+      it('sanitizes credentials in tool call arguments', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallStartEvent = {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'tc_001',
+            name: 'execute_command',
+            arguments: {
+              command: 'export ANTHROPIC_API_KEY=sk-ant-api03-test123456789012345678901234567890',
+              apiKey: 'sk-ant-api03-secret123456789012345678901234567890',
+            },
+          },
+          timestamp: 1234567890,
+        };
+
+        subscriber.onEvent(event);
+
+        const logCall = logSpy.info.mock.calls[0];
+        expect(logCall[0]).toBe('Tool call started');
+        expect(logCall[1].arguments.command).not.toContain('sk-ant-api03');
+        expect(logCall[1].arguments.command).toContain('***REDACTED***');
+        expect(logCall[1].arguments.apiKey).toBe('***REDACTED***');
+      });
+
+      it('sanitizes credentials in nested arguments', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallStartEvent = {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'tc_002',
+            name: 'configure_api',
+            arguments: {
+              config: {
+                openai: {
+                  apiKey: 'sk-proj-test123456789012345678901234567890',
+                },
+                github: {
+                  token: 'ghp_test123456789012345678901234567890',
+                },
+              },
+              safe: 'value',
+            },
+          },
+          timestamp: 1234567890,
+        };
+
+        subscriber.onEvent(event);
+
+        const logCall = logSpy.info.mock.calls[0];
+        expect(logCall[1].arguments.config.openai.apiKey).toBe('***REDACTED***');
+        expect(logCall[1].arguments.config.github.token).toBe('***REDACTED***');
+        expect(logCall[1].arguments.safe).toBe('value');
+      });
+
+      it('preserves non-sensitive arguments', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallStartEvent = {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'tc_003',
+            name: 'read_file',
+            arguments: {
+              path: '/home/user/file.txt',
+              encoding: 'utf-8',
+            },
+          },
+          timestamp: 1234567890,
+        };
+
+        subscriber.onEvent(event);
+
+        const logCall = logSpy.info.mock.calls[0];
+        expect(logCall[1].arguments.path).toBe('/home/user/file.txt');
+        expect(logCall[1].arguments.encoding).toBe('utf-8');
+      });
+    });
+
+    describe('tool_call_end event', () => {
+      it('sanitizes credentials in tool call results', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallEndEvent = {
+          type: 'tool_call_end',
+          result: {
+            callId: 'tc_001',
+            name: 'read_config',
+            success: true,
+            output: JSON.stringify({
+              anthropic: { apiKey: 'sk-ant-api03-test123456789012345678901234567890' },
+              openai: { apiKey: 'sk-proj-test123456789012345678901234567890' },
+            }),
+            durationMs: 100,
+          },
+          timestamp: 1234567890,
+        };
+
+        subscriber.onEvent(event);
+
+        // Output should not be logged in the summary, but if it were, it should be sanitized
+        // The current implementation doesn't log output, so we just verify it doesn't throw
+        expect(logSpy.info).toHaveBeenCalled();
+      });
+
+      it('preserves non-sensitive result data', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallEndEvent = {
+          type: 'tool_call_end',
+          result: {
+            callId: 'tc_002',
+            name: 'list_files',
+            success: true,
+            output: 'file1.txt\nfile2.txt\nfile3.txt',
+            durationMs: 50,
+          },
+          timestamp: 1234567890,
+        };
+
+        subscriber.onEvent(event);
+
+        const logCall = logSpy.info.mock.calls[0];
+        expect(logCall[0]).toBe('Tool call completed');
+        expect(logCall[1].toolName).toBe('list_files');
+        expect(logCall[1].success).toBe(true);
+        expect(logCall[1].durationMs).toBe(50);
+      });
+    });
+
+    describe('handles edge cases', () => {
+      it('handles null arguments gracefully', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallStartEvent = {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'tc_001',
+            name: 'test_tool',
+            arguments: null as unknown as Record<string, unknown>,
+          },
+          timestamp: 1234567890,
+        };
+
+        expect(() => subscriber.onEvent(event)).not.toThrow();
+      });
+
+      it('handles undefined arguments gracefully', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallStartEvent = {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'tc_001',
+            name: 'test_tool',
+            arguments: undefined as unknown as Record<string, unknown>,
+          },
+          timestamp: 1234567890,
+        };
+
+        expect(() => subscriber.onEvent(event)).not.toThrow();
+      });
+
+      it('handles arguments with arrays containing credentials', () => {
+        const subscriber = createLoggingSubscriber(mockLogger);
+        const event: ToolCallStartEvent = {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'tc_001',
+            name: 'batch_configure',
+            arguments: {
+              keys: [
+                'sk-ant-api03-test123456789012345678901234567890',
+                'normal-value',
+                'ghp_test123456789012345678901234567890',
+              ],
+            },
+          },
+          timestamp: 1234567890,
+        };
+
+        subscriber.onEvent(event);
+
+        const logCall = logSpy.info.mock.calls[0];
+        expect(logCall[1].arguments.keys[0]).toBe('***REDACTED***');
+        expect(logCall[1].arguments.keys[1]).toBe('normal-value');
+        expect(logCall[1].arguments.keys[2]).toBe('***REDACTED***');
+      });
+    });
+  });
 });

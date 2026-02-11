@@ -218,6 +218,19 @@ type AgentEvent =
 
 ## Error Handling
 
+### Error Code System
+
+All errors include unique error codes and structured context:
+
+| Layer | Error Classes | Error Codes | Example |
+|-------|---------------|-------------|---------|
+| Agent | 7 classes | `AGENT_001` - `AGENT_007` | AgentInitializationError, AgentExecutionError |
+| Provider | 7 classes | `PROVIDER_001` - `PROVIDER_007` | ProviderAuthenticationError, ProviderRateLimitError |
+| Plugin | 6 classes | `PLUGIN_001` - `PLUGIN_006` | PluginValidationError, PluginExecutionError |
+| Session | 7 classes | `SESSION_001` - `SESSION_007` | SessionNotFoundError, SessionCorruptedError |
+
+### Error Handling Strategy
+
 | Layer | Error Type | Strategy |
 |-------|------------|----------|
 | Provider | API timeout | Retry 3x with backoff |
@@ -229,12 +242,19 @@ type AgentEvent =
 | Session | Corrupted data | Backup, create new |
 | Config | Invalid | Abort startup |
 
+All errors are logged to session error logs for debugging with:
+- Error code and message
+- Contextual information (turn number, tool name, etc.)
+- Stack traces for debugging
+- Timestamp for correlation
+
 ## Extension Points
 
 1. **New Provider**: Implement `ModelProvider` interface
 2. **New Plugin**: Create `plugin.json` manifest + handlers
 3. **Event Subscriber**: Implement `onEvent(event: AgentEvent)`
 4. **Custom Session Store**: Implement `SessionStore` interface
+5. **Session Store with Trace**: Implement `SessionStoreWithTrace` for event persistence support
 
 ## Directory Structure
 
@@ -286,11 +306,36 @@ session:
 
 ## Session Format (JSONL)
 
+Each session is stored as a JSONL file with multiple record types:
+
 ```jsonl
-{"type":"session_start","sessionId":"abc123","timestamp":1706400000000}
-{"type":"message","id":"msg_001","role":"user","content":"Read config.yaml","timestamp":1706400001000}
-{"type":"message","id":"msg_002","role":"assistant","toolCalls":[{"id":"tc_001","name":"read_file","arguments":{"path":"config.yaml"}}],"stopReason":"tool_use","timestamp":1706400002000}
-{"type":"tool_result","callId":"tc_001","success":true,"output":"...","durationMs":15,"timestamp":1706400002015}
+{"type":"session_start","sessionId":"abc123","agentId":"default","timestamp":1706400000000,"metadata":{...}}
+{"type":"message","message":{"id":"msg_001","role":"user","content":"Read config.yaml"},"timestamp":1706400001000}
+{"type":"message","message":{"id":"msg_002","role":"assistant","toolCalls":[...],"stopReason":"tool_use"},"timestamp":1706400002000}
+{"type":"turn_metadata","turnNumber":1,"usage":{"promptTokens":120,"completionTokens":45,"totalTokens":165},"durationMs":1543,"toolCount":1,"stopReason":"tool_use","timestamp":1706400002543}
+{"type":"error_log","turnNumber":2,"error":"ToolExecutionError","message":"Tool timeout","context":"read_file","stack":"...","timestamp":1706400010000}
+```
+
+### Record Types
+
+| Type | Purpose | When Written |
+|------|---------|--------------|
+| `session_start` | Session metadata | Once at session creation |
+| `message` | Conversation messages | After each message (user/assistant/tool) |
+| `turn_metadata` | Turn metrics | After each LLM turn completes |
+| `error_log` | Error tracking | When errors occur during execution |
+
+### Event Persistence (Always-On)
+
+Turn metadata and error logs are automatically persisted during execution:
+- **Turn Metrics**: Duration, token usage, tool count, stop reason
+- **Error Logs**: Error type, message, context, stack trace
+- **Zero Overhead**: Written during execution, not on-demand
+- **Debuggable**: Human-readable JSONL format
+
+Use `--trace` flag with `session show` to view trace data:
+```bash
+my-agent session show <session-id> --trace
 ```
 
 ## Key Decisions

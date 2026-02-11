@@ -42,18 +42,53 @@ import {
  */
 export class AnthropicProvider extends BaseProvider {
   private readonly client: Anthropic;
+  private readonly models: readonly ModelInfo[];
+  private readonly healthCheckModel: string;
 
   constructor(
     apiKey: string,
     timeout = 30000,
     maxRetries = 3,
-    baseUrl?: string
+    baseUrl?: string,
+    models?: readonly ModelInfo[],
+    healthCheckModel?: string
   ) {
     super('anthropic', apiKey, timeout, maxRetries);
     this.client = new Anthropic({
       apiKey,
       baseURL: baseUrl,
     });
+    this.models = models ?? this.getDefaultModels();
+    this.healthCheckModel = healthCheckModel ?? 'claude-3-haiku-20240307';
+  }
+
+  /**
+   * Get default Claude models.
+   */
+  private getDefaultModels(): readonly ModelInfo[] {
+    return [
+      {
+        id: 'claude-3-5-sonnet-20241022',
+        name: 'Claude 3.5 Sonnet',
+        contextWindow: 200000,
+        supportsTools: true,
+        supportsStreaming: true,
+      },
+      {
+        id: 'claude-3-opus-20240229',
+        name: 'Claude 3 Opus',
+        contextWindow: 200000,
+        supportsTools: true,
+        supportsStreaming: true,
+      },
+      {
+        id: 'claude-3-haiku-20240307',
+        name: 'Claude 3 Haiku',
+        contextWindow: 200000,
+        supportsTools: true,
+        supportsStreaming: true,
+      },
+    ];
   }
 
   /**
@@ -155,44 +190,23 @@ export class AnthropicProvider extends BaseProvider {
   /**
    * List available Claude models.
    *
-   * Returns hardcoded list of current Claude models with metadata.
+   * Returns injected models or default hardcoded list of current Claude models with metadata.
    * Note: Anthropic API doesn't provide a models endpoint, so this is static.
    */
   protected doListModels(): Promise<readonly ModelInfo[]> {
-    return Promise.resolve([
-      {
-        id: 'claude-3-5-sonnet-20241022',
-        name: 'Claude 3.5 Sonnet',
-        contextWindow: 200000,
-        supportsTools: true,
-        supportsStreaming: true,
-      },
-      {
-        id: 'claude-3-opus-20240229',
-        name: 'Claude 3 Opus',
-        contextWindow: 200000,
-        supportsTools: true,
-        supportsStreaming: true,
-      },
-      {
-        id: 'claude-3-haiku-20240307',
-        name: 'Claude 3 Haiku',
-        contextWindow: 200000,
-        supportsTools: true,
-        supportsStreaming: true,
-      },
-    ]);
+    return Promise.resolve(this.models);
   }
 
   /**
    * Check if the Anthropic API is accessible.
    *
    * Makes a minimal request to verify API key and connectivity.
+   * Uses injected health check model or default cheapest model.
    */
   protected async doHealthCheck(): Promise<boolean> {
     try {
       await this.client.messages.create({
-        model: 'claude-3-haiku-20240307', // Use cheapest model
+        model: this.healthCheckModel,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'ping' }],
       });

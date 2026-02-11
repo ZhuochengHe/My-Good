@@ -76,6 +76,22 @@ export interface SessionStore {
   clear(sessionId: string): Promise<void>;
 }
 
+/** Result from loading a session with trace data */
+export interface SessionWithTrace {
+  readonly session: Session;
+  readonly turnMetadata: readonly TurnMetadataRecord[];
+  readonly errorLogs: readonly ErrorLogRecord[];
+}
+
+/** Extended store interface for stores that support trace data */
+export interface SessionStoreWithTrace extends SessionStore {
+  /**
+   * Load session with trace data (turn metadata and error logs).
+   * Only available in stores that support event persistence.
+   */
+  loadWithTrace(sessionId: string): Promise<SessionWithTrace | null>;
+}
+
 /** Session group store interface */
 export interface SessionGroupStore {
   /**
@@ -97,4 +113,74 @@ export interface SessionGroupStore {
    * Delete group.
    */
   deleteGroup(name: string): Promise<void>;
+}
+
+// ============================================================
+// JSONL Journal Record Types
+// ============================================================
+
+/**
+ * Turn metadata record for JSONL persistence.
+ * Captures metrics about an LLM turn for debugging and analytics.
+ */
+export interface TurnMetadataRecord {
+  readonly type: 'turn_metadata';
+  readonly turnNumber: number;
+  readonly usage: {
+    readonly promptTokens: number;
+    readonly completionTokens: number;
+    readonly totalTokens: number;
+  };
+  readonly durationMs: number;
+  readonly toolCount: number;
+  readonly stopReason: string;
+  readonly timestamp: number;
+}
+
+/**
+ * Error log record for JSONL persistence.
+ * Captures errors during session execution for debugging.
+ */
+export interface ErrorLogRecord {
+  readonly type: 'error_log';
+  readonly turnNumber?: number;
+  readonly error: string;
+  readonly message: string;
+  readonly context?: string;
+  readonly stack?: string;
+  readonly timestamp: number;
+}
+
+/**
+ * Union type for all JSONL record types.
+ * Each session file contains a mix of these record types.
+ */
+export type JournalRecord =
+  | SessionStartRecord
+  | MessageRecord
+  | TurnMetadataRecord
+  | ErrorLogRecord;
+
+/**
+ * Session start record (internal to JSONL format).
+ * This is the first line in every session file.
+ */
+export interface SessionStartRecord {
+  readonly type: 'session_start';
+  readonly timestamp: number;
+  readonly sessionId: string;
+  readonly agentId: string;
+  readonly metadata: SessionMetadata;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/**
+ * Message record (internal to JSONL format).
+ * Wraps a conversation message with metadata.
+ */
+export interface MessageRecord {
+  readonly type: 'message';
+  readonly timestamp: number;
+  readonly message: ConversationMessage;
 }

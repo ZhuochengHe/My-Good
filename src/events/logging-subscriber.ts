@@ -8,6 +8,7 @@
 
 import { createLogger, type Logger } from '../utils/logger.js';
 import type { AgentEvent, EventSubscriber } from '../types/events.js';
+import { CredentialDetector } from '../security/credential-detector.js';
 
 /**
  * Creates a logging subscriber that logs agent events.
@@ -41,7 +42,7 @@ export function createLoggingSubscriber(logger?: Logger): EventSubscriber {
           log.info('Tool call started', {
             toolName: event.toolCall.name,
             toolCallId: event.toolCall.id,
-            arguments: event.toolCall.arguments,
+            arguments: CredentialDetector.sanitizeObject(event.toolCall.arguments),
             eventTimestamp: event.timestamp,
           });
           break;

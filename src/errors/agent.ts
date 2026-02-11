@@ -6,6 +6,7 @@
  */
 
 import type { AgentErrorCode } from '../types/agent.js';
+import type { UserErrorMessage } from './types.js';
 
 /**
  * Base error for all agent failures.
@@ -32,6 +33,21 @@ export class AgentError extends Error {
       Error.captureStackTrace(this, this.constructor);
     }
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E400',
+      message: 'Agent execution failed',
+      context: `The agent encountered an error during execution: ${this.message}`,
+      suggestion: 'Check the error details and try again. If the issue persists, please report it',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -46,6 +62,21 @@ export class MaxTurnsError extends AgentError {
     this.name = 'MaxTurnsError';
     this.maxTurns = maxTurns;
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E401',
+      message: 'Maximum conversation turns exceeded',
+      context: `The agent reached the maximum allowed turns (${this.maxTurns}) for a single conversation`,
+      suggestion: 'Start a new session to continue. Long conversations consume more tokens and may hit model limits',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -56,6 +87,21 @@ export class CancelledError extends AgentError {
   constructor(message = 'Agent execution cancelled by user') {
     super(message, 'CANCELLED', true);
     this.name = 'CancelledError';
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E402',
+      message: 'Agent execution was cancelled',
+      context: `Execution was stopped: ${this.message}`,
+      suggestion: 'You can resume the session or start a new one to continue',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
@@ -76,6 +122,22 @@ export class ToolExecutionError extends AgentError {
     this.name = 'ToolExecutionError';
     this.toolName = toolName;
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const causeMessage = this.cause instanceof Error ? this.cause.message : 'unknown error';
+    return {
+      code: 'E403',
+      message: 'Tool execution failed',
+      context: `The tool "${this.toolName}" encountered an error: ${causeMessage}`,
+      suggestion: 'Check that the tool is configured correctly and has necessary permissions. The agent may retry with different parameters',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -95,6 +157,21 @@ export class ContextOverflowError extends AgentError {
     this.name = 'ContextOverflowError';
     this.usedTokens = usedTokens;
     this.maxTokens = maxTokens;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E404',
+      message: 'Context window size exceeded',
+      context: `The conversation has used ${this.usedTokens} tokens, exceeding the maximum of ${this.maxTokens} tokens`,
+      suggestion: 'Start a new session to continue. Consider using shorter messages or reducing tool output',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 

@@ -1,6 +1,81 @@
 # Development Log
 
 
+## 2026-02-11 - Stage 7: Event Persistence (Always-On)
+
+**Branch:** `feature/provider-registry`
+**Status:** Complete ✅
+
+### What Was Built
+
+Implemented always-on event persistence with turn metadata and error logging:
+
+**New Types (src/types/sessions.ts):**
+- `TurnMetadataRecord` - Per-turn metrics (duration, tokens, tool count, stop reason)
+- `ErrorLogRecord` - Error capture with context and stack traces
+- `SessionWithTrace` - Result type for loading sessions with trace data
+- `SessionStoreWithTrace` - Extended store interface with `loadWithTrace()`
+- `JournalRecord` - Union type for all JSONL record types
+
+**Extended JsonlSessionStore (src/session/jsonl-store.ts):**
+- `appendTurnMetadata()` - Persist turn metrics to JSONL
+- `appendErrorLog()` - Persist errors to JSONL
+- `loadWithTrace()` - Load session with trace arrays
+
+**Extended SessionManager (src/session/session-manager.ts):**
+- Automatic turn metadata tracking after each LLM turn
+- Automatic error logging on failures
+- Integration with Agent execution loop
+
+**CLI Enhancement (src/cli/commands/session.ts):**
+- `--trace` flag for `session show` command
+- Formatted trace data display
+- Turn metrics with duration formatting (5.4s, 123ms, etc.)
+- Error logs with turn association and stack traces
+
+### Implementation Approach
+
+- **TDD First:** All tests written before implementation
+- **Type Safety:** Strict TypeScript typing, no `any` types
+- **Always-On:** Minimal performance impact, data written during execution
+- **Human-Readable:** JSONL format for easy debugging
+- **Backward Compatible:** Existing sessions work without trace data
+
+### Test Results
+
+- **Total Tests:** 982 (152 new tests added)
+- **Coverage:** 85.82% overall (maintained ≥80% requirement)
+- **New Test Files:**
+  - `tests/errors/session.test.ts` - Error type tests
+  - Enhanced `tests/session/jsonl-store.test.ts` - Trace methods
+  - Enhanced `tests/session/session-manager.test.ts` - Turn tracking
+  - Enhanced `tests/cli/commands/session.test.ts` - --trace flag
+- **All Checks:** ✅ Lint, ✅ Build, ✅ Tests
+
+### Key Learnings
+
+1. **Type Safety Matters:** Using proper TypeScript types (not `any`) caught several bugs during development
+2. **TDD Workflow:** Writing tests first made the implementation smoother and more reliable
+3. **Always-On Design:** Persisting data during execution (not on-demand) provides better debugging without performance penalty
+4. **JSONL Benefits:** Human-readable format makes debugging sessions much easier
+
+### Error Handling Implementation
+
+Added comprehensive error code system:
+- `src/errors/types.ts` - Base error types and codes
+- `src/errors/agent.ts` - Agent-specific errors (7 classes)
+- `src/errors/provider.ts` - Provider errors (7 classes)
+- `src/errors/plugin.ts` - Plugin errors (6 classes)
+- `src/errors/session.ts` - Session errors (7 classes)
+
+All errors follow consistent pattern:
+- Unique error codes (e.g., `AGENT_001`, `PROVIDER_002`)
+- Context objects for structured data
+- Stack trace preservation
+- TypeScript type discrimination
+
+---
+
 ## 2026-02-10 - Stage 6: CLI Interface - Test Fix
 
 **Branch:** `stage-6-cli-interface`

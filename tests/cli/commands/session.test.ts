@@ -286,4 +286,387 @@ describe('session commands', () => {
       );
     });
   });
+
+  describe('sessionShow with --trace flag', () => {
+    let mockStore: any;
+
+    beforeEach(() => {
+      // Create a mock store with loadWithTrace method
+      mockStore = {
+        loadWithTrace: vi.fn(),
+      };
+
+      // Add the mock store to the session manager
+      (mockSessionManager as any).store = mockStore;
+    });
+
+    it('should display turn metadata when trace flag is true', async () => {
+      const mockTraceData = {
+        session: {
+          id: 'test-session',
+          agentId: 'test-agent',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: {
+            model: 'claude-sonnet-4-20250514',
+            provider: 'anthropic' as const,
+            totalTokens: 1000,
+            toolCallCount: 5,
+            turnCount: 2,
+            description: 'Test session',
+            tags: ['test'],
+          },
+          messages: [],
+        },
+        turnMetadata: [
+          {
+            type: 'turn_metadata' as const,
+            turnNumber: 1,
+            usage: {
+              promptTokens: 150,
+              completionTokens: 100,
+              totalTokens: 250,
+            },
+            durationMs: 1200,
+            toolCount: 2,
+            stopReason: 'tool_use',
+            timestamp: Date.now(),
+          },
+          {
+            type: 'turn_metadata' as const,
+            turnNumber: 2,
+            usage: {
+              promptTokens: 200,
+              completionTokens: 150,
+              totalTokens: 350,
+            },
+            durationMs: 1500,
+            toolCount: 1,
+            stopReason: 'end_turn',
+            timestamp: Date.now(),
+          },
+        ],
+        errorLogs: [],
+      };
+
+      vi.mocked(mockStore.loadWithTrace).mockResolvedValue(mockTraceData);
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'test-session',
+        trace: true,
+      });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      // Should display turn metadata
+      expect(allOutput).toContain('Turn 1');
+      expect(allOutput).toContain('Turn 2');
+      expect(allOutput).toContain('1.2s');
+      expect(allOutput).toContain('1.5s');
+      expect(allOutput).toContain('250');
+      expect(allOutput).toContain('350');
+      expect(allOutput).toContain('tool_use');
+      expect(allOutput).toContain('end_turn');
+    });
+
+    it('should display error logs when trace flag is true', async () => {
+      const mockTraceData = {
+        session: {
+          id: 'test-session',
+          agentId: 'test-agent',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: {
+            model: 'test',
+            provider: 'anthropic' as const,
+            totalTokens: 100,
+            toolCallCount: 0,
+            turnCount: 1,
+            description: '',
+            tags: [],
+          },
+          messages: [],
+        },
+        turnMetadata: [],
+        errorLogs: [
+          {
+            type: 'error_log' as const,
+            turnNumber: 1,
+            error: 'TOOL_ERROR',
+            message: 'Command timeout after 30s',
+            context: 'during shell execution',
+            timestamp: Date.now(),
+          },
+          {
+            type: 'error_log' as const,
+            error: 'PROVIDER_ERROR',
+            message: 'API rate limit exceeded',
+            timestamp: Date.now(),
+          },
+        ],
+      };
+
+      vi.mocked(mockStore.loadWithTrace).mockResolvedValue(mockTraceData);
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'test-session',
+        trace: true,
+      });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      // Should display error logs
+      expect(allOutput).toContain('ERRORS');
+      expect(allOutput).toContain('TOOL_ERROR');
+      expect(allOutput).toContain('Command timeout');
+      expect(allOutput).toContain('Turn 1');
+      expect(allOutput).toContain('PROVIDER_ERROR');
+      expect(allOutput).toContain('API rate limit');
+    });
+
+    it('should display both turn metadata and error logs', async () => {
+      const mockTraceData = {
+        session: {
+          id: 'test-session',
+          agentId: 'test-agent',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: {
+            model: 'test',
+            provider: 'anthropic' as const,
+            totalTokens: 100,
+            toolCallCount: 0,
+            turnCount: 1,
+            description: '',
+            tags: [],
+          },
+          messages: [],
+        },
+        turnMetadata: [
+          {
+            type: 'turn_metadata' as const,
+            turnNumber: 1,
+            usage: {
+              promptTokens: 100,
+              completionTokens: 50,
+              totalTokens: 150,
+            },
+            durationMs: 800,
+            toolCount: 0,
+            stopReason: 'end_turn',
+            timestamp: Date.now(),
+          },
+        ],
+        errorLogs: [
+          {
+            type: 'error_log' as const,
+            turnNumber: 1,
+            error: 'VALIDATION_ERROR',
+            message: 'Invalid parameter',
+            timestamp: Date.now(),
+          },
+        ],
+      };
+
+      vi.mocked(mockStore.loadWithTrace).mockResolvedValue(mockTraceData);
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'test-session',
+        trace: true,
+      });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      // Should display both sections
+      expect(allOutput).toContain('TURN METADATA');
+      expect(allOutput).toContain('Turn 1');
+      expect(allOutput).toContain('ERRORS');
+      expect(allOutput).toContain('VALIDATION_ERROR');
+    });
+
+    it('should handle sessions with no trace data', async () => {
+      const mockTraceData = {
+        session: {
+          id: 'old-session',
+          agentId: 'test-agent',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: {
+            model: 'test',
+            provider: 'anthropic' as const,
+            totalTokens: 100,
+            toolCallCount: 0,
+            turnCount: 1,
+            description: 'Old session',
+            tags: [],
+          },
+          messages: [],
+        },
+        turnMetadata: [],
+        errorLogs: [],
+      };
+
+      vi.mocked(mockStore.loadWithTrace).mockResolvedValue(mockTraceData);
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'old-session',
+        trace: true,
+      });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      // Should display session info but no trace data
+      expect(allOutput).toContain('old-session');
+      expect(allOutput).toContain('Old session');
+      // Should indicate no trace data available
+      expect(allOutput).toMatch(/no trace data|trace data unavailable/i);
+    });
+
+    it('should use loadSession when trace flag is false', async () => {
+      const mockSession = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        metadata: {
+          model: 'test',
+          provider: 'anthropic' as const,
+          totalTokens: 100,
+          toolCallCount: 0,
+          turnCount: 1,
+          description: 'Test',
+          tags: [],
+        },
+        messages: [],
+      };
+
+      vi.mocked(mockSessionManager.loadSession).mockResolvedValue(mockSession);
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'test-session',
+        trace: false,
+      });
+
+      // Should call loadSession, not loadWithTrace
+      expect(mockSessionManager.loadSession).toHaveBeenCalled();
+      expect(mockStore.loadWithTrace).not.toHaveBeenCalled();
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      // Should NOT display trace sections
+      expect(allOutput).not.toContain('TURN METADATA');
+      expect(allOutput).not.toContain('ERRORS');
+    });
+
+    it('should use loadSession when trace flag is undefined', async () => {
+      const mockSession = {
+        id: 'test-session',
+        agentId: 'test-agent',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        metadata: {
+          model: 'test',
+          provider: 'anthropic' as const,
+          totalTokens: 100,
+          toolCallCount: 0,
+          turnCount: 1,
+          description: 'Test',
+          tags: [],
+        },
+        messages: [],
+      };
+
+      vi.mocked(mockSessionManager.loadSession).mockResolvedValue(mockSession);
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'test-session',
+        // trace flag omitted
+      });
+
+      expect(mockSessionManager.loadSession).toHaveBeenCalled();
+      expect(mockStore.loadWithTrace).not.toHaveBeenCalled();
+    });
+
+    it('should format duration correctly', async () => {
+      const mockTraceData = {
+        session: {
+          id: 'test',
+          agentId: 'agent',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: {
+            model: 'test',
+            provider: 'anthropic' as const,
+            totalTokens: 100,
+            toolCallCount: 0,
+            turnCount: 1,
+            description: '',
+            tags: [],
+          },
+          messages: [],
+        },
+        turnMetadata: [
+          {
+            type: 'turn_metadata' as const,
+            turnNumber: 1,
+            usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+            durationMs: 5432,
+            toolCount: 0,
+            stopReason: 'end_turn',
+            timestamp: Date.now(),
+          },
+        ],
+        errorLogs: [],
+      };
+
+      vi.mocked(mockStore.loadWithTrace).mockResolvedValue(mockTraceData);
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'test',
+        trace: true,
+      });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      // Should display duration as 5.4s
+      expect(allOutput).toMatch(/5\.4s/);
+    });
+
+    it('should handle error when loadWithTrace is not available', async () => {
+      // Remove loadWithTrace from store
+      delete (mockSessionManager as any).store;
+
+      await sessionShow({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        sessionId: 'test-session',
+        trace: true,
+      });
+
+      // Should display error
+      expect(mockOutput.writeError).toHaveBeenCalledWith(
+        expect.stringContaining('Trace data')
+      );
+    });
+  });
 });

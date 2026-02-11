@@ -461,4 +461,80 @@ describe('file-ops plugin', () => {
       expect(result.output).toBe(largeContent);
     });
   });
+
+  describe('security - credential file blocking', () => {
+    it('should block reading .env files', async () => {
+      await writeFile(join(testDir, '.env'), 'API_KEY=secret123', 'utf-8');
+
+      const result: ToolHandlerResult = await read_file(
+        { path: '.env' },
+        mockContext
+      );
+
+      expect(result.output).toContain('Error');
+      expect(result.output).toMatch(/blocked|denied|not allowed/i);
+    });
+
+    it('should block reading config.yaml in root', async () => {
+      await writeFile(join(testDir, 'config.yaml'), 'apiKey: secret', 'utf-8');
+
+      const result: ToolHandlerResult = await read_file(
+        { path: 'config.yaml' },
+        mockContext
+      );
+
+      expect(result.output).toContain('Error');
+      expect(result.output).toMatch(/blocked|denied|not allowed/i);
+    });
+
+    it('should block reading .aws/credentials', async () => {
+      await mkdir(join(testDir, '.aws'), { recursive: true });
+      await writeFile(join(testDir, '.aws', 'credentials'), '[default]\naws_access_key_id=AKIA...', 'utf-8');
+
+      const result: ToolHandlerResult = await read_file(
+        { path: '.aws/credentials' },
+        mockContext
+      );
+
+      expect(result.output).toContain('Error');
+      expect(result.output).toMatch(/blocked|denied|not allowed/i);
+    });
+
+    it('should block reading SSH private keys', async () => {
+      await mkdir(join(testDir, '.ssh'), { recursive: true });
+      await writeFile(join(testDir, '.ssh', 'id_rsa'), '-----BEGIN PRIVATE KEY-----', 'utf-8');
+
+      const result: ToolHandlerResult = await read_file(
+        { path: '.ssh/id_rsa' },
+        mockContext
+      );
+
+      expect(result.output).toContain('Error');
+      expect(result.output).toMatch(/blocked|denied|not allowed/i);
+    });
+
+    it('should allow reading normal files', async () => {
+      await writeFile(join(testDir, 'normal.txt'), 'Normal content', 'utf-8');
+
+      const result: ToolHandlerResult = await read_file(
+        { path: 'normal.txt' },
+        mockContext
+      );
+
+      expect(result.output).toBe('Normal content');
+      expect(result.output).not.toContain('Error');
+    });
+
+    it('should sanitize credentials in file content', async () => {
+      await writeFile(join(testDir, 'log.txt'), 'Key: sk-ant-api03-test123456789012345678901234567890123456789', 'utf-8');
+
+      const result: ToolHandlerResult = await read_file(
+        { path: 'log.txt' },
+        mockContext
+      );
+
+      expect(result.output).toContain('***REDACTED***');
+      expect(result.output).not.toContain('sk-ant-api03');
+    });
+  });
 });

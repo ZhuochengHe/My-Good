@@ -126,6 +126,83 @@ describe('ContextOverflowError', () => {
   });
 });
 
+describe('User Message Formatting', () => {
+  describe('AgentError.toUserMessage', () => {
+    it('returns user-friendly message for base AgentError', () => {
+      const error = new AgentError('Test error', 'MAX_TURNS');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E400');
+      expect(msg.message).toBe('Agent execution failed');
+      expect(msg.context).toBeDefined();
+      expect(msg.technicalDetails).toContain('Test error');
+    });
+  });
+
+  describe('MaxTurnsError.toUserMessage', () => {
+    it('returns user-friendly message with max turns', () => {
+      const error = new MaxTurnsError(25);
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E401');
+      expect(msg.message).toBe('Maximum conversation turns exceeded');
+      expect(msg.context).toContain('25');
+      expect(msg.suggestion).toContain('new session');
+      expect(msg.technicalDetails).toContain('MaxTurnsError');
+    });
+  });
+
+  describe('CancelledError.toUserMessage', () => {
+    it('returns user-friendly message for cancellation', () => {
+      const error = new CancelledError();
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E402');
+      expect(msg.message).toBe('Agent execution was cancelled');
+      expect(msg.context).toBeDefined();
+      expect(msg.suggestion).toContain('resume');
+      expect(msg.technicalDetails).toContain('CancelledError');
+    });
+
+    it('handles custom cancellation message', () => {
+      const error = new CancelledError('User pressed Ctrl+C');
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E402');
+      expect(msg.context).toContain('User pressed Ctrl+C');
+    });
+  });
+
+  describe('ToolExecutionError.toUserMessage', () => {
+    it('returns user-friendly message with tool name', () => {
+      const cause = new Error('File not found');
+      const error = new ToolExecutionError('read_file', cause);
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E403');
+      expect(msg.message).toBe('Tool execution failed');
+      expect(msg.context).toContain('read_file');
+      expect(msg.context).toContain('File not found');
+      expect(msg.suggestion).toBeDefined();
+      expect(msg.technicalDetails).toContain('ToolExecutionError');
+    });
+  });
+
+  describe('ContextOverflowError.toUserMessage', () => {
+    it('returns user-friendly message with token counts', () => {
+      const error = new ContextOverflowError(150000, 128000);
+      const msg = error.toUserMessage();
+
+      expect(msg.code).toBe('E404');
+      expect(msg.message).toBe('Context window size exceeded');
+      expect(msg.context).toContain('150000');
+      expect(msg.context).toContain('128000');
+      expect(msg.suggestion).toContain('new session');
+      expect(msg.technicalDetails).toContain('ContextOverflowError');
+    });
+  });
+});
+
 describe('Type Guards', () => {
   describe('isAgentError', () => {
     it('returns true for AgentError instances', () => {

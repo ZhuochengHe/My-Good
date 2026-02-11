@@ -2,6 +2,8 @@
  * Plugin error types for plugin loading, validation, and execution.
  */
 
+import type { UserErrorMessage } from './types.js';
+
 /** Plugin error codes */
 export type PluginErrorCode =
   | 'PLUGIN_LOAD_FAILED'
@@ -34,6 +36,21 @@ export class PluginError extends Error {
       Error.captureStackTrace(this, this.constructor);
     }
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E200',
+      message: 'Plugin error',
+      context: `A plugin operation encountered an error: ${this.message}`,
+      suggestion: 'Check the plugin configuration and ensure all dependencies are installed',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -51,6 +68,22 @@ export class PluginLoadError extends PluginError {
     );
     this.name = 'PluginLoadError';
     this.pluginPath = pluginPath;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const details = this.details as { pluginPath: string; reason: string };
+    return {
+      code: 'E201',
+      message: 'Failed to load plugin',
+      context: `Plugin at "${details.pluginPath}" could not be loaded: ${details.reason}`,
+      suggestion: 'Check that the plugin directory exists and contains a valid plugin.json manifest. Ensure all required files are present',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
@@ -72,6 +105,22 @@ export class ManifestValidationError extends PluginError {
     this.pluginId = pluginId;
     this.validationErrors = validationErrors;
   }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const errorList = this.validationErrors.join('; ');
+    return {
+      code: 'E202',
+      message: 'Invalid plugin manifest',
+      context: `The manifest for plugin "${this.pluginId}" is invalid: ${errorList}`,
+      suggestion: 'Check the plugin.json file for syntax errors and missing required fields. Refer to the plugin development guide for the correct format',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
+  }
 }
 
 /**
@@ -88,6 +137,21 @@ export class GatesCheckError extends PluginError {
     );
     this.name = 'GatesCheckError';
     this.pluginId = pluginId;
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    return {
+      code: 'E203',
+      message: 'Plugin requirements not met',
+      context: `Plugin "${this.pluginId}" cannot be loaded: ${this.message}`,
+      suggestion: 'This plugin requires specific system dependencies, binaries, or environment variables. Check the plugin documentation for requirements',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
@@ -110,6 +174,22 @@ export class ToolNotFoundError extends PluginError {
     if (pluginId !== undefined) {
       this.pluginId = pluginId;
     }
+  }
+
+  /**
+   * Convert error to user-friendly message format.
+   *
+   * @returns Structured error message for display
+   */
+  override toUserMessage(): UserErrorMessage {
+    const pluginContext = this.pluginId ? ` in plugin "${this.pluginId}"` : '';
+    return {
+      code: 'E204',
+      message: 'Tool not found',
+      context: `The requested tool "${this.toolName}"${pluginContext} does not exist`,
+      suggestion: 'Use "my-agent plugin list" to see available tools. Ensure the required plugin is installed and enabled',
+      technicalDetails: `${this.name}: ${this.message}`,
+    };
   }
 }
 
