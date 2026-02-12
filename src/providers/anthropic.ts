@@ -51,9 +51,10 @@ export class AnthropicProvider extends BaseProvider {
     maxRetries = 3,
     baseUrl?: string,
     models?: readonly ModelInfo[],
-    healthCheckModel?: string
+    healthCheckModel?: string,
+    providerType = 'anthropic'
   ) {
-    super('anthropic', apiKey, timeout, maxRetries);
+    super(providerType, apiKey, timeout, maxRetries);
     this.client = new Anthropic({
       apiKey,
       baseURL: baseUrl,

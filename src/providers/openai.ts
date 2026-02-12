@@ -49,9 +49,10 @@ export class OpenAIProvider extends BaseProvider {
     maxRetries = 3,
     baseUrl?: string,
     models?: readonly ModelInfo[],
-    healthCheckModel?: string
+    healthCheckModel?: string,
+    providerType = 'openai'
   ) {
-    super('openai', apiKey, timeout, maxRetries);
+    super(providerType, apiKey, timeout, maxRetries);
     this.client = new OpenAI({
       apiKey,
       baseURL: baseUrl,

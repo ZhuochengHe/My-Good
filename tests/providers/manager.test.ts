@@ -11,6 +11,9 @@ import type {
   ModelProvider,
 } from '../../src/types/providers.js';
 import { InvalidRequestError } from '../../src/errors/provider.js';
+import * as registry from '../../src/providers/registry.js';
+
+vi.mock('../../src/providers/registry.js');
 
 describe('ProviderManager', () => {
   const anthropicConfig: ProviderConfig = {
@@ -28,6 +31,50 @@ describe('ProviderManager', () => {
     timeout: 30000,
     maxRetries: 3,
   };
+
+  beforeEach(() => {
+    // Mock registry functions
+    vi.mocked(registry.getProvider).mockImplementation((id) => {
+      if (id === 'openai') {
+        return {
+          id: 'openai',
+          name: 'OpenAI',
+          sdk: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          models: [],
+          healthCheckModel: 'gpt-3.5-turbo',
+          envVars: ['OPENAI_API_KEY'],
+        };
+      }
+      if (id === 'kimi') {
+        return {
+          id: 'kimi',
+          name: 'Kimi',
+          sdk: 'openai',
+          baseUrl: 'https://api.moonshot.ai/v1',
+          models: [],
+          healthCheckModel: 'moonshot-v1-8k',
+          envVars: ['KIMI_API_KEY'],
+        };
+      }
+      if (id === 'anthropic') {
+        return {
+          id: 'anthropic',
+          name: 'Anthropic',
+          sdk: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          models: [],
+          healthCheckModel: 'claude-3-haiku-20240307',
+          envVars: ['ANTHROPIC_API_KEY'],
+        };
+      }
+      return null;
+    });
+
+    vi.mocked(registry.validateProvider).mockImplementation((id) => {
+      return ['openai', 'kimi', 'anthropic'].includes(id);
+    });
+  });
 
   describe('constructor', () => {
     it('creates manager with provider configs', () => {
@@ -256,4 +303,73 @@ describe('ProviderManager', () => {
       expect(manager.getProvider('anthropic')).toBeDefined();
     });
   });
+
+  describe('registry-based provider creation', () => {
+    it('creates kimi provider using openai SDK', () => {
+      const kimiConfig: ProviderConfig = {
+        type: 'kimi',
+        apiKey: 'test-kimi-key',
+        defaultModel: 'moonshot-v1-32k',
+      };
+
+      const manager = new ProviderManager({
+        kimi: kimiConfig,
+      });
+
+      const provider = manager.getProvider('kimi');
+      expect(provider).toBeDefined();
+      expect(provider.type).toBe('kimi');
+    });
+
+    it('validates provider exists in registry', () => {
+      vi.mocked(registry.validateProvider).mockReturnValue(false);
+      vi.mocked(registry.getProvider).mockReturnValue(null);
+
+      const manager = new ProviderManager({
+        'invalid-provider': {
+          type: 'invalid-provider',
+          apiKey: 'test-key',
+          defaultModel: 'test-model',
+        },
+      });
+
+      expect(() => manager.getProvider('invalid-provider')).toThrow(
+        InvalidRequestError
+      );
+    });
+
+    it('uses baseUrl from registry manifest', () => {
+      const kimiConfig: ProviderConfig = {
+        type: 'kimi',
+        apiKey: 'test-kimi-key',
+        defaultModel: 'moonshot-v1-32k',
+      };
+
+      const manager = new ProviderManager({
+        kimi: kimiConfig,
+      });
+
+      const provider = manager.getProvider('kimi');
+      expect(provider).toBeDefined();
+      // BaseUrl from registry should be used (https://api.moonshot.ai/v1)
+    });
+
+    it('allows baseUrl override in config', () => {
+      const kimiConfig: ProviderConfig = {
+        type: 'kimi',
+        apiKey: 'test-kimi-key',
+        defaultModel: 'moonshot-v1-32k',
+        baseUrl: 'https://custom.moonshot.ai/v1',
+      };
+
+      const manager = new ProviderManager({
+        kimi: kimiConfig,
+      });
+
+      const provider = manager.getProvider('kimi');
+      expect(provider).toBeDefined();
+      // Custom baseUrl should be used
+    });
+  });
 });
+

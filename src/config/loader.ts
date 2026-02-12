@@ -8,6 +8,8 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import type { AppConfig } from '../types/config.js';
 import { getDefaultConfig } from './defaults.js';
+import { validateProvider } from '../providers/registry.js';
+import { isOldFormat, migrateConfig } from './migration.js';
 
 /**
  * Represents a validation issue with path and message.
@@ -44,8 +46,11 @@ const logLevelSchema = z.enum(['error', 'warn', 'info', 'debug']);
 /** Zod schema for LogFormat */
 const logFormatSchema = z.enum(['json', 'pretty']);
 
-/** Zod schema for ProviderType */
-const providerTypeSchema = z.enum(['anthropic', 'openai']);
+/** Zod schema for ProviderType - validates against registry */
+const providerTypeSchema = z.string().refine(
+  (val) => validateProvider(val),
+  (val) => ({ message: `Unknown provider: ${val}. Check providers.json registry.` })
+);
 
 /** Zod schema for tools configuration */
 const toolsConfigSchema = z.object({
@@ -54,7 +59,7 @@ const toolsConfigSchema = z.object({
   requireApproval: z.array(z.string()).readonly(),
 });
 
-/** Zod schema for AgentConfig */
+/** Zod schema for AgentConfig - loose mode allows unknown fields */
 const agentConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -64,17 +69,16 @@ const agentConfigSchema = z.object({
   maxTurns: z.number().int().positive(),
   maxTokensPerTurn: z.number().int().positive(),
   tools: toolsConfigSchema,
-});
+}).passthrough(); // Allow extra fields (loose mode)
 
-/** Zod schema for ProviderConfig */
+/** Zod schema for ProviderConfig - loose mode allows unknown fields */
 const providerConfigSchema = z.object({
-  type: providerTypeSchema,
   apiKey: z.string(),
   baseUrl: z.string().optional(),
   defaultModel: z.string(),
   timeout: z.number().int().positive().optional(),
   maxRetries: z.number().int().nonnegative().optional(),
-});
+}).passthrough(); // Allow extra fields (loose mode)
 
 /** Zod schema for PluginsConfig */
 const pluginsConfigSchema = z.object({
@@ -97,13 +101,23 @@ const loggingConfigSchema = z.object({
   file: z.string().optional(),
 });
 
-/** Zod schema for the complete AppConfig */
+/** Zod schema for the complete AppConfig - accepts dynamic provider IDs */
 const appConfigSchema = z.object({
   agent: agentConfigSchema,
-  providers: z.object({
-    anthropic: providerConfigSchema,
-    openai: providerConfigSchema,
-  }),
+  providers: z.record(z.string(), providerConfigSchema).refine(
+    (providers) => {
+      // Validate all provider IDs against registry
+      const providerIds = Object.keys(providers);
+      return providerIds.every(id => validateProvider(id));
+    },
+    (providers) => {
+      // Find first invalid provider ID for error message
+      const invalidId = Object.keys(providers).find(id => !validateProvider(id));
+      return {
+        message: `Unknown provider: ${invalidId}. Check providers.json registry.`
+      };
+    }
+  ),
   plugins: pluginsConfigSchema,
   session: sessionConfigSchema,
   logging: loggingConfigSchema,
@@ -185,6 +199,7 @@ export function validateConfig(config: unknown): ValidationResult<AppConfig> {
 /**
  * Deep merges two objects, with source values overriding target values.
  * Arrays are replaced, not merged.
+ * Special handling for 'providers' field: only merge provider configs that don't exist in source.
  *
  * @param target - Base object
  * @param source - Object with overriding values
@@ -200,7 +215,29 @@ function deepMerge<T extends Record<string, unknown>>(
     const sourceValue = source[key];
     const targetValue = target[key];
 
+    // Special handling for 'providers' field
     if (
+      key === 'providers' &&
+      typeof sourceValue === 'object' &&
+      sourceValue !== null &&
+      !Array.isArray(sourceValue) &&
+      typeof targetValue === 'object' &&
+      targetValue !== null &&
+      !Array.isArray(targetValue)
+    ) {
+      // For providers, only add default providers that aren't explicitly defined
+      const sourceProviders = sourceValue as Record<string, unknown>;
+      const targetProviders = targetValue as Record<string, unknown>;
+      const mergedProviders: Record<string, unknown> = { ...sourceProviders };
+
+      for (const providerId of Object.keys(targetProviders)) {
+        if (!(providerId in sourceProviders)) {
+          mergedProviders[providerId] = targetProviders[providerId];
+        }
+      }
+
+      result[key] = mergedProviders as T[keyof T];
+    } else if (
       sourceValue !== undefined &&
       typeof sourceValue === 'object' &&
       sourceValue !== null &&
@@ -255,11 +292,19 @@ export function loadConfigFromString(yamlContent: string): AppConfig {
     return getDefaultConfig();
   }
 
+  // Migrate old format to new format if needed
+  let migrated: unknown = parsed;
+  if (isOldFormat(parsed)) {
+    // eslint-disable-next-line no-console
+    console.log('Migrating config from old format (removing redundant "type" fields)...');
+    migrated = migrateConfig(parsed);
+  }
+
   // Merge with defaults
   const defaults = getDefaultConfig();
   const merged = deepMerge(
     defaults as unknown as Record<string, unknown>,
-    parsed as Record<string, unknown>
+    migrated as Record<string, unknown>
   );
 
   // Validate the merged configuration

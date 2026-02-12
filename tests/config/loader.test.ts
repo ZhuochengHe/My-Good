@@ -63,12 +63,12 @@ describe('Configuration System', () => {
       const config = getDefaultConfig();
 
       expect(config.providers.anthropic).toBeDefined();
-      expect(config.providers.anthropic.type).toBe('anthropic');
       expect(config.providers.anthropic.defaultModel).toBe('claude-sonnet-4-20250514');
+      expect(config.providers.anthropic.apiKey).toBe('');
 
       expect(config.providers.openai).toBeDefined();
-      expect(config.providers.openai.type).toBe('openai');
       expect(config.providers.openai.defaultModel).toBe('gpt-4o');
+      expect(config.providers.openai.apiKey).toBe('');
     });
 
     it('has sensible default session values', () => {

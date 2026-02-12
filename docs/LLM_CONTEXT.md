@@ -23,7 +23,9 @@ A CLI-based AI agent that:
 | Aspect | Decision |
 |--------|----------|
 | Agent Loop | Custom (not Pi Agent/LangGraph) |
-| Providers | Anthropic + OpenAI |
+| Providers | Anthropic + OpenAI + Kimi (extensible via registry) |
+| Provider Registry | JSON manifest (providers.json) |
+| SDKs | Two types - Anthropic SDK, OpenAI SDK |
 | Plugins | Manifest-based (plugin.json) |
 | Sessions | JSONL files |
 | Config | YAML + Zod validation |

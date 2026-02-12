@@ -90,7 +90,8 @@ interface PluginGates {
 ### Model Provider
 
 ```typescript
-type ProviderType = 'anthropic' | 'openai';
+type ProviderType = string;  // Extensible via registry
+type SdkType = 'anthropic' | 'openai';
 
 interface ModelProvider {
   readonly type: ProviderType;
@@ -107,6 +108,21 @@ interface CompletionRequest {
   readonly systemPrompt?: string;
   readonly maxTokens?: number;
   readonly temperature?: number;
+}
+
+interface ProviderManifest {
+  readonly id: string;
+  readonly name: string;
+  readonly sdk: SdkType;
+  readonly baseUrl: string;
+  readonly models: readonly ModelInfo[];
+  readonly healthCheckModel: string;
+  readonly envVars: readonly string[];
+}
+
+interface ProviderRegistry {
+  readonly version: string;
+  readonly providers: Record<string, ProviderManifest>;
 }
 ```
 
@@ -210,10 +226,11 @@ type AgentEvent =
 │  [file-ops] [shell] [web-search]      │
 └───────────────────────────────────────┘
         │
-┌───────┴───────────────────────────────┐
-│           MODEL PROVIDERS             │
-│  [Anthropic: Claude] [OpenAI: GPT]    │
-└───────────────────────────────────────┘
+┌───────┴──────────────────────────────────────────┐
+│              MODEL PROVIDERS                     │
+│  [Anthropic: Claude] [OpenAI: GPT] [Kimi: Moon]  │
+│              ↑ Registry-based                    │
+└──────────────────────────────────────────────────┘
 ```
 
 ## Error Handling
@@ -248,13 +265,111 @@ All errors are logged to session error logs for debugging with:
 - Stack traces for debugging
 - Timestamp for correlation
 
+## Provider Registry System
+
+The agent uses a centralized provider registry (`providers.json`) to define all supported LLM providers. This enables adding new providers without code changes.
+
+### Architecture
+
+**SDK vs Provider Separation:**
+- **SDKs**: Two SDK implementations - `anthropic` and `openai`
+- **Providers**: Multiple providers can share the same SDK
+  - `anthropic` provider → Anthropic SDK
+  - `openai` provider → OpenAI SDK
+  - `kimi` provider → OpenAI SDK (Moonshot AI uses OpenAI-compatible API)
+
+**Registry Structure (`providers.json`):**
+
+```json
+{
+  "version": "1.0.0",
+  "providers": {
+    "kimi": {
+      "id": "kimi",
+      "name": "Kimi (Moonshot AI)",
+      "sdk": "openai",
+      "baseUrl": "https://api.moonshot.ai/v1",
+      "models": [
+        {
+          "id": "moonshot-v1-32k",
+          "name": "Moonshot v1 32K",
+          "contextWindow": 32000,
+          "maxOutputTokens": 4096,
+          "supportsToolCalling": true,
+          "supportsStreaming": true
+        }
+      ],
+      "healthCheckModel": "moonshot-v1-8k",
+      "envVars": ["KIMI_API_KEY", "MOONSHOT_API_KEY"]
+    }
+  }
+}
+```
+
+### Configuration Migration
+
+**Old Format (Deprecated):**
+```yaml
+providers:
+  kimi:
+    type: openai  # Redundant - inferred from registry
+    apiKey: ${KIMI_API_KEY}
+    baseUrl: https://api.moonshot.ai/v1
+```
+
+**New Format (Recommended):**
+```yaml
+providers:
+  kimi:
+    apiKey: ${KIMI_API_KEY}
+    baseUrl: https://api.moonshot.ai/v1  # optional override
+```
+
+The `type` field is automatically inferred from the provider ID via registry lookup. Old configs with `type` field are automatically migrated in-memory with a deprecation warning.
+
+### Supported Providers
+
+| Provider ID | SDK | Models | Base URL |
+|-------------|-----|--------|----------|
+| `anthropic` | anthropic | Claude 3.5 Sonnet, Opus, Haiku | https://api.anthropic.com |
+| `kimi` | openai | Moonshot v1 (8k/32k/128k), K2.5 Preview | https://api.moonshot.ai/v1 |
+| `openai` | openai | GPT-4 Turbo, GPT-4, GPT-3.5 Turbo | https://api.openai.com/v1 |
+
+### Adding New Providers
+
+To add a new provider without code changes:
+
+1. **Determine SDK compatibility**: Does the provider use Anthropic or OpenAI-compatible API?
+2. **Add entry to `providers.json`**:
+   ```json
+   "new-provider": {
+     "id": "new-provider",
+     "name": "New Provider Name",
+     "sdk": "openai",  // or "anthropic"
+     "baseUrl": "https://api.example.com/v1",
+     "models": [...],
+     "healthCheckModel": "model-id",
+     "envVars": ["PROVIDER_API_KEY"]
+   }
+   ```
+3. **Update config**: Add provider credentials to `~/.my-agent/config.yaml`
+4. **Done**: Agent automatically discovers and uses the new provider
+
+### Backward Compatibility
+
+- 100% backward compatible with existing configs
+- Old configs with `type` field continue to work
+- Automatic in-memory migration with logging
+- No breaking changes to `ModelProvider` interface
+
 ## Extension Points
 
-1. **New Provider**: Implement `ModelProvider` interface
-2. **New Plugin**: Create `plugin.json` manifest + handlers
-3. **Event Subscriber**: Implement `onEvent(event: AgentEvent)`
-4. **Custom Session Store**: Implement `SessionStore` interface
-5. **Session Store with Trace**: Implement `SessionStoreWithTrace` for event persistence support
+1. **New Provider (Registry-Based)**: Add entry to `providers.json` (no code required)
+2. **New Provider (Custom SDK)**: Implement `ModelProvider` interface + add SDK type
+3. **New Plugin**: Create `plugin.json` manifest + handlers
+4. **Event Subscriber**: Implement `onEvent(event: AgentEvent)`
+5. **Custom Session Store**: Implement `SessionStore` interface
+6. **Session Store with Trace**: Implement `SessionStoreWithTrace` for event persistence support
 
 ## Directory Structure
 
@@ -282,8 +397,8 @@ plugins/             # Default plugins
 ```yaml
 agent:
   id: default
-  model: claude-sonnet-4-20250514
-  provider: anthropic
+  model: claude-sonnet-4-20250514  # or moonshot-v1-32k, gpt-4-turbo, etc.
+  provider: anthropic              # or kimi, openai
   maxTurns: 20
   tools:
     allow: ['*']
@@ -292,8 +407,15 @@ agent:
 providers:
   anthropic:
     apiKey: ${ANTHROPIC_API_KEY}
+    baseUrl: https://api.anthropic.com  # optional override
+
+  kimi:
+    apiKey: ${KIMI_API_KEY}
+    baseUrl: https://api.moonshot.ai/v1  # optional override
+
   openai:
     apiKey: ${OPENAI_API_KEY}
+    baseUrl: https://api.openai.com/v1   # optional override
 
 plugins:
   directories: [~/.my-agent/plugins, ./plugins]
@@ -346,6 +468,8 @@ my-agent session show <session-id> --trace
 | Event-Driven | Emit events for state changes | Decouples UI from core |
 | JSONL Sessions | Append-only JSON lines | Fast writes, debuggable |
 | Plugin Manifest | JSON with JSON Schema params | LLM-friendly |
+| Provider Registry | JSON manifest for providers | Add providers without code changes |
+| SDK Abstraction | Two SDKs (Anthropic, OpenAI) | Many providers share same API format |
 | Zod for Config | Runtime validation | Catches errors early |
 
 ---

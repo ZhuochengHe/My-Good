@@ -28,14 +28,12 @@ export function getDefaultConfig(): AppConfig {
     },
     providers: {
       anthropic: {
-        type: 'anthropic',
         apiKey: '',
         defaultModel: 'claude-sonnet-4-20250514',
         timeout: 60000,
         maxRetries: 3,
       },
       openai: {
-        type: 'openai',
         apiKey: '',
         defaultModel: 'gpt-4o',
         timeout: 60000,

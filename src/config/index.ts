@@ -13,3 +13,8 @@ export {
 } from './loader.js';
 
 export { getDefaultConfig } from './defaults.js';
+
+export {
+  isOldFormat,
+  migrateConfig,
+} from './migration.js';
