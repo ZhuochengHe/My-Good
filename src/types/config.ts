@@ -3,7 +3,7 @@
  */
 
 import type { AgentConfig } from './agent.js';
-import type { ProviderConfig, ProviderType } from './providers.js';
+import type { ProviderConfig } from './providers.js';
 
 /** Plugin configuration */
 export interface PluginsConfig {
@@ -35,7 +35,7 @@ export interface LoggingConfig {
 /** Root application configuration */
 export interface AppConfig {
   readonly agent: AgentConfig;
-  readonly providers: Record<ProviderType, ProviderConfig>;
+  readonly providers: Record<string, ProviderConfig>; // Accept any provider ID from registry
   readonly plugins: PluginsConfig;
   readonly session: SessionConfig;
   readonly logging: LoggingConfig;

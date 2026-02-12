@@ -76,7 +76,8 @@ docs/                # Documentation
 ## Key Features
 
 - **Custom Agent Loop** - Full control over execution flow
-- **Multi-Provider** - Anthropic Claude + OpenAI GPT
+- **Multi-Provider** - Anthropic Claude, OpenAI GPT, Kimi (Moonshot AI) - extensible via registry
+- **Extensible Provider System** - Add new providers without code changes via providers.json
 - **Plugin System** - Manifest-based, extensible tools
 - **Default Plugins** - file-ops, shell, web-search included
 - **JSONL Sessions** - Human-readable, append-only storage with security hardening
@@ -156,20 +157,44 @@ Located at `~/.my-agent/config.yaml`:
 
 ```yaml
 agent:
-  model: claude-sonnet-4-20250514
-  provider: anthropic
+  model: claude-sonnet-4-20250514  # or moonshot-v1-32k, gpt-4-turbo, etc.
+  provider: anthropic              # or kimi, openai
   maxTurns: 20
 
 providers:
   anthropic:
     apiKey: ${ANTHROPIC_API_KEY}
+    baseUrl: https://api.anthropic.com  # optional override
+
+  kimi:
+    apiKey: ${KIMI_API_KEY}
+    baseUrl: https://api.moonshot.ai/v1  # optional override
+
   openai:
     apiKey: ${OPENAI_API_KEY}
+    baseUrl: https://api.openai.com/v1   # optional override
 
 plugins:
   directories: [~/.my-agent/plugins, ./plugins]
   enabled: ['*']
 ```
+
+### Provider Registry System
+
+The agent uses a provider registry (`providers.json`) to define supported LLM providers. This makes it easy to add new providers without code changes:
+
+**Key Concepts:**
+- **SDKs**: Two types - Anthropic SDK and OpenAI SDK (compatible APIs)
+- **Providers**: Multiple providers can share the same SDK (e.g., Kimi uses OpenAI SDK)
+- **Registry**: Central manifest defining provider metadata, models, and API endpoints
+
+**Supported Providers:**
+- `anthropic` - Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
+- `kimi` - Moonshot AI models (v1-8k, v1-32k, v1-128k, K2.5 Preview, K2 Instruct)
+- `openai` - GPT-4 Turbo, GPT-4, GPT-3.5 Turbo
+
+**Backward Compatibility:**
+Old configs with redundant `type` field are automatically migrated in-memory. No breaking changes.
 
 ## Development
 

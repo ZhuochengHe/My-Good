@@ -15,6 +15,7 @@ import type {
 import { InvalidRequestError } from '../errors/provider.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
+import { getProvider as getProviderManifest } from './registry.js';
 
 /**
  * Provider manager that handles provider instantiation and routing.
@@ -51,8 +52,8 @@ export class ProviderManager {
       );
     }
 
-    // Create and cache provider
-    const provider = this.createProvider(config);
+    // Create and cache provider (pass provider ID explicitly)
+    const provider = this.createProvider(type, config);
     this.providers[type] = provider;
 
     return provider;
@@ -61,29 +62,54 @@ export class ProviderManager {
   /**
    * Create provider instance from configuration.
    *
+   * Uses provider registry to determine SDK type and configuration.
+   *
+   * @param providerId Provider ID (e.g., 'anthropic', 'kimi', 'openai')
    * @param config Provider configuration
    * @returns Provider instance
    */
-  private createProvider(config: ProviderConfig): ModelProvider {
-    switch (config.type) {
+  private createProvider(providerId: string, config: ProviderConfig): ModelProvider {
+    // Get provider manifest from registry
+    const manifest = getProviderManifest(providerId);
+
+    if (!manifest) {
+      throw new InvalidRequestError(
+        `Unknown provider type: ${providerId}. Provider not found in registry.`
+      );
+    }
+
+    // Use baseUrl from config if provided, otherwise use manifest default
+    const baseUrl = config.baseUrl ?? manifest.baseUrl;
+
+    // Create provider based on SDK type
+    switch (manifest.sdk) {
       case 'anthropic':
         return new AnthropicProvider(
           config.apiKey,
           config.timeout,
           config.maxRetries,
-          config.baseUrl
+          baseUrl,
+          manifest.models,
+          manifest.healthCheckModel,
+          providerId // Pass provider ID as type
         );
       case 'openai':
         return new OpenAIProvider(
           config.apiKey,
           config.timeout,
           config.maxRetries,
-          config.baseUrl
+          baseUrl,
+          manifest.models,
+          manifest.healthCheckModel,
+          providerId // Pass provider ID as type
         );
       default: {
-        // TypeScript should prevent this, but handle at runtime
-        const unknownType = (config as { type: string }).type;
-        throw new InvalidRequestError(`Unknown provider type: ${unknownType}`);
+        // Exhaustiveness check - TypeScript ensures this is unreachable
+        const _exhaustive: never = manifest.sdk;
+        void _exhaustive; // Consume the variable
+        throw new InvalidRequestError(
+          `Unsupported SDK type for provider ${providerId}`
+        );
       }
     }
   }

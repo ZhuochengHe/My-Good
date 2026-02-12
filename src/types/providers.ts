@@ -5,12 +5,15 @@
 import type { ConversationMessage, ToolCall } from './messages.js';
 import type { ToolDefinition } from './tools.js';
 
-/** Supported model providers */
-export type ProviderType = 'anthropic' | 'openai';
+/** Supported model providers (extensible via registry) */
+export type ProviderType = string;
+
+/** SDK type for providers */
+export type SdkType = 'anthropic' | 'openai';
 
 /** Provider configuration */
 export interface ProviderConfig {
-  readonly type: ProviderType;
+  readonly type?: ProviderType; // Optional - deprecated, inferred from provider ID
   readonly apiKey: string;
   readonly baseUrl?: string;
   readonly defaultModel: string;
@@ -30,8 +33,27 @@ export interface ModelInfo {
   readonly id: string;
   readonly name: string;
   readonly contextWindow: number;
-  readonly supportsTools: boolean;
-  readonly supportsStreaming: boolean;
+  readonly supportsTools?: boolean;
+  readonly supportsStreaming?: boolean;
+  readonly maxOutputTokens?: number;
+  readonly supportsToolCalling?: boolean;
+}
+
+/** Provider manifest from registry */
+export interface ProviderManifest {
+  readonly id: string;
+  readonly name: string;
+  readonly sdk: SdkType;
+  readonly baseUrl: string;
+  readonly models: readonly ModelInfo[];
+  readonly healthCheckModel: string;
+  readonly envVars: readonly string[];
+}
+
+/** Provider registry structure */
+export interface ProviderRegistry {
+  readonly version: string;
+  readonly providers: Record<string, ProviderManifest>;
 }
 
 /** Request to model */

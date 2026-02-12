@@ -159,20 +159,25 @@ function checkApiKeys(warnings: string[]): void {
  */
 function createProvider(config: AppConfig): ModelProvider {
   const providerType = config.agent.provider;
+  const providerConfig = config.providers[providerType];
+
+  if (!providerConfig) {
+    throw new Error(`Provider '${providerType}' not configured`);
+  }
 
   if (providerType === 'anthropic') {
     return new AnthropicProvider(
-      config.providers.anthropic.apiKey,
-      config.providers.anthropic.timeout,
-      config.providers.anthropic.maxRetries,
-      config.providers.anthropic.baseUrl
+      providerConfig.apiKey,
+      providerConfig.timeout,
+      providerConfig.maxRetries,
+      providerConfig.baseUrl
     );
   } else if (providerType === 'openai') {
     return new OpenAIProvider(
-      config.providers.openai.apiKey,
-      config.providers.openai.timeout,
-      config.providers.openai.maxRetries,
-      config.providers.openai.baseUrl
+      providerConfig.apiKey,
+      providerConfig.timeout,
+      providerConfig.maxRetries,
+      providerConfig.baseUrl
     );
   } else {
     throw new Error(`Unknown provider type: ${String(providerType)}`);
