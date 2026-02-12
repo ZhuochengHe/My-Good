@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { ExecutionLoop } from '../../src/agent/execution-loop.js';
 import { ToolExecutor } from '../../src/plugins/tool-executor.js';
 import type { AgentConfig } from '../../src/types/agent.js';
+import type { AgentSettings } from '../../src/types/settings.js';
 import type { ModelProvider, ProviderRequest, ProviderResponse } from '../../src/types/providers.js';
 import type { ToolDefinition, ToolHandler } from '../../src/types/tools.js';
 
@@ -15,6 +16,7 @@ describe('Agent with ToolExecutor Integration', () => {
   let agent: ExecutionLoop;
   let toolExecutor: ToolExecutor;
   let mockProvider: ModelProvider;
+  let baseSettings: AgentSettings;
 
   beforeEach(() => {
     // Create tool executor
@@ -27,11 +29,24 @@ describe('Agent with ToolExecutor Integration', () => {
     const config: AgentConfig = {
       id: 'test-agent',
       name: 'Test Agent',
-      systemPrompt: 'You are a helpful assistant.',
       model: 'test-model',
       provider: 'anthropic',
-      maxTurns: 10,
-      maxTokensPerTurn: 4096,
+    };
+
+    // Create agent settings
+    baseSettings = {
+      model: {
+        temperature: 0.7,
+        topP: 1,
+        maxTokens: 4096,
+      },
+      behavior: {
+        responseStyle: 'balanced',
+        enableToolUse: true,
+        enableStreaming: true,
+        maxTurns: 10,
+        systemPrompt: 'You are a helpful assistant.',
+      },
       tools: {
         allow: ['*'],
         deny: [],
@@ -39,7 +54,7 @@ describe('Agent with ToolExecutor Integration', () => {
       },
     };
 
-    agent = new ExecutionLoop(config, mockProvider);
+    agent = new ExecutionLoop(config, baseSettings, mockProvider);
   });
 
   it('executes tools using ToolExecutor', async () => {
@@ -104,7 +119,7 @@ describe('Agent with ToolExecutor Integration', () => {
 
     // Mock provider returns tool call with missing required parameter
     const invalidProvider = createMockProviderWithInvalidToolCall();
-    const invalidAgent = new ExecutionLoop(agent.config, invalidProvider);
+    const invalidAgent = new ExecutionLoop(agent.config, baseSettings, invalidProvider);
 
     const result = await invalidAgent.run('Test', {
       onToolCall: async (toolCall, context) => {
@@ -122,7 +137,7 @@ describe('Agent with ToolExecutor Integration', () => {
   it('handles tool not found errors', async () => {
     // Mock provider returns tool call for non-existent tool
     const notFoundProvider = createMockProviderWithNonexistentTool();
-    const notFoundAgent = new ExecutionLoop(agent.config, notFoundProvider);
+    const notFoundAgent = new ExecutionLoop(agent.config, baseSettings, notFoundProvider);
 
     const result = await notFoundAgent.run('Test', {
       onToolCall: async (toolCall, context) => {
@@ -158,7 +173,7 @@ describe('Agent with ToolExecutor Integration', () => {
 
     // Create mock provider that returns slow_tool call
     const slowProvider = createMockProviderWithToolCall('slow_tool', {});
-    const slowAgent = new ExecutionLoop(agent.config, slowProvider);
+    const slowAgent = new ExecutionLoop(agent.config, baseSettings, slowProvider);
 
     const result = await slowAgent.run('Run slow tool', {
       onToolCall: async (toolCall, context) => {
@@ -195,7 +210,7 @@ describe('Agent with ToolExecutor Integration', () => {
 
     // Create mock provider that returns context_tool call
     const contextProvider = createMockProviderWithToolCall('context_tool', {});
-    const contextAgent = new ExecutionLoop(agent.config, contextProvider);
+    const contextAgent = new ExecutionLoop(agent.config, baseSettings, contextProvider);
 
     const result = await contextAgent.run('Use context', {
       sessionId: 'test-session-123',

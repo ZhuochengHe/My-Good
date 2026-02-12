@@ -377,20 +377,13 @@ providers:
       expect(config.providers.openai.apiKey).toBe('sk-proj-test123');
     });
 
-    it('should log migration message when migrating old format', () => {
+    it('should not auto-migrate old format (migration disabled)', () => {
       const yaml = `
 agent:
   id: test
   name: Test Agent
-  systemPrompt: Test prompt
   model: claude-sonnet-4-20250514
   provider: anthropic
-  maxTurns: 10
-  maxTokensPerTurn: 1000
-  tools:
-    allow: []
-    deny: []
-    requireApproval: []
 providers:
   anthropic:
     type: anthropic
@@ -398,12 +391,12 @@ providers:
     defaultModel: claude-sonnet-4-20250514
 `;
 
-      loadConfigFromString(yaml);
+      // Old format with 'type' field should still load (loose validation)
+      const config = loadConfigFromString(yaml);
+      expect(config.providers.anthropic.apiKey).toBe('sk-ant-test123');
 
-      // Should have logged migration message
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/migrat/i)
-      );
+      // Should NOT have logged migration message (auto-migration disabled)
+      expect(consoleLogSpy).not.toHaveBeenCalled();
     });
 
     it('should not log migration message for new format', () => {
@@ -411,19 +404,11 @@ providers:
 agent:
   id: test
   name: Test Agent
-  systemPrompt: Test prompt
   model: claude-sonnet-4-20250514
   provider: anthropic
-  maxTurns: 10
-  maxTokensPerTurn: 1000
-  tools:
-    allow: []
-    deny: []
-    requireApproval: []
 providers:
   anthropic:
     apiKey: sk-ant-test123
-    defaultModel: claude-sonnet-4-20250514
 `;
 
       loadConfigFromString(yaml);
@@ -437,22 +422,13 @@ providers:
 agent:
   id: test
   name: Test Agent
-  systemPrompt: Test prompt
   model: moonshot-v1-8k
   provider: kimi
-  maxTurns: 10
-  maxTokensPerTurn: 1000
-  tools:
-    allow: []
-    deny: []
-    requireApproval: []
 providers:
   kimi:
     apiKey: sk-kimi-test123
-    defaultModel: moonshot-v1-8k
   anthropic:
     apiKey: sk-ant-test123
-    defaultModel: claude-sonnet-4-20250514
 `;
 
       const config = loadConfigFromString(yaml);
@@ -462,26 +438,17 @@ providers:
       expect(consoleLogSpy).not.toHaveBeenCalled();
     });
 
-    it('should preserve all fields after migration and validation', () => {
+    it('should preserve all fields after loading', () => {
       const yaml = `
 agent:
   id: test
   name: Test Agent
-  systemPrompt: Test prompt
   model: claude-sonnet-4-20250514
   provider: anthropic
-  maxTurns: 10
-  maxTokensPerTurn: 1000
-  tools:
-    allow: []
-    deny: []
-    requireApproval: []
 providers:
   anthropic:
-    type: anthropic
     apiKey: sk-ant-test123
     baseUrl: https://custom.api.com
-    defaultModel: claude-sonnet-4-20250514
     timeout: 30000
     maxRetries: 5
 `;

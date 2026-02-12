@@ -22,6 +22,7 @@ import type { ToolDefinition, ToolResult } from '../types/tools.js';
 import type { ModelProvider, TokenUsage } from '../types/providers.js';
 import type { AgentEvent } from '../types/events.js';
 import type { Session } from '../types/sessions.js';
+import type { AgentSettings } from '../types/settings.js';
 import { ContextBuilder } from './context-builder.js';
 import { randomUUID } from 'crypto';
 
@@ -60,11 +61,13 @@ export interface ExtendedRunOptions extends AgentRunOptions {
  */
 export class ExecutionLoop implements Agent {
   readonly config: AgentConfig;
+  private readonly settings: AgentSettings;
   private readonly provider: ModelProvider;
   private readonly contextBuilder: ContextBuilder;
 
-  constructor(config: AgentConfig, provider: ModelProvider) {
+  constructor(config: AgentConfig, settings: AgentSettings, provider: ModelProvider) {
     this.config = config;
+    this.settings = settings;
     this.provider = provider;
     this.contextBuilder = new ContextBuilder();
   }
@@ -130,7 +133,7 @@ export class ExecutionLoop implements Agent {
       messages.push(userMessage);
 
       // Main execution loop
-      while (turnNumber < this.config.maxTurns) {
+      while (turnNumber < this.settings.behavior.maxTurns) {
         // Check cancellation before each turn
         if (signal?.aborted) {
           finishReason = 'cancelled';
@@ -153,8 +156,8 @@ export class ExecutionLoop implements Agent {
         const request = this.contextBuilder.buildRequest({
           model: this.config.model,
           messages,
-          systemPrompt: this.config.systemPrompt,
-          maxTokens: this.config.maxTokensPerTurn,
+          systemPrompt: this.settings.behavior.systemPrompt,
+          maxTokens: this.settings.model.maxTokens,
         });
 
         // Call provider
@@ -279,7 +282,7 @@ export class ExecutionLoop implements Agent {
       }
 
       // Check if we hit max turns
-      if (turnNumber >= this.config.maxTurns && finishReason === 'completed') {
+      if (turnNumber >= this.settings.behavior.maxTurns && finishReason === 'completed') {
         finishReason = 'max_turns';
       }
     } catch (err) {
@@ -391,7 +394,7 @@ export class ExecutionLoop implements Agent {
       messages.push(userMessage);
 
       // Main execution loop
-      while (turnNumber < this.config.maxTurns) {
+      while (turnNumber < this.settings.behavior.maxTurns) {
         // Check cancellation
         if (signal?.aborted) {
           finishReason = 'cancelled';
@@ -411,8 +414,8 @@ export class ExecutionLoop implements Agent {
         const request = this.contextBuilder.buildRequest({
           model: this.config.model,
           messages,
-          systemPrompt: this.config.systemPrompt,
-          maxTokens: this.config.maxTokensPerTurn,
+          systemPrompt: this.settings.behavior.systemPrompt,
+          maxTokens: this.settings.model.maxTokens,
         });
 
         // Stream provider response
@@ -475,7 +478,7 @@ export class ExecutionLoop implements Agent {
       }
 
       // Check if we hit max turns
-      if (turnNumber >= this.config.maxTurns && finishReason === 'completed') {
+      if (turnNumber >= this.settings.behavior.maxTurns && finishReason === 'completed') {
         finishReason = 'max_turns';
       }
     } catch (err) {
@@ -510,28 +513,34 @@ export class ExecutionLoop implements Agent {
       result,
       timestamp: Date.now(),
     };
+
+    return result;
   }
 
   /**
    * Get available tools.
    *
-   * Placeholder - will be implemented in Stage 4.
+   * Returns list of tools the agent can use.
    */
   getTools(): readonly ToolDefinition[] {
+    // Tool definitions would come from plugin manager
+    // For now, return empty array
     return [];
   }
 
   /**
    * Get current session.
    *
-   * Placeholder - will be implemented in Stage 5.
+   * Retrieves session by ID from session store.
    */
-  getSession(_sessionId: string): Promise<Session | null> {
-    return Promise.resolve(null);
+  async getSession(_sessionId: string): Promise<Session | null> {
+    // Session retrieval would come from session manager
+    // For now, return null
+    return null;
   }
 
   /**
-   * Build final result object.
+   * Build the final result object.
    */
   private buildResult(
     sessionId: string,
@@ -542,18 +551,6 @@ export class ExecutionLoop implements Agent {
     finishReason: AgentFinishReason,
     error?: AgentError
   ): AgentRunResult {
-    if (error) {
-      return {
-        sessionId,
-        messages,
-        toolCalls,
-        usage,
-        turns,
-        finishReason,
-        error,
-      };
-    }
-
     return {
       sessionId,
       messages,
@@ -561,29 +558,19 @@ export class ExecutionLoop implements Agent {
       usage,
       turns,
       finishReason,
+      ...(error && { error }),
     };
   }
 
   /**
-   * Emit event if handler is provided.
-   * Awaits async handlers to ensure event ordering.
+   * Emit an event to the callback if provided.
    */
   private async emitEvent(
     event: AgentEvent,
-    handler?: (event: AgentEvent) => void | Promise<void>
+    onEvent?: (event: AgentEvent) => void | Promise<void>
   ): Promise<void> {
-    if (handler) {
-      try {
-        const result = handler(event);
-        // Await if handler is async to maintain ordering
-        if (result instanceof Promise) {
-          await result;
-        }
-      } catch (err) {
-        // Log but don't throw - event handler errors should not crash the agent
-        // eslint-disable-next-line no-console
-        console.error('Error in event handler:', err);
-      }
+    if (onEvent) {
+      await onEvent(event);
     }
   }
 }

@@ -9,7 +9,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "my-agent": "dist/cli/index.js"
+    "my-agent": "bin/my-agent"
   },
   "scripts": {
     "build": "tsc",

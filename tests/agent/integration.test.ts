@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ExecutionLoop } from '../../src/agent/execution-loop.js';
 import type { AgentConfig } from '../../src/types/agent.js';
+import type { AgentSettings } from '../../src/types/settings.js';
 import type { ModelProvider, CompletionResponse, StreamChunk } from '../../src/types/providers.js';
 import type { ToolCall } from '../../src/types/messages.js';
 import type { ToolResult } from '../../src/types/tools.js';
@@ -195,15 +196,20 @@ class RealisticMockProvider implements ModelProvider {
 }
 
 // Helper to create config
-function createConfig(overrides?: Partial<AgentConfig>): AgentConfig {
+function createSettings(overrides?: Partial<AgentSettings>): AgentSettings {
   return {
-    id: 'integration-test-agent',
-    name: 'Integration Test Agent',
-    systemPrompt: 'You are a helpful AI assistant.',
-    model: 'claude-3-5-sonnet-20241022',
-    provider: 'anthropic',
-    maxTurns: 10,
-    maxTokensPerTurn: 4096,
+    model: {
+      temperature: 0.7,
+      topP: 1,
+      maxTokens: 4096,
+    },
+    behavior: {
+      responseStyle: 'balanced',
+      enableToolUse: true,
+      enableStreaming: true,
+      maxTurns: 10,
+      systemPrompt: 'You are a helpful AI assistant.',
+    },
     tools: {
       allow: ['*'],
       deny: [],
@@ -213,15 +219,27 @@ function createConfig(overrides?: Partial<AgentConfig>): AgentConfig {
   };
 }
 
+function createConfig(overrides?: Partial<AgentConfig>): AgentConfig {
+  return {
+    id: 'integration-test-agent',
+    name: 'Integration Test Agent',
+    model: 'claude-3-5-sonnet-20241022',
+    provider: 'anthropic',
+    ...overrides,
+  };
+}
+
 describe('ExecutionLoop Integration Tests', () => {
   let provider: RealisticMockProvider;
   let config: AgentConfig;
+  let settings: AgentSettings;
   let agent: ExecutionLoop;
 
   beforeEach(() => {
     provider = new RealisticMockProvider();
     config = createConfig();
-    agent = new ExecutionLoop(config, provider);
+    settings = createSettings();
+    agent = new ExecutionLoop(config, settings, provider);
   });
 
   describe('Simple Interactions', () => {
@@ -504,7 +522,7 @@ describe('ExecutionLoop Integration Tests', () => {
         throw new Error('Provider error: Rate limit exceeded');
       };
 
-      const failingAgent = new ExecutionLoop(config, failingProvider);
+      const failingAgent = new ExecutionLoop(config, settings, failingProvider);
 
       const result = await failingAgent.run('test');
 
@@ -580,8 +598,8 @@ describe('ExecutionLoop Integration Tests', () => {
 
   describe('Configuration', () => {
     it('respects custom maxTurns setting', async () => {
-      const limitedConfig = createConfig({ maxTurns: 1 });
-      const limitedAgent = new ExecutionLoop(limitedConfig, provider);
+      const limitedSettings = createSettings({ behavior: { ...createSettings().behavior, maxTurns: 1 } });
+      const limitedAgent = new ExecutionLoop(config, limitedSettings, provider);
 
       const onToolCall = async (call: ToolCall): Promise<ToolResult> => ({
         callId: call.id,
@@ -597,16 +615,16 @@ describe('ExecutionLoop Integration Tests', () => {
       expect(result.turns).toBe(1);
     });
 
-    it('uses system prompt from config', async () => {
-      const customConfig = createConfig({
-        systemPrompt: 'You are a math tutor specializing in calculus.',
+    it('uses system prompt from settings', async () => {
+      const customSettings = createSettings({
+        behavior: { ...createSettings().behavior, systemPrompt: 'You are a math tutor specializing in calculus.' },
       });
-      const customAgent = new ExecutionLoop(customConfig, provider);
+      const customAgent = new ExecutionLoop(config, customSettings, provider);
 
       const result = await customAgent.run('hello');
 
-      // System prompt should be used (verified through config)
-      expect(customAgent.config.systemPrompt).toBe(
+      // System prompt should be in settings
+      expect(customSettings.behavior.systemPrompt).toBe(
         'You are a math tutor specializing in calculus.'
       );
       expect(result.finishReason).toBe('completed');

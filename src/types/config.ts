@@ -34,9 +34,14 @@ export interface LoggingConfig {
 
 /** Root application configuration */
 export interface AppConfig {
+  /** Agent configuration (model selection + settings reference) */
   readonly agent: AgentConfig;
-  readonly providers: Record<string, ProviderConfig>; // Accept any provider ID from registry
+  /** Provider credentials only (no model configuration) */
+  readonly providers: Record<string, ProviderConfig>;
+  /** Plugin configuration */
   readonly plugins: PluginsConfig;
+  /** Session configuration */
   readonly session: SessionConfig;
+  /** Logging configuration */
   readonly logging: LoggingConfig;
 }

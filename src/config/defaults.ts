@@ -6,7 +6,7 @@ import type { AppConfig } from '../types/config.js';
 
 /**
  * Returns the default application configuration.
- * All values are sensible defaults that can be overridden via config file.
+ * This is a minimal config - users must run 'setup' to configure model and API keys.
  *
  * @returns Complete default configuration
  */
@@ -15,29 +15,14 @@ export function getDefaultConfig(): AppConfig {
     agent: {
       id: 'default',
       name: 'My Agent',
-      systemPrompt: 'You are a helpful AI assistant.',
+      // Placeholder values - user must run setup
       model: 'claude-sonnet-4-20250514',
       provider: 'anthropic',
-      maxTurns: 25,
-      maxTokensPerTurn: 8192,
-      tools: {
-        allow: [],
-        deny: [],
-        requireApproval: [],
-      },
     },
     providers: {
+      // Placeholder API key - user must configure
       anthropic: {
-        apiKey: '',
-        defaultModel: 'claude-sonnet-4-20250514',
-        timeout: 60000,
-        maxRetries: 3,
-      },
-      openai: {
-        apiKey: '',
-        defaultModel: 'gpt-4o',
-        timeout: 60000,
-        maxRetries: 3,
+        apiKey: 'YOUR_ANTHROPIC_API_KEY_HERE',
       },
     },
     plugins: {

@@ -156,13 +156,30 @@ function checkApiKeys(warnings: string[]): void {
  *
  * @param config - Application configuration
  * @returns Model provider instance
+ * @throws {Error} If provider is not configured or invalid
  */
 function createProvider(config: AppConfig): ModelProvider {
   const providerType = config.agent.provider;
+
+  // Check if provider is configured
+  if (!providerType || providerType === '') {
+    throw new Error('No provider configured. Run "my-agent setup" to configure your provider and API key.');
+  }
+
   const providerConfig = config.providers[providerType];
 
   if (!providerConfig) {
-    throw new Error(`Provider '${providerType}' not configured`);
+    throw new Error(`Provider '${providerType}' not configured. Run "my-agent setup" to configure your provider and API key.`);
+  }
+
+  // Check for placeholder API key (only in production, not in tests)
+  if (providerConfig.apiKey === 'YOUR_ANTHROPIC_API_KEY_HERE' ||
+      providerConfig.apiKey === 'YOUR_OPENAI_API_KEY_HERE' ||
+      providerConfig.apiKey === 'YOUR_API_KEY_HERE') {
+    // Allow placeholder keys in test environment
+    if (process.env['NODE_ENV'] !== 'test') {
+      throw new Error(`API key not configured for ${providerType}. Run "my-agent setup" to configure your API key.`);
+    }
   }
 
   if (providerType === 'anthropic') {
