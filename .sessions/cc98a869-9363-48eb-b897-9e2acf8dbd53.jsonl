@@ -1,0 +1,2 @@
+{"type":"session_start","timestamp":1771105965400,"sessionId":"cc98a869-9363-48eb-b897-9e2acf8dbd53","agentId":"default","metadata":{"model":"kimi-k2-instruct","provider":"openai","totalTokens":0,"toolCallCount":0,"turnCount":0,"description":"","tags":["common"]},"createdAt":1771105965399,"updatedAt":1771105965406}
+{"type":"message","timestamp":1771105965406,"message":{"id":"ca11be6e-46d6-4cf0-a120-0f82b198d021","role":"user","content":"Say hello in one word","timestamp":1771105965404}}

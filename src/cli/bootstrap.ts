@@ -15,6 +15,7 @@ import { PluginManager } from '../plugins/manager.js';
 import { AnthropicProvider } from '../providers/anthropic.js';
 import { OpenAIProvider } from '../providers/openai.js';
 import type { ModelProvider } from '../types/providers.js';
+import { getProvider } from '../providers/registry.js';
 import { PlainTextOutput } from './plain-text-output.js';
 import type { OutputAdapter } from './output-adapter.js';
 
@@ -153,6 +154,7 @@ function checkApiKeys(warnings: string[]): void {
 
 /**
  * Create provider based on configuration.
+ * Uses the SDK type from the provider registry to determine which provider class to instantiate.
  *
  * @param config - Application configuration
  * @returns Model provider instance
@@ -182,21 +184,34 @@ function createProvider(config: AppConfig): ModelProvider {
     }
   }
 
-  if (providerType === 'anthropic') {
+  // Get provider manifest to determine which SDK to use
+  const providerManifest = getProvider(providerType);
+  if (!providerManifest) {
+    throw new Error(`Unknown provider: ${providerType}. Provider not found in registry.`);
+  }
+
+  // Use the SDK type from the manifest to create the appropriate provider instance
+  const sdkType = providerManifest.sdk;
+
+  // Use baseUrl from config if provided, otherwise use from manifest
+  const baseUrl = providerConfig.baseUrl ?? providerManifest.baseUrl;
+
+  if (sdkType === 'anthropic') {
     return new AnthropicProvider(
       providerConfig.apiKey,
       providerConfig.timeout,
       providerConfig.maxRetries,
-      providerConfig.baseUrl
+      baseUrl
     );
-  } else if (providerType === 'openai') {
+  } else if (sdkType === 'openai') {
+    // OpenAI SDK is used for: OpenAI, Kimi, and other OpenAI-compatible APIs
     return new OpenAIProvider(
       providerConfig.apiKey,
       providerConfig.timeout,
       providerConfig.maxRetries,
-      providerConfig.baseUrl
+      baseUrl
     );
   } else {
-    throw new Error(`Unknown provider type: ${String(providerType)}`);
+    throw new Error(`Unsupported SDK type: ${sdkType}. Only 'anthropic' and 'openai' SDKs are supported.`);
   }
 }

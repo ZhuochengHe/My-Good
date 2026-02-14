@@ -226,6 +226,7 @@ async function saveConfig(
     providers: {
       [provider.id]: {
         apiKey,
+        ...(provider.baseUrl && { baseUrl: provider.baseUrl }),
       },
     },
     plugins: {
