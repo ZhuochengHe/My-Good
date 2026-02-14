@@ -16,21 +16,31 @@ import * as readline from 'readline';
  */
 export async function promptPassword(promptText: string): Promise<string> {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    // Hide input
     const stdin = process.stdin;
     const stdout = process.stdout;
 
-    stdout.write(promptText);
+    // If not a TTY, fall back to normal readline (can't hide input)
+    if (!stdin.isTTY) {
+      const rl = readline.createInterface({
+        input: stdin,
+        output: stdout,
+      });
 
-    // Disable terminal echo
-    if (stdin.isTTY) {
-      stdin.setRawMode(true);
+      rl.question(promptText, (answer) => {
+        rl.close();
+        resolve(answer);
+      });
+      return;
     }
+
+    // For TTY, use raw mode to hide input
+    const rl = readline.createInterface({
+      input: stdin,
+      output: stdout,
+    });
+
+    stdout.write(promptText);
+    stdin.setRawMode(true);
 
     let password = '';
 
@@ -41,6 +51,8 @@ export async function promptPassword(promptText: string): Promise<string> {
       // Handle Ctrl+C
       if (keyCode === 3) {
         stdout.write('\n');
+        stdin.setRawMode(false);
+        rl.close();
         process.exit(0);
       }
 
@@ -48,9 +60,7 @@ export async function promptPassword(promptText: string): Promise<string> {
       if (keyCode === 13 || keyCode === 10) {
         stdout.write('\n');
         stdin.off('data', onData);
-        if (stdin.isTTY) {
-          stdin.setRawMode(false);
-        }
+        stdin.setRawMode(false);
         rl.close();
         resolve(password);
         return;

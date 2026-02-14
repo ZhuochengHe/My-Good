@@ -122,48 +122,69 @@ async function getApiKey(
 }
 
 /**
- * Test API key by listing models.
+ * Fetch available models dynamically from the provider API.
+ * Returns models and whether the API key is valid.
  */
-async function testApiKey(
+async function fetchAvailableModels(
   provider: ProviderManifest,
-  apiKey: string
-): Promise<boolean> {
+  apiKey: string,
+  output: OutputAdapter
+): Promise<{ models: ModelInfo[]; valid: boolean }> {
   try {
-    // Import provider SDK dynamically
+    output.write('Testing API key and fetching available models...');
+
     if (provider.sdk === 'anthropic') {
+      // Anthropic doesn't have a models.list() API
+      // Just test the key with a simple API call
       const { AnthropicProvider } = await import('../../providers/anthropic.js');
       const testProvider = new AnthropicProvider(
         apiKey,
-        60000, // timeout
-        3, // maxRetries
+        60000,
+        3,
         provider.baseUrl,
         provider.models,
         provider.healthCheckModel,
         provider.id
       );
 
-      // Try to list models as a connection test
       await testProvider.listModels();
-      return true;
+      output.writeSuccess('API key valid! Using models from registry');
+      return { models: provider.models.slice(), valid: true };
     } else if (provider.sdk === 'openai') {
-      const { OpenAIProvider } = await import('../../providers/openai.js');
-      const testProvider = new OpenAIProvider(
+      // Fetch models dynamically from OpenAI-compatible API
+      const OpenAI = (await import('openai')).default;
+      const client = new OpenAI({
         apiKey,
-        60000, // timeout
-        3, // maxRetries
-        provider.baseUrl,
-        provider.models,
-        provider.healthCheckModel,
-        provider.id
-      );
+        baseURL: provider.baseUrl,
+        timeout: 10000,
+      });
 
-      await testProvider.listModels();
-      return true;
+      const response = await client.models.list();
+      const models: ModelInfo[] = [];
+
+      for await (const model of response) {
+        models.push({
+          id: model.id,
+          name: model.id,
+          contextWindow: 128000, // Default
+          supportsToolCalling: true,
+          supportsStreaming: true,
+        });
+      }
+
+      if (models.length > 0) {
+        output.writeSuccess(`API key valid! Found ${models.length} available models`);
+        return { models, valid: true };
+      } else {
+        output.write('No models returned, using registry defaults');
+        return { models: provider.models.slice(), valid: true };
+      }
     }
 
-    return false;
-  } catch {
-    return false;
+    return { models: [], valid: false };
+  } catch (error) {
+    output.writeError(`API key test failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { models: [], valid: false };
   }
 }
 
@@ -335,13 +356,12 @@ export async function runSetup(options: SetupCommandOptions): Promise<SetupResul
       continue;
     }
 
-    // Test API key
-    output.write('\nTesting connection...');
-    const isValid = await testApiKey(selectedProvider, apiKey);
+    // Test API key and fetch available models
+    output.write('\n');
+    const { models, valid } = await fetchAvailableModels(selectedProvider, apiKey, output);
 
-    if (!isValid) {
-      output.writeError('Failed to connect with provided API key.');
-      const retry = await prompt('Try again? (Y/n): ');
+    if (!valid) {
+      const retry = await prompt('\nTry again? (Y/n): ');
       if (retry.toLowerCase() === 'n') {
         return { success: false, message: 'Setup cancelled.' };
       }
@@ -349,10 +369,8 @@ export async function runSetup(options: SetupCommandOptions): Promise<SetupResul
       continue;
     }
 
-    output.writeSuccess('Connection successful!');
-
-    // Select model
-    selectedModel = await selectModel(selectedProvider.models, prompt, output);
+    // Select model from fetched models
+    selectedModel = await selectModel(models, prompt, output);
     if (!selectedModel) {
       // User chose to go back
       apiKey = null;
