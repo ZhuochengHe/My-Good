@@ -53,22 +53,18 @@ describe('Configuration System', () => {
 
       expect(config.agent.id).toBe('default');
       expect(config.agent.name).toBe('My Agent');
+      // Default config has placeholder values - must be configured via setup
       expect(config.agent.model).toBe('claude-sonnet-4-20250514');
       expect(config.agent.provider).toBe('anthropic');
-      expect(config.agent.maxTurns).toBeGreaterThan(0);
-      expect(config.agent.maxTokensPerTurn).toBeGreaterThan(0);
     });
 
-    it('has sensible default provider values', () => {
+    it('has default providers with placeholder API key', () => {
       const config = getDefaultConfig();
 
+      // Default config has placeholder provider - must be configured via setup
+      expect(Object.keys(config.providers)).toHaveLength(1);
       expect(config.providers.anthropic).toBeDefined();
-      expect(config.providers.anthropic.defaultModel).toBe('claude-sonnet-4-20250514');
-      expect(config.providers.anthropic.apiKey).toBe('');
-
-      expect(config.providers.openai).toBeDefined();
-      expect(config.providers.openai.defaultModel).toBe('gpt-4o');
-      expect(config.providers.openai.apiKey).toBe('');
+      expect(config.providers.anthropic.apiKey).toBe('YOUR_ANTHROPIC_API_KEY_HERE');
     });
 
     it('has sensible default session values', () => {
@@ -160,13 +156,26 @@ describe('Configuration System', () => {
 
   describe('validateConfig', () => {
     it('validates a correct configuration', () => {
-      const config = getDefaultConfig();
+      const config = {
+        ...getDefaultConfig(),
+        agent: {
+          id: 'test',
+          name: 'Test Agent',
+          model: 'claude-sonnet-4-20250514',
+          provider: 'anthropic',
+        },
+        providers: {
+          anthropic: {
+            apiKey: 'sk-ant-test123',
+          },
+        },
+      };
 
       const result = validateConfig(config);
 
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data).toEqual(config);
+        expect(result.data.agent.id).toBe('test');
       }
     });
 
@@ -222,26 +231,37 @@ describe('Configuration System', () => {
       expect(result.success).toBe(false);
     });
 
-    it('rejects config with negative maxTurns', () => {
-      const config = getDefaultConfig();
-      const invalidConfig = {
-        ...config,
-        agent: { ...config.agent, maxTurns: -1 },
+    it('rejects config with missing required agent fields', () => {
+      const config = {
+        ...getDefaultConfig(),
+        agent: {
+          // Missing required fields: id, model, provider
+          name: 'Test Agent',
+        },
       };
 
-      const result = validateConfig(invalidConfig);
+      const result = validateConfig(config);
 
       expect(result.success).toBe(false);
     });
 
-    it('rejects config with zero maxTokensPerTurn', () => {
-      const config = getDefaultConfig();
-      const invalidConfig = {
-        ...config,
-        agent: { ...config.agent, maxTokensPerTurn: 0 },
+    it('rejects config with invalid provider', () => {
+      const config = {
+        ...getDefaultConfig(),
+        agent: {
+          id: 'test',
+          name: 'Test Agent',
+          model: 'test-model',
+          provider: 'invalid-provider',
+        },
+        providers: {
+          'invalid-provider': {
+            apiKey: 'test123',
+          },
+        },
       };
 
-      const result = validateConfig(invalidConfig);
+      const result = validateConfig(config);
 
       expect(result.success).toBe(false);
     });
@@ -381,7 +401,13 @@ agent:
     it('merges with defaults for partial config', () => {
       const partialYaml = `
 agent:
+  id: custom
   name: Custom Agent
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 `;
 
       const config = loadConfigFromString(partialYaml);
@@ -389,7 +415,7 @@ agent:
       // Custom value should be applied
       expect(config.agent.name).toBe('Custom Agent');
       // Default values should still be present
-      expect(config.agent.id).toBe('default');
+      expect(config.agent.id).toBe('custom');
       expect(config.logging.level).toBe('info');
     });
   });
@@ -550,14 +576,19 @@ logging:
       const configPath = join(testDir, 'minimal.yaml');
       const configContent = `
 agent:
+  id: minimal
   name: Minimal Agent
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 `;
       writeFileSync(configPath, configContent);
 
       const config = await loadConfig(configPath);
 
       expect(config.agent.name).toBe('Minimal Agent');
-      expect(config.agent.maxTurns).toBeGreaterThan(0);
       expect(config.session.storePath).toBe('./.sessions');
     });
   });
@@ -614,21 +645,33 @@ agent:
       const configPath = join(testDir, 'unicode.yaml');
       const configContent = `
 agent:
-  name: "Agent \u{1F916} Bot"
-  systemPrompt: "Hello! \u{1F44B}"
+  id: unicode
+  name: "Agent 🤖 Bot"
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 `;
       writeFileSync(configPath, configContent);
 
       const config = await loadConfig(configPath);
 
-      expect(config.agent.name).toContain('\u{1F916}');
+      expect(config.agent.name).toContain('🤖');
     });
 
     it('handles very long string values', () => {
       const longPrompt = 'A'.repeat(10000);
       const yaml = `
 agent:
+  id: long-test
+  name: Long Test Agent
+  model: claude-sonnet-4-20250514
+  provider: anthropic
   systemPrompt: "${longPrompt}"
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 `;
       const config = loadConfigFromString(yaml);
 
@@ -638,6 +681,14 @@ agent:
     it('handles special characters in paths', async () => {
       const configPath = join(testDir, 'config.yaml');
       const configContent = `
+agent:
+  id: test
+  name: Test Agent
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 session:
   storePath: "./sessions with spaces/and-dashes"
 `;
@@ -650,6 +701,14 @@ session:
 
     it('preserves array order in configuration', () => {
       const yaml = `
+agent:
+  id: test
+  name: Test Agent
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 plugins:
   directories:
     - ./first
@@ -667,6 +726,11 @@ plugins:
 agent:
   name: "yes"
   id: "true"
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 `;
       const config = loadConfigFromString(yaml);
 

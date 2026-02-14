@@ -9,7 +9,6 @@ import { z } from 'zod';
 import type { AppConfig } from '../types/config.js';
 import { getDefaultConfig } from './defaults.js';
 import { validateProvider } from '../providers/registry.js';
-import { isOldFormat, migrateConfig } from './migration.js';
 
 /**
  * Represents a validation issue with path and message.
@@ -52,30 +51,18 @@ const providerTypeSchema = z.string().refine(
   (val) => ({ message: `Unknown provider: ${val}. Check providers.json registry.` })
 );
 
-/** Zod schema for tools configuration */
-const toolsConfigSchema = z.object({
-  allow: z.array(z.string()).readonly(),
-  deny: z.array(z.string()).readonly(),
-  requireApproval: z.array(z.string()).readonly(),
-});
-
-/** Zod schema for AgentConfig - loose mode allows unknown fields */
+/** Zod schema for AgentConfig - minimal, model-focused */
 const agentConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
-  systemPrompt: z.string(),
   model: z.string(),
   provider: providerTypeSchema,
-  maxTurns: z.number().int().positive(),
-  maxTokensPerTurn: z.number().int().positive(),
-  tools: toolsConfigSchema,
 }).passthrough(); // Allow extra fields (loose mode)
 
-/** Zod schema for ProviderConfig - loose mode allows unknown fields */
+/** Zod schema for ProviderConfig - credentials only */
 const providerConfigSchema = z.object({
   apiKey: z.string(),
   baseUrl: z.string().optional(),
-  defaultModel: z.string(),
   timeout: z.number().int().positive().optional(),
   maxRetries: z.number().int().nonnegative().optional(),
 }).passthrough(); // Allow extra fields (loose mode)
@@ -292,19 +279,11 @@ export function loadConfigFromString(yamlContent: string): AppConfig {
     return getDefaultConfig();
   }
 
-  // Migrate old format to new format if needed
-  let migrated: unknown = parsed;
-  if (isOldFormat(parsed)) {
-    // eslint-disable-next-line no-console
-    console.log('Migrating config from old format (removing redundant "type" fields)...');
-    migrated = migrateConfig(parsed);
-  }
-
   // Merge with defaults
   const defaults = getDefaultConfig();
   const merged = deepMerge(
     defaults as unknown as Record<string, unknown>,
-    migrated as Record<string, unknown>
+    parsed as Record<string, unknown>
   );
 
   // Validate the merged configuration

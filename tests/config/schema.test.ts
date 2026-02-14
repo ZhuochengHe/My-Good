@@ -511,27 +511,22 @@ providers:
       expect(() => loadConfigFromString(yaml)).toThrow(/apiKey/i);
     });
 
-    it('should require defaultModel in provider config', () => {
+    it('should validate provider config has required fields', () => {
+      // Provider config only requires apiKey (defaultModel removed)
       const yaml = `
 agent:
   id: test
   name: Test Agent
-  systemPrompt: Test prompt
   model: claude-sonnet-4-20250514
   provider: anthropic
-  maxTurns: 10
-  maxTokensPerTurn: 1000
-  tools:
-    allow: []
-    deny: []
-    requireApproval: []
 providers:
   anthropic:
     apiKey: sk-ant-test123
 `;
 
-      expect(() => loadConfigFromString(yaml)).toThrow(ConfigValidationError);
-      expect(() => loadConfigFromString(yaml)).toThrow(/defaultModel/i);
+      // Should not throw - apiKey is the only required field
+      const result = loadConfigFromString(yaml);
+      expect(result.providers.anthropic.apiKey).toBe('sk-ant-test123');
     });
   });
 });

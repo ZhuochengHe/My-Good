@@ -97,3 +97,8 @@ export function validateProvider(providerId: string): boolean {
 export function clearCache(): void {
   cachedRegistry = null;
 }
+
+/**
+ * Alias for loadProviderRegistry for convenience.
+ */
+export { loadProviderRegistry as loadRegistry };

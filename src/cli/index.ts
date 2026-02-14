@@ -19,7 +19,12 @@ import {
 } from './commands/session.js';
 import { pluginList, pluginInfo } from './commands/plugin.js';
 import { chat } from './commands/chat.js';
+import { runSetup } from './commands/setup.js';
+import { settingsShow, settingsGet, settingsSet, settingsReset } from './commands/settings.js';
+import { updateModels } from './commands/model.js';
 import { StdinInputReader } from './stdin-input-reader.js';
+import { promptPassword, promptLine } from './password-input.js';
+import { PlainTextOutput } from './plain-text-output.js';
 
 /**
  * Main CLI function.
@@ -43,7 +48,68 @@ export async function main(argv: string[]): Promise<void> {
       defaultConfigPath
     );
 
-  // Config commands
+  // Setup command
+  program
+    .command('setup')
+    .description('Interactive setup - configure provider, API key, and model')
+    .action(async () => {
+      const opts = program.opts();
+      const configPath = opts['config'];
+      const output = new PlainTextOutput();
+
+      const result = await runSetup({
+        configPath,
+        output,
+        prompt: promptLine,
+        promptPassword,
+      });
+
+      if (result.success) {
+        output.writeSuccess(result.message);
+      } else {
+        output.writeError(result.message);
+        process.exit(1);
+      }
+    });
+
+  // Settings command
+  const settingsCmd = program
+    .command('settings')
+    .description('Manage agent behavior settings');
+
+  settingsCmd
+    .command('show')
+    .description('Show all settings')
+    .action(async () => {
+      const output = new PlainTextOutput();
+      await settingsShow({ output });
+    });
+
+  settingsCmd
+    .command('get <key>')
+    .description('Get a specific setting value')
+    .action(async (key: string) => {
+      const output = new PlainTextOutput();
+      await settingsGet({ output, key });
+    });
+
+  settingsCmd
+    .command('set <key> <value>')
+    .description('Set a setting value')
+    .action(async (key: string, value: string) => {
+      const output = new PlainTextOutput();
+      await settingsSet({ output, key, value });
+    });
+
+  settingsCmd
+    .command('reset')
+    .description('Reset settings to defaults')
+    .action(async () => {
+      const output = new PlainTextOutput();
+      await settingsReset({ output });
+    });
+
+  // Config commands (legacy, kept for compatibility)
   const configCmd = program.command('config').description('Manage configuration');
 
   configCmd
@@ -132,6 +198,28 @@ export async function main(argv: string[]): Promise<void> {
       const configPath = opts['config'];
       const { pluginManager, output } = await bootstrap({ configPath });
       pluginInfo({ pluginManager, output, pluginId });
+    });
+
+  // Model command
+  const modelCmd = program
+    .command('model')
+    .description('Manage available models');
+
+  modelCmd
+    .command('update')
+    .description('Update the list of available models from providers')
+    .action(() => {
+      const opts = program.opts();
+      const configPath = opts['config'];
+      const output = new PlainTextOutput();
+
+      try {
+        updateModels({ configPath, output });
+        output.writeSuccess('Model list updated successfully');
+      } catch (error) {
+        output.writeError(`Failed to update models: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
     });
 
   // Chat command

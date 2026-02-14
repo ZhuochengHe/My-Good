@@ -1,0 +1,2 @@
+{"type":"session_start","timestamp":1771106217324,"sessionId":"b55f1303-e74f-4f74-83e9-4c4d6527535a","agentId":"default","metadata":{"model":"kimi-k2-instruct","provider":"openai","totalTokens":0,"toolCallCount":0,"turnCount":0,"description":"","tags":["common"]},"createdAt":1771106217324,"updatedAt":1771106222342}
+{"type":"message","timestamp":1771106222343,"message":{"id":"badd6a1f-b2b7-4103-a048-783a8ba71792","role":"user","content":"hello my friend","timestamp":1771106222339}}

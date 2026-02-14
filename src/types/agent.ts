@@ -8,20 +8,42 @@ import type { ProviderType, TokenUsage } from './providers.js';
 import type { Session } from './sessions.js';
 import type { AgentEvent } from './events.js';
 
-/** Agent configuration */
-export interface AgentConfig {
-  readonly id: string;
-  readonly name: string;
-  readonly systemPrompt: string;
-  readonly model: string;
-  readonly provider: ProviderType;
-  readonly maxTurns: number;
-  readonly maxTokensPerTurn: number;
-  readonly tools: {
+/** Agent behavior settings */
+export interface AgentSettings {
+  /** Response temperature (0-2) */
+  readonly temperature?: number;
+  /** Top P sampling (0-1) */
+  readonly topP?: number;
+  /** Maximum tokens per response */
+  readonly maxTokens?: number;
+  /** Response style preference */
+  readonly responseStyle?: 'concise' | 'detailed' | 'balanced';
+  /** Enable tool use */
+  readonly enableToolUse?: boolean;
+  /** Enable streaming responses */
+  readonly enableStreaming?: boolean;
+  /** System prompt */
+  readonly systemPrompt?: string;
+  /** Maximum conversation turns */
+  readonly maxTurns?: number;
+  /** Tool configuration */
+  readonly tools?: {
     readonly allow: readonly string[];
     readonly deny: readonly string[];
     readonly requireApproval: readonly string[];
   };
+}
+
+/** Agent configuration - minimal, model-focused */
+export interface AgentConfig {
+  /** Agent identifier */
+  readonly id: string;
+  /** Display name */
+  readonly name: string;
+  /** Selected model ID */
+  readonly model: string;
+  /** Selected provider ID */
+  readonly provider: ProviderType;
 }
 
 /** Agent execution options */

@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ExecutionLoop } from '../../src/agent/execution-loop.js';
 import type { AgentConfig } from '../../src/types/agent.js';
+import type { AgentSettings } from '../../src/types/settings.js';
 import type { ModelProvider, CompletionResponse, StreamChunk } from '../../src/types/providers.js';
 import type { AgentEvent } from '../../src/types/events.js';
 import type { ToolCall } from '../../src/types/messages.js';
@@ -86,16 +87,21 @@ function createResponse(
   };
 }
 
-// Default agent config
-function createConfig(overrides?: Partial<AgentConfig>): AgentConfig {
+// Default agent settings
+function createSettings(overrides?: Partial<AgentSettings>): AgentSettings {
   return {
-    id: 'test-agent',
-    name: 'Test Agent',
-    systemPrompt: 'You are a test assistant.',
-    model: 'claude-3-5-sonnet-20241022',
-    provider: 'anthropic',
-    maxTurns: 5,
-    maxTokensPerTurn: 4096,
+    model: {
+      temperature: 0.7,
+      topP: 1,
+      maxTokens: 4096,
+    },
+    behavior: {
+      responseStyle: 'balanced',
+      enableToolUse: true,
+      enableStreaming: true,
+      maxTurns: 5,
+      systemPrompt: 'You are a test assistant.',
+    },
     tools: {
       allow: ['*'],
       deny: [],
@@ -105,16 +111,29 @@ function createConfig(overrides?: Partial<AgentConfig>): AgentConfig {
   };
 }
 
+// Default agent config
+function createConfig(overrides?: Partial<AgentConfig>): AgentConfig {
+  return {
+    id: 'test-agent',
+    name: 'Test Agent',
+    model: 'claude-3-5-sonnet-20241022',
+    provider: 'anthropic',
+    ...overrides,
+  };
+}
+
 describe('ExecutionLoop', () => {
   let provider: MockProvider;
   let config: AgentConfig;
+  let settings: AgentSettings;
   let agent: ExecutionLoop;
   let events: AgentEvent[];
 
   beforeEach(() => {
     provider = new MockProvider();
     config = createConfig();
-    agent = new ExecutionLoop(config, provider);
+    settings = createSettings();
+    agent = new ExecutionLoop(config, settings, provider);
     events = [];
   });
 
@@ -445,8 +464,8 @@ describe('ExecutionLoop', () => {
 
   describe('Turn Limits', () => {
     it('respects maxTurns limit', async () => {
-      config = createConfig({ maxTurns: 2 });
-      agent = new ExecutionLoop(config, provider);
+      settings = createSettings({ behavior: { ...createSettings().behavior, maxTurns: 2 } });
+      agent = new ExecutionLoop(config, settings, provider);
 
       // Configure 3 responses, but should only execute 2
       provider.responses = [
@@ -475,8 +494,8 @@ describe('ExecutionLoop', () => {
     });
 
     it('returns max_turns finish reason when reached', async () => {
-      config = createConfig({ maxTurns: 1 });
-      agent = new ExecutionLoop(config, provider);
+      settings = createSettings({ behavior: { ...createSettings().behavior, maxTurns: 1 } });
+      agent = new ExecutionLoop(config, settings, provider);
 
       provider.responses = [
         createResponse('Only turn', 'tool_use', [
@@ -704,24 +723,23 @@ describe('ExecutionLoop', () => {
   });
 
   describe('Configuration', () => {
-    it('uses system prompt from config', async () => {
+    it('uses system prompt from settings', async () => {
       const customPrompt = 'You are a specialized assistant.';
-      config = createConfig({ systemPrompt: customPrompt });
-      agent = new ExecutionLoop(config, provider);
+      settings = createSettings({ behavior: { ...createSettings().behavior, systemPrompt: customPrompt } });
+      agent = new ExecutionLoop(config, settings, provider);
 
       provider.responses = [createResponse('Response', 'end_turn')];
 
       await agent.run('Test');
 
-      // System prompt should be passed to provider
-      // We can verify this through the config property
-      expect(agent.config.systemPrompt).toBe(customPrompt);
+      // System prompt should be in settings
+      expect(settings.behavior.systemPrompt).toBe(customPrompt);
     });
 
     it('uses model from config', async () => {
       const customModel = 'gpt-4';
       config = createConfig({ model: customModel });
-      agent = new ExecutionLoop(config, provider);
+      agent = new ExecutionLoop(config, settings, provider);
 
       provider.responses = [createResponse('Response', 'end_turn')];
 
@@ -791,8 +809,8 @@ describe('ExecutionLoop', () => {
     });
 
     it('handles zero maxTurns', async () => {
-      config = createConfig({ maxTurns: 0 });
-      agent = new ExecutionLoop(config, provider);
+      settings = createSettings({ behavior: { ...createSettings().behavior, maxTurns: 0 } });
+      agent = new ExecutionLoop(config, settings, provider);
 
       provider.responses = [createResponse('Should not execute', 'end_turn')];
 

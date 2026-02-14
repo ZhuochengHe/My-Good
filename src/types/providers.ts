@@ -11,13 +11,15 @@ export type ProviderType = string;
 /** SDK type for providers */
 export type SdkType = 'anthropic' | 'openai';
 
-/** Provider configuration */
+/** Provider configuration - credentials only */
 export interface ProviderConfig {
-  readonly type?: ProviderType; // Optional - deprecated, inferred from provider ID
+  /** API key for the provider */
   readonly apiKey: string;
+  /** Optional base URL override */
   readonly baseUrl?: string;
-  readonly defaultModel: string;
+  /** Request timeout in milliseconds (default: 60000) */
   readonly timeout?: number;
+  /** Maximum retry attempts (default: 3) */
   readonly maxRetries?: number;
 }
 

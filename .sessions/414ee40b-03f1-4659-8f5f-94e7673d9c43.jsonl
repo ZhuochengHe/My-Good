@@ -1,0 +1,2 @@
+{"type":"session_start","timestamp":1770872562413,"sessionId":"414ee40b-03f1-4659-8f5f-94e7673d9c43","agentId":"default","metadata":{"model":"claude-sonnet-4-20250514","provider":"anthropic","totalTokens":0,"toolCallCount":0,"turnCount":0,"description":"","tags":["common"]},"createdAt":1770872562410,"updatedAt":1770872562448}
+{"type":"message","timestamp":1770872562450,"message":{"id":"ebfec543-abf6-45a2-bfd7-168787e9723b","role":"user","content":"Hello","timestamp":1770872562439}}

@@ -150,7 +150,13 @@ describe('CLI Integration', () => {
       const sessionsDir = join(testDir, 'sessions');
       const configWithSessionPath = `
 agent:
+  id: test
   name: Test
+  model: claude-sonnet-4-20250514
+  provider: anthropic
+providers:
+  anthropic:
+    apiKey: sk-ant-test123
 session:
   storePath: ${sessionsDir}
 `;

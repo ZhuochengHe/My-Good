@@ -15,6 +15,7 @@ import { PluginManager } from '../plugins/manager.js';
 import { AnthropicProvider } from '../providers/anthropic.js';
 import { OpenAIProvider } from '../providers/openai.js';
 import type { ModelProvider } from '../types/providers.js';
+import { getProvider } from '../providers/registry.js';
 import { PlainTextOutput } from './plain-text-output.js';
 import type { OutputAdapter } from './output-adapter.js';
 
@@ -153,33 +154,66 @@ function checkApiKeys(warnings: string[]): void {
 
 /**
  * Create provider based on configuration.
+ * Uses the SDK type from the provider registry to determine which provider class to instantiate.
  *
  * @param config - Application configuration
  * @returns Model provider instance
+ * @throws {Error} If provider is not configured or invalid
  */
 function createProvider(config: AppConfig): ModelProvider {
   const providerType = config.agent.provider;
+
+  // Check if provider is configured
+  if (!providerType || providerType === '') {
+    throw new Error('No provider configured. Run "my-agent setup" to configure your provider and API key.');
+  }
+
   const providerConfig = config.providers[providerType];
 
   if (!providerConfig) {
-    throw new Error(`Provider '${providerType}' not configured`);
+    throw new Error(`Provider '${providerType}' not configured. Run "my-agent setup" to configure your provider and API key.`);
   }
 
-  if (providerType === 'anthropic') {
+  // Check for placeholder API key (only in production, not in tests)
+  if (providerConfig.apiKey === 'YOUR_ANTHROPIC_API_KEY_HERE' ||
+      providerConfig.apiKey === 'YOUR_OPENAI_API_KEY_HERE' ||
+      providerConfig.apiKey === 'YOUR_API_KEY_HERE') {
+    // Allow placeholder keys in test environment
+    if (process.env['NODE_ENV'] !== 'test') {
+      throw new Error(`API key not configured for ${providerType}. Run "my-agent setup" to configure your API key.`);
+    }
+  }
+
+  // Get provider manifest to determine which SDK to use
+  const providerManifest = getProvider(providerType);
+  if (!providerManifest) {
+    throw new Error(`Unknown provider: ${providerType}. Provider not found in registry.`);
+  }
+
+  // Use the SDK type from the manifest to create the appropriate provider instance
+  const sdkType = providerManifest.sdk;
+
+  // Use baseUrl from config if provided, otherwise use from manifest
+  const baseUrl = providerConfig.baseUrl ?? providerManifest.baseUrl;
+
+  if (sdkType === 'anthropic') {
     return new AnthropicProvider(
       providerConfig.apiKey,
       providerConfig.timeout,
       providerConfig.maxRetries,
-      providerConfig.baseUrl
+      baseUrl
     );
-  } else if (providerType === 'openai') {
+  } else if (sdkType === 'openai') {
+    // OpenAI SDK is used for: OpenAI, Kimi, and other OpenAI-compatible APIs
     return new OpenAIProvider(
       providerConfig.apiKey,
       providerConfig.timeout,
       providerConfig.maxRetries,
-      providerConfig.baseUrl
+      baseUrl
     );
   } else {
-    throw new Error(`Unknown provider type: ${String(providerType)}`);
+    // TypeScript exhaustiveness check
+    const unsupportedSdk: never = sdkType;
+    throw new Error(`Unsupported SDK type: ${String(unsupportedSdk)}. Only 'anthropic' and 'openai' SDKs are supported.`);
   }
 }

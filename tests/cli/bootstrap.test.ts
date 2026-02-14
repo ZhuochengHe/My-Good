@@ -160,10 +160,10 @@ describe('bootstrap', () => {
     });
 
     it('should throw on config validation failure', async () => {
-      const invalidConfig = 'agent:\n  maxTurns: -1\n';
+      const invalidConfig = 'agent:\n  id: test\n  name: Test Agent\n  model: invalid-model\n  provider: nonexistent-provider\nproviders:\n  nonexistent-provider:\n    apiKey: test123\n';
       writeFileSync(configPath, invalidConfig, 'utf-8');
 
-      await expect(bootstrap({ configPath })).rejects.toThrow();
+      await expect(bootstrap({ configPath })).rejects.toThrow('Unknown provider: nonexistent-provider');
     });
 
     it('should handle missing plugin directories gracefully', async () => {
