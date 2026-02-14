@@ -212,6 +212,8 @@ function createProvider(config: AppConfig): ModelProvider {
       baseUrl
     );
   } else {
-    throw new Error(`Unsupported SDK type: ${sdkType}. Only 'anthropic' and 'openai' SDKs are supported.`);
+    // TypeScript exhaustiveness check
+    const unsupportedSdk: never = sdkType;
+    throw new Error(`Unsupported SDK type: ${String(unsupportedSdk)}. Only 'anthropic' and 'openai' SDKs are supported.`);
   }
 }
