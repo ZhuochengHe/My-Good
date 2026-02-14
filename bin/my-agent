@@ -24,8 +24,16 @@ if (!existsSync(cliPath)) {
   process.exit(1);
 }
 
-// Import and run the CLI
-import(cliPath).catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+// Import and run the CLI with arguments
+import(cliPath)
+  .then((module) => {
+    if (module.main) {
+      return module.main(process.argv);
+    } else {
+      throw new Error('CLI module does not export main function');
+    }
+  })
+  .catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
