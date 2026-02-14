@@ -21,7 +21,7 @@ export interface UpdateModelsOptions {
  * @param options - Update models options
  * @throws {Error} If update fails
  */
-export async function updateModels(options: UpdateModelsOptions): Promise<void> {
+export function updateModels(options: UpdateModelsOptions): void {
   const { output } = options;
 
   output.write('Updating model list from providers...');
@@ -39,7 +39,7 @@ export async function updateModels(options: UpdateModelsOptions): Promise<void> 
 
       try {
         // Get updated models for this provider
-        const models = await fetchModelsForProvider(providerId, output);
+        const models = fetchModelsForProvider(providerId, output);
 
         if (models.length > 0) {
           updatedProviders[providerId] = {
@@ -82,10 +82,10 @@ export async function updateModels(options: UpdateModelsOptions): Promise<void> 
  * @param output - Output adapter
  * @returns Array of models
  */
-async function fetchModelsForProvider(
+function fetchModelsForProvider(
   providerId: string,
   output: OutputAdapter
-): Promise<Array<{ id: string; name: string; contextWindow: number; supportsStreaming: boolean; supportsTools: boolean }>> {
+): Array<{ id: string; name: string; contextWindow: number; supportsStreaming: boolean; supportsTools: boolean }> {
   // For now, return hardcoded models for known providers
   // In the future, this could fetch from provider APIs
   switch (providerId) {

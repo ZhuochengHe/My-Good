@@ -533,10 +533,10 @@ export class ExecutionLoop implements Agent {
    *
    * Retrieves session by ID from session store.
    */
-  async getSession(_sessionId: string): Promise<Session | null> {
+  getSession(_sessionId: string): Promise<Session | null> {
     // Session retrieval would come from session manager
     // For now, return null
-    return null;
+    return Promise.resolve(null);
   }
 
   /**

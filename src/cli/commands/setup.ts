@@ -50,8 +50,8 @@ async function configExists(configPath: string): Promise<boolean> {
 /**
  * Load and validate registry.
  */
-async function getAvailableProviders(): Promise<ProviderManifest[]> {
-  const registry = await loadRegistry();
+function getAvailableProviders(): ProviderManifest[] {
+  const registry = loadRegistry();
   return Object.values(registry.providers);
 }
 
@@ -68,6 +68,7 @@ async function selectProvider(
     output.write(`  ${i + 1}. ${p.name}`);
   });
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     const input = await prompt('\nSelect provider (number) or "q" to quit: ');
 
@@ -189,6 +190,7 @@ async function selectModel(
     output.write(`     Context: ${(m.contextWindow / 1000).toFixed(0)}K, Max tokens: ${m.maxOutputTokens || 'unknown'}`);
   });
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     const input = await prompt('\nSelect model (number) or "back" to choose different provider: ');
 
@@ -298,7 +300,7 @@ export async function runSetup(options: SetupCommandOptions): Promise<SetupResul
   // Get available providers
   let providers: ProviderManifest[];
   try {
-    providers = await getAvailableProviders();
+    providers = getAvailableProviders();
   } catch (error) {
     return {
       success: false,
@@ -357,9 +359,14 @@ export async function runSetup(options: SetupCommandOptions): Promise<SetupResul
     }
   }
 
+  // At this point, all values are guaranteed to be non-null due to the while loop condition
+  if (!selectedProvider || !apiKey || !selectedModel) {
+    return { success: false, message: 'Setup incomplete.' };
+  }
+
   // Save configuration
   try {
-    await saveConfig(configPath, selectedProvider!, apiKey!, selectedModel!);
+    await saveConfig(configPath, selectedProvider, apiKey, selectedModel);
   } catch (error) {
     return {
       success: false,
@@ -369,6 +376,6 @@ export async function runSetup(options: SetupCommandOptions): Promise<SetupResul
 
   return {
     success: true,
-    message: `Configuration saved to ${configPath}\n\nRun 'my-agent chat' to start chatting with ${selectedModel!.name}.`,
+    message: `Configuration saved to ${configPath}\n\nRun 'my-agent chat' to start chatting with ${selectedModel.name}.`,
   };
 }

@@ -225,7 +225,8 @@ export function validateSettingValue(
       break;
 
     default:
-      errors.push(`Unknown setting key: ${key}`);
+      // TypeScript exhaustiveness check - this should never happen
+      errors.push('Unknown setting key');
   }
 
   return { valid: errors.length === 0, errors };

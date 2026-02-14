@@ -74,7 +74,7 @@ export async function settingsGet(
 
   try {
     const settings = await loadSettings(settingsPath);
-    const value = getSettingValue(settings, key as SettingsKey);
+    const value = getSettingValue(settings, key);
 
     if (value === undefined) {
       output.writeError(`Setting ${key} not found`);
@@ -118,14 +118,14 @@ export async function settingsSet(
   }
 
   // Parse value based on key type
-  const parsedValue = parseSettingValue(key as SettingsKey, value);
+  const parsedValue = parseSettingValue(key, value);
   if (parsedValue === undefined) {
     output.writeError(`Invalid value for ${key}: ${value}`);
     return;
   }
 
   // Validate value
-  const validation = validateSettingValue(key as SettingsKey, parsedValue);
+  const validation = validateSettingValue(key, parsedValue);
   if (!validation.valid) {
     output.writeError(`Invalid value for ${key}:`);
     for (const error of validation.errors) {
@@ -136,7 +136,7 @@ export async function settingsSet(
 
   try {
     const settings = await loadSettings(settingsPath);
-    const newSettings = setSettingValue(settings, key as SettingsKey, parsedValue);
+    const newSettings = setSettingValue(settings, key, parsedValue);
     await saveSettings(newSettings, settingsPath);
 
     output.writeSuccess(`${key} set to ${formatValue(parsedValue)}`);

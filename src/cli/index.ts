@@ -208,13 +208,13 @@ export async function main(argv: string[]): Promise<void> {
   modelCmd
     .command('update')
     .description('Update the list of available models from providers')
-    .action(async () => {
+    .action(() => {
       const opts = program.opts();
       const configPath = opts['config'];
       const output = new PlainTextOutput();
 
       try {
-        await updateModels({ configPath, output });
+        updateModels({ configPath, output });
         output.writeSuccess('Model list updated successfully');
       } catch (error) {
         output.writeError(`Failed to update models: ${error instanceof Error ? error.message : String(error)}`);
