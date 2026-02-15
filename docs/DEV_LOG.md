@@ -1,6 +1,156 @@
 # Development Log
 
 
+## 2026-02-15 - CLI Improvements: Interactive Setup & Dynamic Model Fetching
+
+**Branch:** `cli-interactive-improvements`
+**PR:** #18
+**Status:** Complete ✅
+
+### What Was Built
+
+Implemented user-friendly CLI with interactive setup and dynamic model management:
+
+**New Files Created:**
+- `bin/my-agent` - Wrapper script for easier CLI access
+- `src/cli/commands/setup.ts` - Interactive setup flow (provider → API key → model)
+- `src/cli/commands/settings.ts` - Settings management (show/get/set/reset)
+- `src/cli/commands/model.ts` - Model update command
+- `src/cli/password-input.ts` - Password input with hiding (shows `***`)
+- `src/types/settings.ts` - Settings type definitions
+- `src/config/settings-loader.ts` - Settings file operations
+
+**Configuration Architecture:**
+- Separated settings from config:
+  - `config.yaml` - Credentials and model selection (created by setup)
+  - `settings.yaml` - Behavior configuration (temperature, maxTurns, etc.)
+- Dynamic provider system using `providers.json` registry
+- SDK-based architecture (providers share SDKs: Anthropic, OpenAI)
+
+**Dynamic Model Fetching:**
+- Models fetched from provider APIs during setup (not hardcoded)
+- OpenAI-compatible APIs: Uses `client.models.list()` to get available models
+- Anthropic: Uses registry models (no API listing available)
+- Users only see models they actually have access to
+- Fixes 404 "model not found" errors
+
+**Interactive Setup Flow:**
+1. Select provider (Anthropic, Kimi, OpenAI)
+2. Enter API key (input hidden with asterisks)
+3. API key validated by fetching available models
+4. Select from dynamically fetched models
+5. Config saved with provider baseUrl
+
+**Password Input Security:**
+- TTY mode: Raw mode with hidden input (shows `***`)
+- Non-TTY mode: Falls back to visible input (with warning)
+- Proper cleanup on Ctrl+C
+
+### Architecture Changes
+
+**Provider System Enhancement:**
+- `createProvider()` now reads SDK type from provider registry
+- Support for any provider using 'anthropic' or 'openai' SDK
+- Kimi provider works using OpenAI SDK with custom baseUrl
+- New providers can be added by updating `providers.json` only
+
+**ExecutionLoop Update:**
+- Now takes separate `AgentSettings` parameter
+- Settings decoupled from config for better separation of concerns
+
+**Bootstrap Enhancement:**
+- Dynamic SDK selection based on provider manifest
+- BaseUrl priority: config override → manifest default
+
+### CLI Commands Added
+
+```bash
+# Interactive setup
+./bin/my-agent setup
+
+# Settings management
+./bin/my-agent settings show
+./bin/my-agent settings get model.temperature
+./bin/my-agent settings set behavior.maxTurns 30
+./bin/my-agent settings reset
+
+# Model management
+./bin/my-agent model update
+
+# Wrapper script works from anywhere
+./bin/my-agent --help
+```
+
+### Test Results
+
+- **Total Tests:** 1061 passing
+- **Coverage:** Maintained ≥80% requirement
+- **All Checks:** ✅ Lint, ✅ Build, ✅ Tests
+
+### Implementation Approach
+
+- **TDD First:** Tests written before implementation
+- **User Experience Focus:** Interactive flows guide users through setup
+- **Security:** API keys hidden during input
+- **Dynamic Data:** Models fetched from APIs, not hardcoded
+- **Extensibility:** New providers via JSON, no code changes needed
+
+### Key Learnings
+
+1. **Wrapper Scripts:** Need to explicitly call `main(process.argv)`, not just import
+2. **Password Input:** TTY mode required for hiding input; needs fallback for non-TTY
+3. **Dynamic Models:** Fetching from API solves availability/permission issues
+4. **Type Safety:** TypeScript exhaustiveness checks (`never` type) caught SDK type issues
+5. **Separation of Concerns:** Config (credentials) vs Settings (behavior) improves UX
+6. **Registry Pattern:** SDK-based provider system enables extensibility without code changes
+
+### Fixes Applied
+
+**Issue 1: Password Input Not Hiding**
+- Added TTY mode check
+- Raw mode for hidden input with `***` display
+- Graceful fallback for non-TTY environments
+
+**Issue 2: Model Not Found Errors**
+- Replaced hardcoded model lists with dynamic API fetching
+- OpenAI SDK: `client.models.list()` during setup
+- Users see only models they have access to
+- Falls back to registry models if API call fails
+
+**Issue 3: Wrapper Script Not Working**
+- Fixed to call `module.main(process.argv)` after import
+- Added error handling for missing build
+
+**Issue 4: Kimi Provider Support**
+- Dynamic SDK selection based on provider manifest
+- Kimi uses OpenAI SDK with custom baseUrl
+- BaseUrl saved during setup
+
+### Files Modified
+
+**Core:**
+- `src/cli/bootstrap.ts` - Dynamic provider creation
+- `src/agent/execution-loop.ts` - Separate settings parameter
+- `src/config/defaults.ts` - Placeholder config structure
+
+**Types:**
+- `src/types/agent.ts` - AgentConfig simplified
+- `src/types/providers.ts` - Removed defaultModel
+- `src/types/config.ts` - Updated AppConfig
+
+**Tests:**
+- Fixed 23 failing tests after architecture changes
+- Updated config validation tests for new schema
+- All integration tests passing
+
+### Documentation Updated
+
+- `README.md` - Added CLI commands section, configuration examples
+- `docs/LLM_CONTEXT.md` - Updated architecture decisions, CLI usage
+- Both docs explain dynamic model fetching and provider registry
+
+---
+
 ## 2026-02-11 - Stage 7: Event Persistence (Always-On)
 
 **Branch:** `feature/provider-registry`
