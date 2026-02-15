@@ -25,14 +25,17 @@ All architecture decisions finalized. Core agent execution loop, multi-provider 
 # Install dependencies
 npm install
 
-# Configure (create config file)
-my-agent config init
+# Build the project
+npm run build
+
+# Run interactive setup (configure provider and API key)
+./bin/my-agent setup
 
 # Start interactive chat
-my-agent chat
+./bin/my-agent chat
 
-# Single-turn execution
-my-agent run "Read the file package.json"
+# Or use the npm package bin (after npm link or global install)
+my-agent chat
 ```
 
 ## Documentation
@@ -151,50 +154,184 @@ console.log(metadata?.tags);        // AI-generated + manual tags
 console.log(metadata?.usage);       // Token/turn/tool usage
 ```
 
-## Configuration
+## CLI Commands
 
-Located at `~/.my-agent/config.yaml`:
+The agent provides an intuitive command-line interface:
 
-```yaml
-agent:
-  model: claude-sonnet-4-20250514  # or moonshot-v1-32k, gpt-4-turbo, etc.
-  provider: anthropic              # or kimi, openai
-  maxTurns: 20
-
-providers:
-  anthropic:
-    apiKey: ${ANTHROPIC_API_KEY}
-    baseUrl: https://api.anthropic.com  # optional override
-
-  kimi:
-    apiKey: ${KIMI_API_KEY}
-    baseUrl: https://api.moonshot.ai/v1  # optional override
-
-  openai:
-    apiKey: ${OPENAI_API_KEY}
-    baseUrl: https://api.openai.com/v1   # optional override
-
-plugins:
-  directories: [~/.my-agent/plugins, ./plugins]
-  enabled: ['*']
+### Setup
+```bash
+# Interactive setup - configure provider, API key, and model
+./bin/my-agent setup
+# - Select provider (Anthropic, Kimi, OpenAI)
+# - Enter API key (input is hidden with ***)
+# - API key is validated by fetching available models
+# - Select from dynamically fetched models
 ```
 
-### Provider Registry System
+### Chat
+```bash
+# Interactive chat session
+./bin/my-agent chat
 
-The agent uses a provider registry (`providers.json`) to define supported LLM providers. This makes it easy to add new providers without code changes:
+# Single message
+./bin/my-agent chat -m "What is 2+2?"
 
-**Key Concepts:**
-- **SDKs**: Two types - Anthropic SDK and OpenAI SDK (compatible APIs)
-- **Providers**: Multiple providers can share the same SDK (e.g., Kimi uses OpenAI SDK)
-- **Registry**: Central manifest defining provider metadata, models, and API endpoints
+# Resume existing session
+./bin/my-agent chat -s <session-id>
+```
+
+### Settings Management
+```bash
+# View all settings
+./bin/my-agent settings show
+
+# Get specific setting
+./bin/my-agent settings get model.temperature
+
+# Update setting
+./bin/my-agent settings set model.temperature 0.8
+./bin/my-agent settings set behavior.maxTurns 30
+
+# Reset to defaults
+./bin/my-agent settings reset
+```
+
+### Model Management
+```bash
+# Update available models from provider APIs
+./bin/my-agent model update
+```
+
+### Session Management
+```bash
+# List all sessions
+./bin/my-agent session list
+
+# Filter sessions
+./bin/my-agent session list -t debugging
+./bin/my-agent session list -q "API error"
+
+# View session details
+./bin/my-agent session show <session-id>
+
+# Delete session
+./bin/my-agent session delete <session-id>
+```
+
+### Plugin Management
+```bash
+# List loaded plugins
+./bin/my-agent plugin list
+
+# View plugin details
+./bin/my-agent plugin info file-ops
+```
+
+### Configuration
+```bash
+# View current configuration
+./bin/my-agent config show
+
+# Initialize default config
+./bin/my-agent config init
+```
+
+## Configuration Files
+
+### `~/.my-agent/config.yaml` - Credentials and Model Selection
+```yaml
+agent:
+  id: default
+  name: My Agent
+  model: moonshot-v1-32k      # Selected during setup
+  provider: kimi              # Selected during setup
+
+providers:
+  kimi:
+    apiKey: sk-xxx...         # Entered during setup
+    baseUrl: https://api.moonshot.ai/v1  # Auto-configured
+
+plugins:
+  directories: [./plugins]
+  enabled: []
+  disabled: []
+
+session:
+  storePath: ./.sessions
+  maxMessages: 100
+  idleTimeoutMinutes: 30
+
+logging:
+  level: info
+  format: pretty
+```
+
+### `~/.my-agent/settings.yaml` - Behavior Settings
+```yaml
+model:
+  temperature: 0.7
+  topP: 1
+  maxTokens: 4096
+
+behavior:
+  responseStyle: balanced     # concise | detailed | balanced
+  enableToolUse: true
+  enableStreaming: true
+  maxTurns: 25
+  systemPrompt: "You are a helpful AI assistant."
+
+tools:
+  allow: []                   # Whitelist specific tools
+  deny: []                    # Blacklist specific tools
+  requireApproval: []         # Require approval for specific tools
+```
+
+## Provider Registry System
+
+The agent uses a dynamic provider registry system (`providers.json`) that enables adding new LLM providers without code changes:
+
+### Key Features
+
+**Dynamic Model Fetching:**
+- Models are fetched directly from provider APIs during setup (not hardcoded)
+- For OpenAI-compatible APIs: Uses `client.models.list()` to get available models
+- For Anthropic: Uses registry models (no API listing available)
+- Users only see models they actually have access to
+
+**SDK-Based Architecture:**
+- Two SDK types: `anthropic` and `openai`
+- Multiple providers can share the same SDK (e.g., Kimi uses OpenAI SDK)
+- New providers are added by updating `providers.json` with SDK type and baseUrl
 
 **Supported Providers:**
-- `anthropic` - Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku
-- `kimi` - Moonshot AI models (v1-8k, v1-32k, v1-128k, K2.5 Preview, K2 Instruct)
-- `openai` - GPT-4 Turbo, GPT-4, GPT-3.5 Turbo
+- `anthropic` - Claude models (Sonnet 4, 3.5 Sonnet, Opus, Haiku)
+- `kimi` - Moonshot AI models (dynamically fetched from API)
+- `openai` - GPT models (dynamically fetched from API)
 
-**Backward Compatibility:**
-Old configs with redundant `type` field are automatically migrated in-memory. No breaking changes.
+### Adding a New Provider
+
+To add a new OpenAI-compatible provider, simply update `providers.json`:
+
+```json
+{
+  "providers": {
+    "your-provider": {
+      "id": "your-provider",
+      "name": "Your Provider",
+      "sdk": "openai",
+      "baseUrl": "https://api.yourprovider.com/v1",
+      "models": [],
+      "healthCheckModel": "default-model",
+      "envVars": ["YOUR_PROVIDER_API_KEY"]
+    }
+  }
+}
+```
+
+No code changes needed! The CLI will automatically:
+- Show the provider in setup
+- Fetch available models from the API
+- Create the correct provider instance based on SDK type
 
 ## Development
 
