@@ -7,7 +7,7 @@
 **Name:** Custom Agent Execution Loop
 **Language:** TypeScript (strict, ESM)
 **Runtime:** Node.js ≥18.0.0
-**Status:** Stage 7 complete (Event Persistence), Stage 8 next (Polish & Documentation)
+**Status:** Stage 7 complete (Event Persistence), CLI improvements complete, Stage 8 next (Polish & Documentation)
 
 ## What We're Building
 
@@ -24,11 +24,13 @@ A CLI-based AI agent that:
 |--------|----------|
 | Agent Loop | Custom (not Pi Agent/LangGraph) |
 | Providers | Anthropic + OpenAI + Kimi (extensible via registry) |
-| Provider Registry | JSON manifest (providers.json) |
+| Provider Registry | JSON manifest (providers.json) with dynamic model fetching |
 | SDKs | Two types - Anthropic SDK, OpenAI SDK |
+| Model Selection | Dynamic - fetched from provider APIs at setup |
 | Plugins | Manifest-based (plugin.json) |
 | Sessions | JSONL files |
-| Config | YAML + Zod validation |
+| Config | YAML + Zod validation, separate settings.yaml |
+| CLI | Interactive setup, settings management, wrapper script |
 | Interface | CLI only (no web for MVP) |
 
 ## Core Components
@@ -126,25 +128,39 @@ interface SessionStoreWithTrace extends SessionStore {
 my-agent chat                    # Interactive mode
 my-agent run "read package.json" # Single turn
 
+# Interactive setup (configure provider, API key, model)
+./bin/my-agent setup              # Password input hidden, fetches available models
+
+# Settings management
+./bin/my-agent settings show      # View all settings
+./bin/my-agent settings get model.temperature
+./bin/my-agent settings set behavior.maxTurns 30
+./bin/my-agent settings reset     # Reset to defaults
+
+# Model management
+./bin/my-agent model update       # Update available models from APIs
+
 # Manage plugins
-my-agent plugins list
-my-agent plugins info file-ops
+./bin/my-agent plugins list
+./bin/my-agent plugins info file-ops
 
 # Manage sessions
-my-agent session list
-my-agent session show <id>       # View session details
-my-agent session show <id> --trace  # View with turn metrics and errors
-my-agent session delete <id>
+./bin/my-agent session list
+./bin/my-agent session show <id>       # View session details
+./bin/my-agent session show <id> --trace  # View with turn metrics and errors
+./bin/my-agent session delete <id>
 ```
 
 ## File Locations
 
 | Item | Path |
 |------|------|
-| Config | `~/.my-agent/config.yaml` |
+| Config | `~/.my-agent/config.yaml` (credentials, model selection) |
+| Settings | `~/.my-agent/settings.yaml` (behavior configuration) |
 | Sessions | `~/.my-agent/sessions/` |
 | User plugins | `~/.my-agent/plugins/` |
 | Logs | `~/.my-agent/logs/` |
+| Wrapper script | `bin/my-agent` |
 
 ## When Implementing
 
