@@ -64,8 +64,16 @@ export class ExecutionLoop implements Agent {
   private readonly settings: AgentSettings;
   private readonly provider: ModelProvider;
   private readonly contextBuilder: ContextBuilder;
+  private readonly toolDefinitions: readonly ToolDefinition[];
+  private readonly workingDirectory: string;
 
-  constructor(config: AgentConfig, settings: AgentSettings, provider: ModelProvider) {
+  constructor(
+    config: AgentConfig,
+    settings: AgentSettings,
+    provider: ModelProvider,
+    toolDefinitions?: readonly ToolDefinition[],
+    workingDirectory?: string
+  ) {
     this.config = config;
     this.settings = settings;
     this.provider = provider;
@@ -159,8 +167,9 @@ export class ExecutionLoop implements Agent {
         const request = this.contextBuilder.buildRequest({
           model: this.config.model,
           messages,
-          systemPrompt: this.settings.behavior.systemPrompt,
+          systemPrompt,
           maxTokens: this.settings.model.maxTokens,
+          ...(this.toolDefinitions.length > 0 && { tools: this.toolDefinitions }),
         });
 
         // Call provider
@@ -418,8 +427,9 @@ export class ExecutionLoop implements Agent {
         const request = this.contextBuilder.buildRequest({
           model: this.config.model,
           messages,
-          systemPrompt: this.settings.behavior.systemPrompt,
+          systemPrompt,
           maxTokens: this.settings.model.maxTokens,
+          ...(this.toolDefinitions.length > 0 && { tools: this.toolDefinitions }),
         });
 
         // Stream provider response
@@ -527,9 +537,7 @@ export class ExecutionLoop implements Agent {
    * Returns list of tools the agent can use.
    */
   getTools(): readonly ToolDefinition[] {
-    // Tool definitions would come from plugin manager
-    // For now, return empty array
-    return [];
+    return this.toolDefinitions;
   }
 
   /**
