@@ -634,7 +634,7 @@ describe('ToolExecutor', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('TIMEOUT');
       expect(result.error?.message).toContain('timed out');
-      expect(result.durationMs).toBeGreaterThanOrEqual(100);
+      expect(result.durationMs).toBeGreaterThanOrEqual(95); // 5ms tolerance for Node 18 timer precision
     });
 
     it('succeeds when handler completes within timeout', async () => {
