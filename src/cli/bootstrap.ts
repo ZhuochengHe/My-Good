@@ -4,14 +4,18 @@
  */
 
 import { mkdir, access, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve, isAbsolute } from 'node:path';
 import { stringify } from 'yaml';
 import { loadConfig } from '../config/loader.js';
+import { loadSettings } from '../config/settings-loader.js';
 import { getDefaultConfig } from '../config/defaults.js';
 import type { AppConfig } from '../types/config.js';
 import { JsonlSessionStore } from '../session/jsonl-store.js';
 import { SessionManager } from '../session/session-manager.js';
 import { PluginManager } from '../plugins/manager.js';
+import { ToolExecutor } from '../plugins/tool-executor.js';
+import { ExecutionLoop } from '../agent/execution-loop.js';
+import { createToolCallBridge } from '../agent/tool-call-bridge.js';
 import { AnthropicProvider } from '../providers/anthropic.js';
 import { OpenAIProvider } from '../providers/openai.js';
 import type { ModelProvider } from '../types/providers.js';
@@ -63,37 +67,86 @@ export async function bootstrap(
   // Step 1: Auto-create config if it doesn't exist
   await ensureConfigExists(options.configPath);
 
+  // Capture working directory at bootstrap time (before any chdir)
+  const workingDirectory = process.cwd();
+
   // Step 2: Load configuration
   const config = await loadConfig(options.configPath);
 
-  // Step 3: Check for API keys in environment
+  // Step 3: Load agent settings
+  const settings = await loadSettings();
+
+  // Step 4: Check for API keys in environment
   checkApiKeys(warnings);
 
-  // Step 4: Initialize session store and create directory
-  const sessionStore = new JsonlSessionStore(config.session.storePath);
-  await ensureDirectoryExists(config.session.storePath);
+  // Resolve relative paths against config file directory
+  const configDir = dirname(resolve(options.configPath));
+  const resolvePath = (p: string): string => (isAbsolute(p) ? p : resolve(configDir, p));
 
-  // Step 5: Initialize provider based on config
+  // Step 5: Initialize session store and create directory
+  const sessionStorePath = resolvePath(config.session.storePath);
+  const sessionStore = new JsonlSessionStore(sessionStorePath);
+  await ensureDirectoryExists(sessionStorePath);
+
+  // Step 6: Initialize provider based on config
   const provider = createProvider(config);
-
-  // Step 6: Initialize session manager
-  const sessionManager = new SessionManager(sessionStore, provider, {
-    model: config.agent.model,
-    agentId: config.agent.id,
-  });
 
   // Step 7: Initialize plugin manager and load plugins
   const pluginManager = new PluginManager();
   for (const directory of config.plugins.directories) {
+    const resolvedDir = resolvePath(directory);
     try {
-      await pluginManager.loadFromDirectory(directory);
+      await pluginManager.loadFromDirectory(resolvedDir);
     } catch (error) {
       // Gracefully handle missing plugin directories
-      warnings.push(`Failed to load plugins from ${directory}`);
+      warnings.push(`Failed to load plugins from ${resolvedDir}`);
     }
   }
 
-  // Step 8: Create output adapter
+  // Step 8: Create ToolExecutor and register plugin tools
+  const toolExecutor = new ToolExecutor();
+  const toolDefinitions = pluginManager.getToolDefinitions();
+
+  for (const toolDef of toolDefinitions) {
+    const handler = pluginManager.getToolHandler(toolDef.name);
+    if (handler) {
+      toolExecutor.registerTool(toolDef, handler);
+    }
+  }
+
+  // Step 10: Create ExecutionLoop with tools and working directory
+  const executionLoop = new ExecutionLoop(
+    {
+      id: config.agent.id,
+      name: config.agent.name,
+      model: config.agent.model,
+      provider: config.agent.provider,
+    },
+    settings,
+    provider,
+    toolDefinitions,
+    workingDirectory
+  );
+
+  // Step 11: Create tool call bridge
+  const toolCallBridge = createToolCallBridge((call, context) =>
+    toolExecutor.executeTool(call, context)
+  );
+
+  // Step 12: Initialize session manager with ExecutionLoop and tool bridge
+  const sessionManager = new SessionManager(
+    sessionStore,
+    provider,
+    {
+      model: config.agent.model,
+      agentId: config.agent.id,
+    },
+    undefined, // groupStore
+    executionLoop,
+    toolCallBridge
+  );
+
+  // Step 13: Create output adapter
   const output = new PlainTextOutput();
 
   return {

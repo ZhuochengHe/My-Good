@@ -21,6 +21,8 @@ import type {
   TurnEndEvent,
   ErrorEvent,
 } from '../types/events.js';
+import type { Agent } from '../types/agent.js';
+import type { OnToolCallCallback } from '../agent/execution-loop.js';
 import { SessionNotFoundError } from '../errors/session.js';
 import { randomUUID } from 'crypto';
 import { JsonlSessionStore } from './jsonl-store.js';
@@ -115,6 +117,8 @@ export class SessionManager implements EventSubscriber {
   private readonly provider: ModelProvider;
   private readonly config: SessionManagerConfig;
   private readonly groupStore: SessionGroupStore | null;
+  private readonly executionLoop: Agent | null;
+  private readonly onToolCall: OnToolCallCallback | null;
 
   // Event tracking state
   private currentSessionId: string | null = null;
@@ -128,17 +132,23 @@ export class SessionManager implements EventSubscriber {
    * @param provider - Model provider for completions
    * @param config - Configuration options
    * @param groupStore - Optional group store for session organization
+   * @param executionLoop - Optional execution loop for tool-enabled execution
+   * @param onToolCall - Optional tool call handler
    */
   constructor(
     store: SessionStore,
     provider: ModelProvider,
     config: SessionManagerConfig,
-    groupStore?: SessionGroupStore
+    groupStore?: SessionGroupStore,
+    executionLoop?: Agent,
+    onToolCall?: OnToolCallCallback
   ) {
     this.store = store;
     this.provider = provider;
     this.config = config;
     this.groupStore = groupStore ?? null;
+    this.executionLoop = executionLoop ?? null;
+    this.onToolCall = onToolCall ?? null;
   }
 
   /**
@@ -214,6 +224,9 @@ export class SessionManager implements EventSubscriber {
   /**
    * Run the agent with user input.
    *
+   * If an ExecutionLoop was provided in the constructor, delegates to it.
+   * Otherwise, uses the legacy direct provider path.
+   *
    * Executes the agent, saves the session, and updates metadata.
    * Generates description after first input (regenerates after second if first was short).
    * Generates tags after second turn.
@@ -229,6 +242,12 @@ export class SessionManager implements EventSubscriber {
     input: string,
     options?: RunOptions
   ): Promise<RunResult> {
+    // Dual-path: use ExecutionLoop if available, otherwise legacy path
+    if (this.executionLoop) {
+      return this.runWithExecutionLoop(sessionId, input, options);
+    }
+
+    // Legacy path
     const session = await this.resumeSession(sessionId);
 
     // Create user message
@@ -344,6 +363,129 @@ export class SessionManager implements EventSubscriber {
     }
   }
 
+  /**
+   * Run with ExecutionLoop (new path).
+   *
+   * Uses the ExecutionLoop for full agent capabilities including tool execution.
+   * Integrates with event tracking for trace data persistence.
+   *
+   * @param sessionId - Session ID to run
+   * @param input - User input message
+   * @param options - Run options
+   * @returns Run result with response
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  private async runWithExecutionLoop(
+    sessionId: string,
+    input: string,
+    _options?: RunOptions
+  ): Promise<RunResult> {
+    if (!this.executionLoop) {
+      throw new Error('ExecutionLoop not configured');
+    }
+
+    const session = await this.resumeSession(sessionId);
+
+    try {
+      // Set current session for event tracking
+      this.setCurrentSessionId(sessionId);
+
+      // Run execution loop with event tracking
+      const result = await this.executionLoop.run(input, {
+        sessionId,
+        onEvent: (event) => {
+          void this.onEvent(event);
+        },
+        ...(this.onToolCall && { onToolCall: this.onToolCall }),
+      });
+
+      // Extract final assistant message
+      const lastAssistantMessage = result.messages
+        .filter((m) => m.role === 'assistant')
+        .pop();
+
+      const response = lastAssistantMessage?.content ?? '';
+
+      // Update session with all messages
+      for (const message of result.messages) {
+        if (message.role === 'user' || message.role === 'assistant' || message.role === 'tool') {
+          await this.store.appendMessage(sessionId, message);
+        }
+      }
+
+      // Update metadata
+      const toolCallCount = result.toolCalls.length;
+      const turnCount = session.metadata.turnCount;
+
+      let updatedMetadata: SessionMetadata = {
+        ...session.metadata,
+        totalTokens: session.metadata.totalTokens + result.usage.totalTokens,
+        toolCallCount: session.metadata.toolCallCount + toolCallCount,
+        turnCount: session.metadata.turnCount + result.turns,
+      };
+
+      // Generate description after first turn
+      if (turnCount === 0) {
+        try {
+          const description = await this.generateDescription([input]);
+          updatedMetadata = {
+            ...updatedMetadata,
+            description,
+          };
+        } catch (error) {
+          // Continue with empty description
+        }
+      }
+
+      // Regenerate description and generate tags after second turn
+      if (turnCount === 1) {
+        try {
+          const firstUserMsg = session.messages.find((m) => m.role === 'user');
+          if (firstUserMsg && firstUserMsg.role === 'user' && firstUserMsg.content.length <= 500) {
+            const description = await this.generateDescription([firstUserMsg.content, input]);
+            const tags = await this.generateTags(description);
+            updatedMetadata = {
+              ...updatedMetadata,
+              description,
+              tags,
+            };
+          } else {
+            const tags = await this.generateTags(updatedMetadata.description);
+            updatedMetadata = {
+              ...updatedMetadata,
+              tags,
+            };
+          }
+        } catch (error) {
+          // Continue with existing values
+        }
+      }
+
+      // Load latest session and save with updated metadata
+      const latestSession = await this.resumeSession(sessionId);
+      const updatedSession: Session = {
+        ...latestSession,
+        updatedAt: Date.now(),
+        metadata: updatedMetadata,
+      };
+      await this.store.save(updatedSession);
+
+      return {
+        success: true,
+        response,
+        tokenUsage: result.usage,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        response: '',
+        error: (error as Error).message,
+      };
+    } finally {
+      // Clear current session
+      this.setCurrentSessionId(null);
+    }
+  }
 
   /**
    * Generate a session description.

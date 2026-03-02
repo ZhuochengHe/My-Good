@@ -22,6 +22,7 @@ logs/
 .env.local
 .env.*.local
 .env.production.local
+.sessions/
 
 # IDE & Editor
 .vscode/
