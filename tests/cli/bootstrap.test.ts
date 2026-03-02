@@ -57,33 +57,66 @@ describe('bootstrap', () => {
   });
 
   describe('environment variable validation', () => {
-    it('should detect missing ANTHROPIC_API_KEY', async () => {
-      // Save original env var
+    it('should detect missing ANTHROPIC_API_KEY when anthropic is configured', async () => {
       const originalKey = process.env.ANTHROPIC_API_KEY;
       delete process.env.ANTHROPIC_API_KEY;
 
       try {
+        // Default config uses anthropic provider
         const result = await bootstrap({ configPath });
 
         expect(result.warnings).toContain(
           'ANTHROPIC_API_KEY not found in environment'
         );
       } finally {
-        // Restore original env var
         if (originalKey) {
           process.env.ANTHROPIC_API_KEY = originalKey;
         }
       }
     });
 
-    it('should detect missing OPENAI_API_KEY', async () => {
+    it('should detect missing OPENAI_API_KEY when openai is configured', async () => {
       const originalKey = process.env.OPENAI_API_KEY;
       delete process.env.OPENAI_API_KEY;
+
+      const openaiConfig = `
+agent:
+  name: Test
+  provider: openai
+  model: gpt-4
+providers:
+  openai:
+    apiKey: YOUR_OPENAI_API_KEY_HERE
+`;
+      writeFileSync(configPath, openaiConfig, 'utf-8');
 
       try {
         const result = await bootstrap({ configPath });
 
         expect(result.warnings).toContain(
+          'OPENAI_API_KEY not found in environment'
+        );
+        // Should NOT warn about anthropic when using openai
+        expect(result.warnings).not.toContain(
+          'ANTHROPIC_API_KEY not found in environment'
+        );
+      } finally {
+        if (originalKey) {
+          process.env.OPENAI_API_KEY = originalKey;
+        }
+      }
+    });
+
+    it('should not warn about unrelated provider keys', async () => {
+      // Default config uses anthropic - should not warn about OPENAI_API_KEY even if missing
+      const originalKey = process.env.OPENAI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+
+      try {
+        const result = await bootstrap({ configPath });
+
+        expect(result.warnings).not.toContain(
           'OPENAI_API_KEY not found in environment'
         );
       } finally {
@@ -93,14 +126,12 @@ describe('bootstrap', () => {
       }
     });
 
-    it('should not warn if API keys are present', async () => {
+    it('should not warn if configured provider key is present', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
-      process.env.OPENAI_API_KEY = 'test-key';
 
       const result = await bootstrap({ configPath });
 
-      expect(result.warnings).not.toContain('ANTHROPIC_API_KEY');
-      expect(result.warnings).not.toContain('OPENAI_API_KEY');
+      expect(result.warnings).not.toContain('ANTHROPIC_API_KEY not found in environment');
     });
   });
 

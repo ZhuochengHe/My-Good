@@ -77,7 +77,7 @@ export async function bootstrap(
   const settings = await loadSettings();
 
   // Step 4: Check for API keys in environment
-  checkApiKeys(warnings);
+  checkApiKeys(config, warnings);
 
   // Resolve relative paths against config file directory
   const configDir = dirname(resolve(options.configPath));
@@ -114,7 +114,7 @@ export async function bootstrap(
     }
   }
 
-  // Step 10: Create ExecutionLoop with tools and working directory
+  // Step 9: Create ExecutionLoop with tools and working directory
   const executionLoop = new ExecutionLoop(
     {
       id: config.agent.id,
@@ -128,12 +128,12 @@ export async function bootstrap(
     workingDirectory
   );
 
-  // Step 11: Create tool call bridge
+  // Step 10: Create tool call bridge
   const toolCallBridge = createToolCallBridge((call, context) =>
     toolExecutor.executeTool(call, context)
   );
 
-  // Step 12: Initialize session manager with ExecutionLoop and tool bridge
+  // Step 11: Initialize session manager with ExecutionLoop and tool bridge
   const sessionManager = new SessionManager(
     sessionStore,
     provider,
@@ -146,7 +146,7 @@ export async function bootstrap(
     toolCallBridge
   );
 
-  // Step 13: Create output adapter
+  // Step 12: Create output adapter
   const output = new PlainTextOutput();
 
   return {
@@ -191,17 +191,29 @@ async function ensureDirectoryExists(dirPath: string): Promise<void> {
 }
 
 /**
- * Check for required API keys in environment and add warnings.
+ * Check for required API keys and add warnings if none are configured.
  *
+ * Skips the warning if the provider already has an API key in the config file.
+ * Otherwise checks the provider's expected environment variables.
+ *
+ * @param config - Application configuration
  * @param warnings - Warnings array to populate
  */
-function checkApiKeys(warnings: string[]): void {
-  if (!process.env['ANTHROPIC_API_KEY']) {
-    warnings.push('ANTHROPIC_API_KEY not found in environment');
+function checkApiKeys(config: AppConfig, warnings: string[]): void {
+  const providerType = config.agent.provider;
+  const providerConfig = config.providers[providerType];
+
+  // If there's already an API key in config, no need to check env vars
+  if (providerConfig?.apiKey && !providerConfig.apiKey.startsWith('YOUR_')) {
+    return;
   }
 
-  if (!process.env['OPENAI_API_KEY']) {
-    warnings.push('OPENAI_API_KEY not found in environment');
+  const manifest = getProvider(providerType);
+  const envVars = manifest?.envVars ?? [];
+  for (const envVar of envVars) {
+    if (!process.env[envVar]) {
+      warnings.push(`${envVar} not found in environment`);
+    }
   }
 }
 

@@ -353,8 +353,6 @@ export class ExecutionLoop implements Agent {
   ): AsyncIterable<AgentEvent> {
     const sessionId = options?.sessionId ?? randomUUID();
     const signal = options?.signal;
-    // onToolCall support to be added when streaming tool calls is implemented
-    // const onToolCall = options?.onToolCall;
 
     // Initialize state
     const messages: ConversationMessage[] = [];
@@ -450,9 +448,6 @@ export class ExecutionLoop implements Agent {
               delta: chunk.delta,
               timestamp: Date.now(),
             };
-          } else if (chunk.type === 'tool_call' && chunk.toolCall) {
-            // Accumulate tool call (simplified - real impl would handle partial updates)
-            // For now, assume complete tool calls are sent
           } else if (chunk.type === 'done' && chunk.usage) {
             responseUsage = chunk.usage;
           } else if (chunk.type === 'error') {
