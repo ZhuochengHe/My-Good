@@ -34,13 +34,9 @@ export async function promptPassword(promptText: string): Promise<string> {
     }
 
     // For TTY, use raw mode to hide input
-    const rl = readline.createInterface({
-      input: stdin,
-      output: stdout,
-    });
-
     stdout.write(promptText);
     stdin.setRawMode(true);
+    stdin.resume();
 
     let password = '';
 
@@ -52,7 +48,6 @@ export async function promptPassword(promptText: string): Promise<string> {
       if (keyCode === 3) {
         stdout.write('\n');
         stdin.setRawMode(false);
-        rl.close();
         process.exit(0);
       }
 
@@ -61,7 +56,6 @@ export async function promptPassword(promptText: string): Promise<string> {
         stdout.write('\n');
         stdin.off('data', onData);
         stdin.setRawMode(false);
-        rl.close();
         resolve(password);
         return;
       }
@@ -75,9 +69,12 @@ export async function promptPassword(promptText: string): Promise<string> {
         return;
       }
 
-      // Add character to password
-      password += char;
-      stdout.write('*');
+      // Add printable characters to password, one '*' per character
+      const printable = char.replace(/[^\x20-\x7E\u00A0-\uFFFF]/g, '');
+      if (printable.length > 0) {
+        password += printable;
+        stdout.write('*'.repeat(printable.length));
+      }
     };
 
     stdin.on('data', onData);
