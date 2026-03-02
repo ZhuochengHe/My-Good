@@ -1339,4 +1339,252 @@ describe('SessionManager', () => {
       });
     });
   });
+
+  describe('ExecutionLoop Integration (Phase 3)', () => {
+    it('accepts optional executionLoop in constructor', () => {
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop
+      );
+
+      expect(managerWithLoop).toBeDefined();
+    });
+
+    it('accepts optional onToolCall in constructor', () => {
+      const mockOnToolCall = vi.fn();
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithCallback = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        undefined,
+        mockOnToolCall
+      );
+
+      expect(managerWithCallback).toBeDefined();
+    });
+
+    it('runWithExecutionLoop delegates to execution loop', async () => {
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(async () => ({
+          sessionId: 'test-session',
+          messages: [
+            { id: '1', role: 'user' as const, content: 'Hello', timestamp: Date.now() },
+            { id: '2', role: 'assistant' as const, content: 'Hi!', stopReason: 'end_turn' as const, timestamp: Date.now() },
+          ],
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          turns: 1,
+          finishReason: 'completed' as const,
+        })),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop
+      );
+
+      const sessionId = await managerWithLoop.createSession();
+      const result = await (managerWithLoop as any).runWithExecutionLoop(sessionId, 'Hello');
+
+      expect(mockExecutionLoop.run).toHaveBeenCalledWith('Hello', expect.objectContaining({
+        sessionId,
+        onEvent: expect.any(Function),
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.response).toBe('Hi!');
+    });
+
+    it('run uses ExecutionLoop path when executionLoop is provided', async () => {
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(async () => ({
+          sessionId: 'test-session',
+          messages: [
+            { id: '1', role: 'user' as const, content: 'Test', timestamp: Date.now() },
+            { id: '2', role: 'assistant' as const, content: 'Response', stopReason: 'end_turn' as const, timestamp: Date.now() },
+          ],
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          turns: 1,
+          finishReason: 'completed' as const,
+        })),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop
+      );
+
+      const sessionId = await managerWithLoop.createSession();
+      const result = await managerWithLoop.run(sessionId, 'Test');
+
+      expect(mockExecutionLoop.run).toHaveBeenCalled();
+      expect(result.success).toBe(true);
+    });
+
+    it('run uses legacy path when executionLoop is not provided', async () => {
+      const mockResponse: CompletionResponse = {
+        message: {
+          id: 'msg-1',
+          role: 'assistant',
+          content: 'Legacy response',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        },
+        model: 'test-model',
+      };
+
+      (mockProvider.complete as any).mockResolvedValue(mockResponse);
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithoutLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' }
+      );
+
+      const sessionId = await managerWithoutLoop.createSession();
+      const result = await managerWithoutLoop.run(sessionId, 'Test');
+
+      expect(mockProvider.complete).toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(result.response).toBe('Legacy response');
+    });
+
+    it('backward compatibility: existing code without ExecutionLoop still works', async () => {
+      const mockResponse: CompletionResponse = {
+        message: {
+          id: 'msg-1',
+          role: 'assistant',
+          content: 'Works as before',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        },
+        model: 'test-model',
+      };
+
+      (mockProvider.complete as any).mockResolvedValue(mockResponse);
+
+      // Use existing constructor pattern (no ExecutionLoop)
+      const result = await sessionManager.run(
+        await sessionManager.createSession(),
+        'Hello'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.response).toBe('Works as before');
+    });
+
+    it('runWithExecutionLoop passes onToolCall to execution loop', async () => {
+      const mockOnToolCall = vi.fn();
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(async () => ({
+          sessionId: 'test-session',
+          messages: [],
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          turns: 1,
+          finishReason: 'completed' as const,
+        })),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithBoth = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop,
+        mockOnToolCall
+      );
+
+      const sessionId = await managerWithBoth.createSession();
+      await (managerWithBoth as any).runWithExecutionLoop(sessionId, 'Test');
+
+      expect(mockExecutionLoop.run).toHaveBeenCalledWith('Test', expect.objectContaining({
+        onToolCall: mockOnToolCall,
+      }));
+    });
+
+    it('runWithExecutionLoop sets current session for event tracking', async () => {
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(async () => ({
+          sessionId: 'test-session',
+          messages: [],
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          turns: 1,
+          finishReason: 'completed' as const,
+        })),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop
+      );
+
+      const sessionId = await managerWithLoop.createSession();
+
+      // Spy on setCurrentSessionId
+      const spy = vi.spyOn(managerWithLoop, 'setCurrentSessionId');
+
+      await (managerWithLoop as any).runWithExecutionLoop(sessionId, 'Test');
+
+      expect(spy).toHaveBeenCalledWith(sessionId);
+      expect(spy).toHaveBeenCalledWith(null); // Cleanup
+    });
+  });
 });

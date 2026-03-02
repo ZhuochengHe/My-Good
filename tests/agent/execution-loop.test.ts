@@ -753,6 +753,141 @@ describe('ExecutionLoop', () => {
     });
   });
 
+  describe('Tool Definitions Injection (Phase 1)', () => {
+    it('accepts optional toolDefinitions in constructor', () => {
+      const toolDefinitions = [
+        {
+          name: 'read_file',
+          description: 'Read a file from disk',
+          parameters: {
+            type: 'object' as const,
+            properties: {
+              path: { type: 'string' as const, description: 'File path' },
+            },
+            required: ['path'],
+          },
+        },
+      ];
+
+      const agentWithTools = new ExecutionLoop(config, settings, provider, toolDefinitions);
+
+      expect(agentWithTools).toBeDefined();
+    });
+
+    it('defaults to empty array when toolDefinitions not provided', () => {
+      const agentWithoutTools = new ExecutionLoop(config, settings, provider);
+
+      const tools = agentWithoutTools.getTools();
+      expect(tools).toEqual([]);
+    });
+
+    it('getTools returns injected tool definitions', () => {
+      const toolDefinitions = [
+        {
+          name: 'shell_exec',
+          description: 'Execute shell command',
+          parameters: {
+            type: 'object' as const,
+            properties: {
+              command: { type: 'string' as const, description: 'Command to run' },
+            },
+            required: ['command'],
+          },
+        },
+        {
+          name: 'fetch_url',
+          description: 'Fetch URL content',
+          parameters: {
+            type: 'object' as const,
+            properties: {
+              url: { type: 'string' as const, description: 'URL to fetch' },
+            },
+            required: ['url'],
+          },
+        },
+      ];
+
+      const agentWithTools = new ExecutionLoop(config, settings, provider, toolDefinitions);
+
+      const tools = agentWithTools.getTools();
+      expect(tools).toEqual(toolDefinitions);
+      expect(tools).toHaveLength(2);
+      expect(tools[0]?.name).toBe('shell_exec');
+      expect(tools[1]?.name).toBe('fetch_url');
+    });
+
+    it('passes tools to provider via buildRequest', async () => {
+      const toolDefinitions = [
+        {
+          name: 'test_tool',
+          description: 'A test tool',
+          parameters: {
+            type: 'object' as const,
+            properties: {
+              input: { type: 'string' as const, description: 'Test input' },
+            },
+            required: ['input'],
+          },
+        },
+      ];
+
+      // Create a mock provider that captures the request
+      let capturedRequest: any = null;
+      const mockProviderWithCapture = new MockProvider();
+      mockProviderWithCapture.complete = vi.fn(async (request) => {
+        capturedRequest = request;
+        return createResponse('Response', 'end_turn');
+      });
+
+      const agentWithTools = new ExecutionLoop(config, settings, mockProviderWithCapture, toolDefinitions);
+
+      await agentWithTools.run('Test');
+
+      // Verify tools were passed in the request
+      expect(capturedRequest).toBeDefined();
+      expect(capturedRequest.tools).toEqual(toolDefinitions);
+    });
+
+    it('does not pass tools when none are provided', async () => {
+      let capturedRequest: any = null;
+      const mockProviderWithCapture = new MockProvider();
+      mockProviderWithCapture.complete = vi.fn(async (request) => {
+        capturedRequest = request;
+        return createResponse('Response', 'end_turn');
+      });
+
+      const agentWithoutTools = new ExecutionLoop(config, settings, mockProviderWithCapture);
+
+      await agentWithoutTools.run('Test');
+
+      // Verify tools field is undefined (not empty array)
+      expect(capturedRequest).toBeDefined();
+      expect(capturedRequest.tools).toBeUndefined();
+    });
+
+    it('preserves immutability of tool definitions', () => {
+      const toolDefinitions = [
+        {
+          name: 'immutable_tool',
+          description: 'Should not be modified',
+          parameters: {
+            type: 'object' as const,
+            properties: {},
+            required: [],
+          },
+        },
+      ];
+
+      const agentWithTools = new ExecutionLoop(config, settings, provider, toolDefinitions);
+
+      const retrievedTools = agentWithTools.getTools();
+
+      // Attempting to modify should not affect original
+      expect(Object.isFrozen(retrievedTools)).toBe(false); // Array itself might not be frozen
+      expect(retrievedTools).toEqual(toolDefinitions);
+    });
+  });
+
   describe('Edge Cases', () => {
     it('handles empty tool calls array', async () => {
       provider.responses = [
