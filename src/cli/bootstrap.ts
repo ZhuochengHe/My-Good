@@ -114,7 +114,7 @@ export async function bootstrap(
     }
   }
 
-  // Step 9: Create ExecutionLoop with tools and working directory
+  // Step 9: Create ExecutionLoop with tools, working directory, and session store
   const executionLoop = new ExecutionLoop(
     {
       id: config.agent.id,
@@ -125,7 +125,8 @@ export async function bootstrap(
     settings,
     provider,
     toolDefinitions,
-    workingDirectory
+    workingDirectory,
+    sessionStore
   );
 
   // Step 10: Create tool call bridge
