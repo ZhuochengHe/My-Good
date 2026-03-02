@@ -21,7 +21,7 @@ import type { ConversationMessage, ToolCall } from '../types/messages.js';
 import type { ToolDefinition, ToolResult } from '../types/tools.js';
 import type { ModelProvider, TokenUsage } from '../types/providers.js';
 import type { AgentEvent } from '../types/events.js';
-import type { Session } from '../types/sessions.js';
+import type { Session, SessionStore } from '../types/sessions.js';
 import type { AgentSettings } from '../types/settings.js';
 import { ContextBuilder } from './context-builder.js';
 import { randomUUID } from 'crypto';
@@ -66,13 +66,15 @@ export class ExecutionLoop implements Agent {
   private readonly contextBuilder: ContextBuilder;
   private readonly toolDefinitions: readonly ToolDefinition[];
   private readonly workingDirectory: string;
+  private readonly sessionStore: SessionStore | undefined;
 
   constructor(
     config: AgentConfig,
     settings: AgentSettings,
     provider: ModelProvider,
     toolDefinitions?: readonly ToolDefinition[],
-    workingDirectory?: string
+    workingDirectory?: string,
+    sessionStore?: SessionStore
   ) {
     this.config = config;
     this.settings = settings;
@@ -80,6 +82,7 @@ export class ExecutionLoop implements Agent {
     this.contextBuilder = new ContextBuilder();
     this.toolDefinitions = toolDefinitions ?? [];
     this.workingDirectory = workingDirectory ?? process.cwd();
+    this.sessionStore = sessionStore;
   }
 
   /**
@@ -540,10 +543,11 @@ export class ExecutionLoop implements Agent {
    *
    * Retrieves session by ID from session store.
    */
-  getSession(_sessionId: string): Promise<Session | null> {
-    // Session retrieval would come from session manager
-    // For now, return null
-    return Promise.resolve(null);
+  async getSession(sessionId: string): Promise<Session | null> {
+    if (!this.sessionStore) {
+      return null;
+    }
+    return this.sessionStore.load(sessionId);
   }
 
   /**

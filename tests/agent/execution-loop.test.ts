@@ -979,4 +979,54 @@ describe('ExecutionLoop', () => {
       expect(result.messages[3]?.role).toBe('assistant');
     });
   });
+
+  describe('getSession', () => {
+    it('returns null when no store is provided', async () => {
+      const loop = new ExecutionLoop(config, settings, provider);
+      expect(await loop.getSession('some-id')).toBeNull();
+    });
+
+    it('returns session from store when provided', async () => {
+      const mockSession: import('../../src/types/sessions.js').Session = {
+        id: 'test-id',
+        agentId: 'test-agent',
+        createdAt: 1000,
+        updatedAt: 2000,
+        messages: [],
+        metadata: {
+          model: 'claude-3-5-sonnet-20241022',
+          provider: 'anthropic',
+          totalTokens: 0,
+          toolCallCount: 0,
+          turnCount: 0,
+          description: '',
+          tags: [],
+        },
+      };
+      const mockStore: import('../../src/types/sessions.js').SessionStore = {
+        load: vi.fn().mockResolvedValue(mockSession),
+        save: vi.fn(),
+        appendMessage: vi.fn(),
+        list: vi.fn().mockResolvedValue([]),
+        delete: vi.fn(),
+        clear: vi.fn(),
+      };
+      const loop = new ExecutionLoop(config, settings, provider, [], undefined, mockStore);
+      expect(await loop.getSession('test-id')).toEqual(mockSession);
+      expect(mockStore.load).toHaveBeenCalledWith('test-id');
+    });
+
+    it('returns null when session not found in store', async () => {
+      const mockStore: import('../../src/types/sessions.js').SessionStore = {
+        load: vi.fn().mockResolvedValue(null),
+        save: vi.fn(),
+        appendMessage: vi.fn(),
+        list: vi.fn().mockResolvedValue([]),
+        delete: vi.fn(),
+        clear: vi.fn(),
+      };
+      const loop = new ExecutionLoop(config, settings, provider, [], undefined, mockStore);
+      expect(await loop.getSession('not-found')).toBeNull();
+    });
+  });
 });
