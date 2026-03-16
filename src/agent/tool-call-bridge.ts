@@ -7,6 +7,7 @@
 
 import type { ToolCall } from '../types/messages.js';
 import type { ToolResult, ToolContext } from '../types/tools.js';
+import type { MemoryStore } from '../types/memory.js';
 
 /**
  * Tool call context from ExecutionLoop.
@@ -15,6 +16,8 @@ export interface ToolCallContext {
   readonly sessionId: string;
   readonly workingDirectory: string;
   readonly signal?: AbortSignal;
+  /** Optional memory store forwarded to tool handler context. */
+  readonly memoryStore?: MemoryStore;
 }
 
 /**
@@ -63,6 +66,7 @@ export function createToolCallBridge(
       workingDirectory: context.workingDirectory,
       env: process.env as Record<string, string>,
       ...(context.signal && { signal: context.signal }),
+      ...(context.memoryStore && { memoryStore: context.memoryStore }),
     };
 
     // Execute tool with converted context

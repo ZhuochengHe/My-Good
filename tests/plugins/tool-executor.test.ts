@@ -14,6 +14,7 @@ import type {
   ToolHandlerResult,
 } from '../../src/types/tools.js';
 import type { ToolCall } from '../../src/types/messages.js';
+import type { MemoryStore } from '../../src/types/memory.js';
 
 describe('ToolExecutor', () => {
   let executor: ToolExecutor;
@@ -809,6 +810,73 @@ describe('ToolExecutor', () => {
       // Allow small tolerance for timer resolution differences across Node versions
       expect(result.durationMs).toBeGreaterThanOrEqual(95);
       expect(result.durationMs).toBeLessThan(200); // Should not be way off
+    });
+  });
+
+  describe('ToolExecutor - memoryStore injection', () => {
+    it('forwards memoryStore to handler context when provided in constructor', async () => {
+      const mockMemoryStore: MemoryStore = {
+        get: vi.fn(),
+        save: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        search: vi.fn(),
+        loadLayer1: vi.fn(),
+      };
+
+      const executorWithMemory = new ToolExecutor(mockMemoryStore);
+
+      const definition: ToolDefinition = {
+        name: 'memory_tool',
+        description: 'Accesses memory store',
+        parameters: { type: 'object', properties: {}, required: [] },
+      };
+
+      let capturedContext: ToolContext | undefined;
+      const handler: ToolHandler = async (_args, ctx) => {
+        capturedContext = ctx;
+        return { output: 'ok' };
+      };
+
+      executorWithMemory.registerTool(definition, handler);
+
+      const toolCall: ToolCall = {
+        id: 'call-memory',
+        name: 'memory_tool',
+        arguments: {},
+      };
+
+      await executorWithMemory.executeTool(toolCall, mockContext);
+
+      expect(capturedContext?.memoryStore).toBe(mockMemoryStore);
+    });
+
+    it('sets context.memoryStore to undefined when constructor receives no memoryStore', async () => {
+      const executorWithoutMemory = new ToolExecutor();
+
+      const definition: ToolDefinition = {
+        name: 'no_memory_tool',
+        description: 'Has no memory store',
+        parameters: { type: 'object', properties: {}, required: [] },
+      };
+
+      let capturedContext: ToolContext | undefined;
+      const handler: ToolHandler = async (_args, ctx) => {
+        capturedContext = ctx;
+        return { output: 'ok' };
+      };
+
+      executorWithoutMemory.registerTool(definition, handler);
+
+      const toolCall: ToolCall = {
+        id: 'call-no-memory',
+        name: 'no_memory_tool',
+        arguments: {},
+      };
+
+      await executorWithoutMemory.executeTool(toolCall, mockContext);
+
+      expect(capturedContext?.memoryStore).toBeUndefined();
     });
   });
 });

@@ -1,0 +1,129 @@
+{
+  "id": "memory",
+  "name": "memory",
+  "version": "1.0.0",
+  "description": "Long-term memory management for the agent",
+  "tools": [
+    {
+      "name": "save_memory",
+      "description": "Save a new memory entry to persistent storage",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The factual text to remember"
+          },
+          "layer": {
+            "type": "number",
+            "description": "Memory layer: 1=permanent identity, 2=semi-persistent preferences, 3=time-sensitive episodic"
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Keyword tags for search"
+          },
+          "ttlDays": {
+            "type": "number",
+            "description": "Time-to-live in days (layer 3 only)"
+          },
+          "source": {
+            "type": "string",
+            "description": "Source of the memory: 'user' or 'agent'"
+          }
+        },
+        "required": ["content", "layer"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "search_memory",
+      "description": "Search memory entries by content, tags, or layer",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for in memory content"
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Tags to filter by (any match)"
+          },
+          "layer": {
+            "type": "number",
+            "description": "Filter by layer (1, 2, or 3)"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of results to return"
+          }
+        }
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "update_memory",
+      "description": "Update an existing memory entry",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Memory entry UUID"
+          },
+          "content": {
+            "type": "string",
+            "description": "New content text"
+          },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "New tags (replaces existing)"
+          },
+          "ttlDays": {
+            "type": "number",
+            "description": "New TTL in days from now"
+          }
+        },
+        "required": ["id"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "delete_memory",
+      "description": "Permanently delete a memory entry",
+      "dangerous": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Memory entry UUID to delete"
+          }
+        },
+        "required": ["id"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "list_memories",
+      "description": "List all memory entries in a layer",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "number",
+            "description": "Layer to list (1, 2, or 3). Lists all layers if omitted."
+          }
+        }
+      },
+      "handler": "handlers.js"
+    }
+  ]
+}

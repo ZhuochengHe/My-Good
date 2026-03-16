@@ -11,3 +11,4 @@ export * from './sessions.js';
 export * from './agent.js';
 export * from './events.js';
 export * from './config.js';
+export * from './memory.js';

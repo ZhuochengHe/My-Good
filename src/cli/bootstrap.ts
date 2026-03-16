@@ -4,7 +4,8 @@
  */
 
 import { mkdir, access, writeFile } from 'node:fs/promises';
-import { dirname, resolve, isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join, resolve, isAbsolute } from 'node:path';
 import { stringify } from 'yaml';
 import { loadConfig } from '../config/loader.js';
 import { loadSettings } from '../config/settings-loader.js';
@@ -22,6 +23,7 @@ import type { ModelProvider } from '../types/providers.js';
 import { getProvider } from '../providers/registry.js';
 import { PlainTextOutput } from './plain-text-output.js';
 import type { OutputAdapter } from './output-adapter.js';
+import { JsonMemoryStore } from '../memory/index.js';
 
 /**
  * Bootstrap options.
@@ -103,8 +105,12 @@ export async function bootstrap(
     }
   }
 
-  // Step 8: Create ToolExecutor and register plugin tools
-  const toolExecutor = new ToolExecutor();
+  // Step 8: Create MemoryStore backed by ~/.my-agent/memory
+  const memoryDir = join(homedir(), '.my-agent', 'memory');
+  const memoryStore = new JsonMemoryStore(memoryDir);
+
+  // Step 9 (formerly 8): Create ToolExecutor with memoryStore and register plugin tools
+  const toolExecutor = new ToolExecutor(memoryStore);
   const toolDefinitions = pluginManager.getToolDefinitions();
 
   for (const toolDef of toolDefinitions) {
@@ -114,7 +120,7 @@ export async function bootstrap(
     }
   }
 
-  // Step 9: Create ExecutionLoop with tools, working directory, and session store
+  // Step 10 (formerly 9): Create ExecutionLoop with tools, working directory, session store, and memory store
   const executionLoop = new ExecutionLoop(
     {
       id: config.agent.id,
@@ -126,15 +132,16 @@ export async function bootstrap(
     provider,
     toolDefinitions,
     workingDirectory,
-    sessionStore
+    sessionStore,
+    memoryStore
   );
 
-  // Step 10: Create tool call bridge
+  // Step 11 (formerly 10): Create tool call bridge
   const toolCallBridge = createToolCallBridge((call, context) =>
     toolExecutor.executeTool(call, context)
   );
 
-  // Step 11: Initialize session manager with ExecutionLoop and tool bridge
+  // Step 12 (formerly 11): Initialize session manager with ExecutionLoop and tool bridge
   const sessionManager = new SessionManager(
     sessionStore,
     provider,
@@ -147,7 +154,7 @@ export async function bootstrap(
     toolCallBridge
   );
 
-  // Step 12: Create output adapter
+  // Step 13 (formerly 12): Create output adapter
   const output = new PlainTextOutput();
 
   return {
