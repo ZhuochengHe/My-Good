@@ -23,6 +23,7 @@ import type { ModelProvider, TokenUsage } from '../types/providers.js';
 import type { AgentEvent } from '../types/events.js';
 import type { Session, SessionStore } from '../types/sessions.js';
 import type { AgentSettings } from '../types/settings.js';
+import type { MemoryStore } from '../types/memory.js';
 import { ContextBuilder } from './context-builder.js';
 import { randomUUID } from 'crypto';
 
@@ -67,6 +68,7 @@ export class ExecutionLoop implements Agent {
   private readonly toolDefinitions: readonly ToolDefinition[];
   private readonly workingDirectory: string;
   private readonly sessionStore: SessionStore | undefined;
+  private readonly memoryStore: MemoryStore | undefined;
 
   constructor(
     config: AgentConfig,
@@ -74,7 +76,8 @@ export class ExecutionLoop implements Agent {
     provider: ModelProvider,
     toolDefinitions?: readonly ToolDefinition[],
     workingDirectory?: string,
-    sessionStore?: SessionStore
+    sessionStore?: SessionStore,
+    memoryStore?: MemoryStore
   ) {
     this.config = config;
     this.settings = settings;
@@ -83,6 +86,7 @@ export class ExecutionLoop implements Agent {
     this.toolDefinitions = toolDefinitions ?? [];
     this.workingDirectory = workingDirectory ?? process.cwd();
     this.sessionStore = sessionStore;
+    this.memoryStore = memoryStore;
   }
 
   /**
@@ -145,6 +149,9 @@ export class ExecutionLoop implements Agent {
       };
       messages.push(userMessage);
 
+      // Build system prompt with memory injection before the loop
+      const systemPrompt = await this.buildSystemPrompt();
+
       // Main execution loop
       while (turnNumber < this.settings.behavior.maxTurns) {
         // Check cancellation before each turn
@@ -166,7 +173,6 @@ export class ExecutionLoop implements Agent {
         );
 
         // Build request
-        const systemPrompt = `${this.settings.behavior.systemPrompt}\n\nCurrent working directory: ${this.workingDirectory}`;
         const request = this.contextBuilder.buildRequest({
           model: this.config.model,
           messages,
@@ -406,6 +412,9 @@ export class ExecutionLoop implements Agent {
       };
       messages.push(userMessage);
 
+      // Build system prompt with memory injection before the loop
+      const systemPrompt = await this.buildSystemPrompt();
+
       // Main execution loop
       while (turnNumber < this.settings.behavior.maxTurns) {
         // Check cancellation
@@ -424,7 +433,6 @@ export class ExecutionLoop implements Agent {
         };
 
         // Build request
-        const systemPrompt = `${this.settings.behavior.systemPrompt}\n\nCurrent working directory: ${this.workingDirectory}`;
         const request = this.contextBuilder.buildRequest({
           model: this.config.model,
           messages,
@@ -548,6 +556,35 @@ export class ExecutionLoop implements Agent {
       return null;
     }
     return this.sessionStore.load(sessionId);
+  }
+
+  /**
+   * Build the system prompt, injecting layer-1 and layer-2 memory entries when
+   * a MemoryStore is present. Layer-3 entries are NOT injected here; they are
+   * retrieved on-demand via the search_memory tool.
+   */
+  private async buildSystemPrompt(): Promise<string> {
+    const layer1 = this.memoryStore ? await this.memoryStore.loadLayer1() : [];
+    const layer2 = this.memoryStore
+      ? await this.memoryStore.search({ layer: 2 })
+      : [];
+
+    const identitySection =
+      layer1.length > 0
+        ? `\n\n## Persistent Identity\n${layer1.map((m) => `- ${m.content}`).join('\n')}`
+        : '';
+
+    const preferencesSection =
+      layer2.length > 0
+        ? `\n\n## User Preferences & Skills\n${layer2.map((m) => `- ${m.content}`).join('\n')}`
+        : '';
+
+    return (
+      `${this.settings.behavior.systemPrompt}` +
+      identitySection +
+      preferencesSection +
+      `\n\nCurrent working directory: ${this.workingDirectory}`
+    );
   }
 
   /**

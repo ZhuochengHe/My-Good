@@ -54,6 +54,7 @@ import type {
   ParameterSchema,
 } from '../types/tools.js';
 import type { ToolCall } from '../types/messages.js';
+import type { MemoryStore } from '../types/memory.js';
 
 /**
  * Options for tool execution.
@@ -88,9 +89,18 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 export class ToolExecutor {
   private readonly tools: Map<string, ToolEntry>;
+  private readonly memoryStore?: MemoryStore;
 
-  constructor() {
+  /**
+   * Creates a new ToolExecutor.
+   *
+   * @param memoryStore - Optional memory store forwarded to handler contexts
+   */
+  constructor(memoryStore?: MemoryStore) {
     this.tools = new Map();
+    if (memoryStore !== undefined) {
+      this.memoryStore = memoryStore;
+    }
   }
 
   /**
@@ -179,10 +189,17 @@ export class ToolExecutor {
       entry.definition.parameters.properties
     );
 
+    // Build handler context, merging in the executor's memoryStore when set.
+    // The conditional spread is required by exactOptionalPropertyTypes.
+    const handlerContext: ToolContext = {
+      ...context,
+      ...(this.memoryStore !== undefined && { memoryStore: this.memoryStore }),
+    };
+
     // Execute handler with timeout
     try {
       const result = await this.executeWithTimeout(
-        () => entry.handler(argsWithDefaults, context),
+        () => entry.handler(argsWithDefaults, handlerContext),
         timeout
       );
 

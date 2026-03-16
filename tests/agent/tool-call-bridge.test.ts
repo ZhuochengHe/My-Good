@@ -4,10 +4,11 @@
  * Tests the mapping between ToolCallContext (ExecutionLoop) and ToolContext (ToolExecutor).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createToolCallBridge } from '../../src/agent/tool-call-bridge.js';
 import type { ToolCall } from '../../src/types/messages.js';
 import type { ToolResult } from '../../src/types/tools.js';
+import type { MemoryStore } from '../../src/types/memory.js';
 
 describe('Tool Call Bridge', () => {
   describe('createToolCallBridge', () => {
@@ -236,6 +237,63 @@ describe('Tool Call Bridge', () => {
 
       // Check that env is populated (should have NODE_ENV or other vars)
       expect(Object.keys(capturedContext.env).length).toBeGreaterThan(0);
+    });
+
+    it('forwards memoryStore from ToolCallContext to ToolContext', async () => {
+      let capturedContext: any = null;
+
+      const mockExecuteTool = async (_call: ToolCall, context: any) => {
+        capturedContext = context;
+        return {
+          callId: 'test-1',
+          name: 'test',
+          success: true,
+          output: '',
+          durationMs: 1,
+        };
+      };
+
+      const mockMemoryStore: MemoryStore = {
+        get: vi.fn(),
+        save: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        search: vi.fn(),
+        loadLayer1: vi.fn(),
+      };
+
+      const bridge = createToolCallBridge(mockExecuteTool);
+
+      await bridge(
+        { id: 'call-1', name: 'test', arguments: {} },
+        { sessionId: 'sess-1', workingDirectory: '/tmp', memoryStore: mockMemoryStore }
+      );
+
+      expect(capturedContext.memoryStore).toBe(mockMemoryStore);
+    });
+
+    it('sets memoryStore to undefined in ToolContext when not provided in ToolCallContext', async () => {
+      let capturedContext: any = null;
+
+      const mockExecuteTool = async (_call: ToolCall, context: any) => {
+        capturedContext = context;
+        return {
+          callId: 'test-1',
+          name: 'test',
+          success: true,
+          output: '',
+          durationMs: 1,
+        };
+      };
+
+      const bridge = createToolCallBridge(mockExecuteTool);
+
+      await bridge(
+        { id: 'call-1', name: 'test', arguments: {} },
+        { sessionId: 'sess-1', workingDirectory: '/tmp' }
+      );
+
+      expect(capturedContext.memoryStore).toBeUndefined();
     });
   });
 });

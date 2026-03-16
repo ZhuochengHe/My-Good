@@ -48,3 +48,14 @@ export {
   isSessionError,
   isRecoverableSessionError,
 } from './session.js';
+
+export {
+  MemoryError,
+  MemoryNotFoundError,
+  MemoryInvalidIdError,
+  MemoryInvalidLayerError,
+  MemoryInvalidContentError,
+  MemoryStorageError,
+  MemoryExpiredError,
+  isMemoryError,
+} from './memory.js';

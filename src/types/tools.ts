@@ -2,6 +2,8 @@
  * Tool type definitions for the plugin system.
  */
 
+import type { MemoryStore } from './memory.js';
+
 /** JSON Schema subset for tool parameters */
 export interface ParameterSchema {
   readonly type: 'string' | 'number' | 'boolean' | 'object' | 'array';
@@ -55,6 +57,8 @@ export interface ToolContext {
   readonly workingDirectory: string;
   readonly env: Record<string, string>;
   readonly signal?: AbortSignal;
+  /** Optional memory store for persistent agent memory access. */
+  readonly memoryStore?: MemoryStore;
 }
 
 /** Optional output artifact (file, image, etc.) */
