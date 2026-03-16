@@ -13,18 +13,11 @@ import {
   MemoryStorageError,
   MemoryExpiredError,
 } from '../errors/memory.js';
-import { scoreMemory } from './eviction-scorer.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
 /** Maximum allowed content length in characters. */
 const MAX_CONTENT_LENGTH = 10000;
-
-/** Default eviction threshold: max L3 entries before a sweep is triggered. */
-const DEFAULT_EVICTION_THRESHOLD = 100;
-
-/** Score threshold: entries >= this value are promoted (pendingKB); below are deleted. */
-const HIGH_VALUE_SCORE_THRESHOLD = 0.6;
 
 /** Valid layer values. */
 const VALID_LAYERS = new Set<number>([1, 2, 3]);
@@ -43,27 +36,12 @@ function isValidUuid(id: string): boolean {
 }
 
 /**
- * Returns true if the entry has expired via its absolute expiresAt timestamp.
+ * Returns true if the entry's TTL has elapsed.
  *
  * @param entry - Entry to check
  */
-function isExpiredByTimestamp(entry: MemoryEntry): boolean {
+function isExpired(entry: MemoryEntry): boolean {
   return entry.expiresAt !== undefined && entry.expiresAt <= Date.now();
-}
-
-/**
- * Returns true if the entry has expired via its ttlDays duration.
- * Only applies to layer 3 entries that have a ttlDays value set.
- * Expired entries are silently excluded from results but remain on disk.
- *
- * @param entry - Entry to check
- */
-function isExpiredByTtlDays(entry: MemoryEntry): boolean {
-  return (
-    entry.layer === 3 &&
-    entry.ttlDays !== undefined &&
-    Date.now() > entry.createdAt + entry.ttlDays * 86400000
-  );
 }
 
 /**
@@ -72,18 +50,7 @@ function isExpiredByTtlDays(entry: MemoryEntry): boolean {
  * All writes are atomic (tmp + rename) with mode 0o600.
  */
 export class JsonMemoryStore implements MemoryStore {
-  private readonly evictionThreshold: number;
-
-  /**
-   * @param baseDir - Root directory for all memory layer subdirectories
-   * @param evictionThreshold - Max L3 entry count before eviction sweep runs (default 100)
-   */
-  constructor(
-    private readonly baseDir: string,
-    evictionThreshold: number = DEFAULT_EVICTION_THRESHOLD
-  ) {
-    this.evictionThreshold = evictionThreshold;
-  }
+  constructor(private readonly baseDir: string) {}
 
   /**
    * Ensures the layer subdirectories exist.
@@ -176,7 +143,7 @@ export class JsonMemoryStore implements MemoryStore {
     const valid: MemoryEntry[] = [];
     for (const e of entries) {
       if (e === null) continue;
-      if (excludeExpired && (isExpiredByTimestamp(e) || isExpiredByTtlDays(e))) continue;
+      if (excludeExpired && isExpired(e)) continue;
       valid.push(e);
     }
     return valid;
@@ -229,11 +196,8 @@ export class JsonMemoryStore implements MemoryStore {
       const filePath = this.entryPath(layer, id);
       const entry = await this.readFile(filePath);
       if (entry !== null) {
-        if (isExpiredByTimestamp(entry)) {
+        if (isExpired(entry)) {
           throw new MemoryExpiredError(id, entry.expiresAt as number);
-        }
-        if (isExpiredByTtlDays(entry)) {
-          return null;
         }
         return entry;
       }
@@ -371,72 +335,5 @@ export class JsonMemoryStore implements MemoryStore {
     await this.ensureDirs();
     const entries = await this.scanLayer(1, true);
     return entries.slice().sort((a, b) => a.createdAt - b.createdAt);
-  }
-
-  /**
-   * Runs a startup sweep: ensures directories exist and then runs the eviction sweep.
-   * Call once at application startup.
-   */
-  async initialize(): Promise<void> {
-    await this.ensureDirs();
-    await this.evict();
-  }
-
-  /**
-   * Eviction sweep for L3 entries.
-   *
-   * Scans all L3 files (including expired ones). If the total number of expired L3
-   * entries does not exceed evictionThreshold, returns early without changes.
-   * Otherwise, scores each expired L3 entry:
-   *   - Score >= 0.6 (high value): sets pendingKB: true on the entry and re-writes it.
-   *   - Score < 0.6 (low value): deletes the entry file from disk.
-   *
-   * L1, L2, and non-expired L3 entries are never touched.
-   */
-  async evict(): Promise<void> {
-    await this.ensureDirs();
-
-    // Scan all L3 files, including expired ones
-    const allL3 = await this.scanLayer(3, false);
-
-    // Separate expired from non-expired
-    const expiredL3 = allL3.filter(
-      e => isExpiredByTtlDays(e) || isExpiredByTimestamp(e)
-    );
-
-    // Early exit: below threshold
-    if (expiredL3.length <= this.evictionThreshold) {
-      return;
-    }
-
-    // Score and process each expired entry
-    await Promise.all(
-      expiredL3.map(async entry => {
-        const score = scoreMemory(entry);
-        const filePath = this.entryPath(entry.layer as 1 | 2 | 3, entry.id);
-
-        if (score >= HIGH_VALUE_SCORE_THRESHOLD) {
-          // Mark as pending KB promotion and keep on disk
-          const marked = { ...entry, pendingKB: true };
-          const tmp = `${filePath}.tmp`;
-          try {
-            await fs.writeFile(tmp, JSON.stringify(marked, null, 2), { mode: 0o600 });
-            await fs.rename(tmp, filePath);
-          } catch (err) {
-            await fs.unlink(tmp).catch(() => undefined);
-            throw new MemoryStorageError(`evict write ${filePath}`, err);
-          }
-        } else {
-          // Low value — remove from disk
-          try {
-            await fs.unlink(filePath);
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-              throw new MemoryStorageError(`evict delete ${filePath}`, err);
-            }
-          }
-        }
-      })
-    );
   }
 }
