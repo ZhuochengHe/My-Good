@@ -523,4 +523,181 @@ describe('JsonMemoryStore', () => {
       expect(entry.source).toBe('user');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // eviction sweep
+  // ---------------------------------------------------------------------------
+
+  describe('eviction sweep', () => {
+    const TWO_DAYS_MS = 2 * 86400000;
+
+    /** Makes an expired L3 entry (ttlDays=1, createdAt 2 days ago). */
+    function makeExpiredL3(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
+      return makeEntry({
+        layer: 3,
+        ttlDays: 1,
+        createdAt: Date.now() - TWO_DAYS_MS,
+        ...overrides,
+      });
+    }
+
+    it('does nothing when expired L3 count is below threshold', async () => {
+      const threshold = 5;
+      store = new JsonMemoryStore(baseDir, threshold);
+
+      // Save 3 expired L3 entries — below threshold of 5
+      const entries = [makeExpiredL3(), makeExpiredL3(), makeExpiredL3()];
+      for (const e of entries) {
+        await store.save(e);
+      }
+
+      await store.evict();
+
+      // All 3 files should still be on disk
+      for (const e of entries) {
+        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        await expect(fs.stat(filePath)).resolves.toBeTruthy();
+      }
+    });
+
+    it('removes low-value expired L3 entries when threshold is exceeded', async () => {
+      const threshold = 2;
+      store = new JsonMemoryStore(baseDir, threshold);
+
+      // 3 expired L3 entries with no valuable signals (low score)
+      const lowValueEntries = [
+        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+      ];
+      for (const e of lowValueEntries) {
+        await store.save(e);
+      }
+
+      await store.evict();
+
+      // Low-value expired entries should be deleted
+      for (const e of lowValueEntries) {
+        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        await expect(fs.stat(filePath)).rejects.toThrow();
+      }
+    });
+
+    it('keeps high-value expired L3 entries and marks them pendingKB: true', async () => {
+      const threshold = 2;
+      store = new JsonMemoryStore(baseDir, threshold);
+
+      // 3 expired L3 entries with high-value signals (score >= 0.6)
+      const highValueEntries = [
+        makeExpiredL3({ tags: ['architecture'], accessCount: 5, ttlRenewals: 1 }),
+        makeExpiredL3({ tags: ['decision'], accessCount: 3, ttlRenewals: 2 }),
+        makeExpiredL3({ tags: ['convention'], accessCount: 4, ttlRenewals: 1 }),
+      ];
+      for (const e of highValueEntries) {
+        await store.save(e);
+      }
+
+      await store.evict();
+
+      // High-value entries should still be on disk with pendingKB: true
+      for (const e of highValueEntries) {
+        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        const raw = await fs.readFile(filePath, 'utf-8');
+        const parsed = JSON.parse(raw) as MemoryEntry & { pendingKB?: boolean };
+        expect(parsed).toBeDefined();
+        expect(parsed.pendingKB).toBe(true);
+      }
+    });
+
+    it('never removes L1 entries even when threshold is exceeded', async () => {
+      const threshold = 1;
+      store = new JsonMemoryStore(baseDir, threshold);
+
+      const l1Entry = makeEntry({ layer: 1 });
+      // Save an L1 entry and enough expired L3 entries to trigger eviction
+      await store.save(l1Entry);
+      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+
+      await store.evict();
+
+      const filePath = path.join(baseDir, 'layer1', `${l1Entry.id}.json`);
+      await expect(fs.stat(filePath)).resolves.toBeTruthy();
+    });
+
+    it('never removes L2 entries even when threshold is exceeded', async () => {
+      const threshold = 1;
+      store = new JsonMemoryStore(baseDir, threshold);
+
+      const l2Entry = makeEntry({ layer: 2 });
+      await store.save(l2Entry);
+      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+
+      await store.evict();
+
+      const filePath = path.join(baseDir, 'layer2', `${l2Entry.id}.json`);
+      await expect(fs.stat(filePath)).resolves.toBeTruthy();
+    });
+
+    it('never removes non-expired L3 entries', async () => {
+      const threshold = 1;
+      store = new JsonMemoryStore(baseDir, threshold);
+
+      // A valid (non-expired) L3 entry
+      const validL3 = makeEntry({ layer: 3, ttlDays: 30 }); // not expired
+      // Two expired L3 entries to trigger eviction
+      await store.save(validL3);
+      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+
+      await store.evict();
+
+      const filePath = path.join(baseDir, 'layer3', `${validL3.id}.json`);
+      await expect(fs.stat(filePath)).resolves.toBeTruthy();
+    });
+
+    it('is called automatically during initialize()', async () => {
+      const threshold = 2;
+      store = new JsonMemoryStore(baseDir, threshold);
+
+      // Save 3 low-value expired L3 entries
+      const expiredEntries = [
+        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+      ];
+      for (const e of expiredEntries) {
+        await store.save(e);
+      }
+
+      // initialize() should trigger the eviction sweep
+      await store.initialize();
+
+      // Low-value expired entries should have been cleaned up
+      for (const e of expiredEntries) {
+        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        await expect(fs.stat(filePath)).rejects.toThrow();
+      }
+    });
+
+    it('uses default threshold of 100 when not provided', async () => {
+      // Default threshold store — no evictionThreshold argument
+      store = new JsonMemoryStore(baseDir);
+
+      // Save 3 expired L3 entries — well below default threshold of 100
+      const entries = [makeExpiredL3(), makeExpiredL3(), makeExpiredL3()];
+      for (const e of entries) {
+        await store.save(e);
+      }
+
+      await store.evict();
+
+      // Below threshold — files remain untouched
+      for (const e of entries) {
+        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        await expect(fs.stat(filePath)).resolves.toBeTruthy();
+      }
+    });
+  });
 });

@@ -32,6 +32,12 @@ export interface BehaviorSettings {
   readonly systemPrompt: string;
 }
 
+/** Memory eviction settings */
+export interface MemorySettings {
+  /** Max L3 memory count before eviction sweep runs (default: 100) */
+  readonly evictionThreshold: number;
+}
+
 /** Tool behavior settings */
 export interface ToolSettings {
   /** Allowed tool IDs (empty = all allowed) */
@@ -50,6 +56,8 @@ export interface AgentSettings {
   readonly behavior: BehaviorSettings;
   /** Tool configuration */
   readonly tools: ToolSettings;
+  /** Memory eviction settings */
+  readonly memory: MemorySettings;
 }
 
 /** Default settings values */
@@ -87,6 +95,9 @@ Use search_memory at the start of a new topic to check if you already know relev
     deny: [],
     requireApproval: [],
   },
+  memory: {
+    evictionThreshold: 100,
+  },
 };
 
 /** Flat settings key for CLI get/set commands */
@@ -101,7 +112,8 @@ export type SettingsKey =
   | 'behavior.systemPrompt'
   | 'tools.allow'
   | 'tools.deny'
-  | 'tools.requireApproval';
+  | 'tools.requireApproval'
+  | 'memory.evictionThreshold';
 
 /** Settings validation result */
 export interface SettingsValidationResult {
@@ -242,6 +254,16 @@ export function validateSettingValue(
     case 'tools.requireApproval':
       if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) {
         errors.push(`${key.split('.')[1]} must be an array of strings`);
+      }
+      break;
+
+    case 'memory.evictionThreshold':
+      if (
+        typeof value !== 'number' ||
+        value < 1 ||
+        !Number.isInteger(value)
+      ) {
+        errors.push('evictionThreshold must be a positive integer');
       }
       break;
 

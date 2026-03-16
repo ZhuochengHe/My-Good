@@ -107,6 +107,10 @@ function mergeWithDefaults(partial: Partial<AgentSettings>): AgentSettings {
       ...DEFAULT_SETTINGS.tools,
       ...partial.tools,
     },
+    memory: {
+      ...DEFAULT_SETTINGS.memory,
+      ...partial.memory,
+    },
   };
 }
 
