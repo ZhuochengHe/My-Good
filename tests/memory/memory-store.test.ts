@@ -384,6 +384,116 @@ describe('JsonMemoryStore', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // TTL enforcement via ttlDays (layer 3 only)
+  // ---------------------------------------------------------------------------
+
+  describe('TTL enforcement via ttlDays', () => {
+    const TWO_DAYS_MS = 2 * 86400000;
+    const ONE_DAY_MS = 86400000;
+
+    it('list (search) excludes expired L3 memories with ttlDays=1, createdAt 2 days ago', async () => {
+      const expiredL3 = makeEntry({
+        layer: 3,
+        ttlDays: 1,
+        createdAt: Date.now() - TWO_DAYS_MS,
+      });
+      const validL3 = makeEntry({ layer: 3 });
+      await store.save(expiredL3);
+      await store.save(validL3);
+      const results = await store.search({});
+      const ids = results.map(r => r.id);
+      expect(ids).not.toContain(expiredL3.id);
+      expect(ids).toContain(validL3.id);
+    });
+
+    it('search excludes expired L3 memories', async () => {
+      const expiredL3 = makeEntry({
+        layer: 3,
+        ttlDays: 1,
+        createdAt: Date.now() - TWO_DAYS_MS,
+        content: 'expired ttl entry',
+      });
+      const validL3 = makeEntry({ layer: 3, content: 'expired ttl entry' });
+      await store.save(expiredL3);
+      await store.save(validL3);
+      const results = await store.search({ query: 'expired ttl entry' });
+      const ids = results.map(r => r.id);
+      expect(ids).not.toContain(expiredL3.id);
+      expect(ids).toContain(validL3.id);
+    });
+
+    it('get returns null for expired L3 memory with ttlDays', async () => {
+      const expiredL3 = makeEntry({
+        layer: 3,
+        ttlDays: 1,
+        createdAt: Date.now() - TWO_DAYS_MS,
+      });
+      await store.save(expiredL3);
+      const result = await store.get(expiredL3.id);
+      expect(result).toBeNull();
+    });
+
+    it('get returns entry for non-expired L3 memory with ttlDays', async () => {
+      const validL3 = makeEntry({
+        layer: 3,
+        ttlDays: 5,
+        createdAt: Date.now() - ONE_DAY_MS,
+      });
+      await store.save(validL3);
+      const result = await store.get(validL3.id);
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(validL3.id);
+    });
+
+    it('L3 memories without ttlDays are never expired by ttlDays check', async () => {
+      const l3NoTtl = makeEntry({
+        layer: 3,
+        createdAt: Date.now() - TWO_DAYS_MS,
+      });
+      await store.save(l3NoTtl);
+      const result = await store.get(l3NoTtl.id);
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(l3NoTtl.id);
+    });
+
+    it('L1 memories are never expired by ttlDays even with ttlDays set', async () => {
+      const l1WithTtl = makeEntry({
+        layer: 1,
+        ttlDays: 1,
+        createdAt: Date.now() - TWO_DAYS_MS,
+      });
+      await store.save(l1WithTtl);
+      const result = await store.get(l1WithTtl.id);
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(l1WithTtl.id);
+    });
+
+    it('L2 memories are never expired by ttlDays even with ttlDays set', async () => {
+      const l2WithTtl = makeEntry({
+        layer: 2,
+        ttlDays: 1,
+        createdAt: Date.now() - TWO_DAYS_MS,
+      });
+      await store.save(l2WithTtl);
+      const result = await store.get(l2WithTtl.id);
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe(l2WithTtl.id);
+    });
+
+    it('expired L3 ttlDays entries remain in the JSON file (soft eviction)', async () => {
+      const expiredL3 = makeEntry({
+        layer: 3,
+        ttlDays: 1,
+        createdAt: Date.now() - TWO_DAYS_MS,
+      });
+      await store.save(expiredL3);
+      const filePath = path.join(baseDir, 'layer3', `${expiredL3.id}.json`);
+      const stat = await fs.stat(filePath);
+      expect(stat.isFile()).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // createMemoryEntry helper
   // ---------------------------------------------------------------------------
 

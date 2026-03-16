@@ -36,12 +36,27 @@ function isValidUuid(id: string): boolean {
 }
 
 /**
- * Returns true if the entry's TTL has elapsed.
+ * Returns true if the entry has expired via its absolute expiresAt timestamp.
  *
  * @param entry - Entry to check
  */
-function isExpired(entry: MemoryEntry): boolean {
+function isExpiredByTimestamp(entry: MemoryEntry): boolean {
   return entry.expiresAt !== undefined && entry.expiresAt <= Date.now();
+}
+
+/**
+ * Returns true if the entry has expired via its ttlDays duration.
+ * Only applies to layer 3 entries that have a ttlDays value set.
+ * Expired entries are silently excluded from results but remain on disk.
+ *
+ * @param entry - Entry to check
+ */
+function isExpiredByTtlDays(entry: MemoryEntry): boolean {
+  return (
+    entry.layer === 3 &&
+    entry.ttlDays !== undefined &&
+    Date.now() > entry.createdAt + entry.ttlDays * 86400000
+  );
 }
 
 /**
@@ -143,7 +158,7 @@ export class JsonMemoryStore implements MemoryStore {
     const valid: MemoryEntry[] = [];
     for (const e of entries) {
       if (e === null) continue;
-      if (excludeExpired && isExpired(e)) continue;
+      if (excludeExpired && (isExpiredByTimestamp(e) || isExpiredByTtlDays(e))) continue;
       valid.push(e);
     }
     return valid;
@@ -196,8 +211,11 @@ export class JsonMemoryStore implements MemoryStore {
       const filePath = this.entryPath(layer, id);
       const entry = await this.readFile(filePath);
       if (entry !== null) {
-        if (isExpired(entry)) {
+        if (isExpiredByTimestamp(entry)) {
           throw new MemoryExpiredError(id, entry.expiresAt as number);
+        }
+        if (isExpiredByTtlDays(entry)) {
+          return null;
         }
         return entry;
       }
