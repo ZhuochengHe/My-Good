@@ -26,8 +26,14 @@ export interface MemoryEntry {
   readonly updatedAt: number;
   /** Unix timestamp (ms) when this entry expires. Layer 3 only. */
   readonly expiresAt?: number;
+  /** Time-to-live in days from createdAt. Layer 3 only. Soft eviction: expired entries remain on disk. */
+  readonly ttlDays?: number;
   /** Origin of the memory: "user" or "agent". */
   readonly source?: string;
+  /** Number of times this entry has been read. Influences eviction scoring. */
+  readonly accessCount?: number;
+  /** Number of times the TTL was explicitly refreshed. Influences eviction scoring. */
+  readonly ttlRenewals?: number;
 }
 
 /**

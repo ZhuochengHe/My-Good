@@ -23,8 +23,19 @@ export interface BehaviorSettings {
   readonly enableStreaming: boolean;
   /** Maximum conversation turns (default: 25) */
   readonly maxTurns: number;
-  /** System prompt (default: 'You are a helpful AI assistant.') */
+  /**
+   * System prompt sent to the LLM at the start of every conversation.
+   * The default includes guidance for the three-layer persistent memory system
+   * (Identity, Preferences & Skills, Episodic) so the assistant proactively
+   * saves and retrieves context across sessions.
+   */
   readonly systemPrompt: string;
+}
+
+/** Memory eviction settings */
+export interface MemorySettings {
+  /** Max L3 memory count before eviction sweep runs (default: 100) */
+  readonly evictionThreshold: number;
 }
 
 /** Tool behavior settings */
@@ -45,6 +56,8 @@ export interface AgentSettings {
   readonly behavior: BehaviorSettings;
   /** Tool configuration */
   readonly tools: ToolSettings;
+  /** Memory eviction settings */
+  readonly memory: MemorySettings;
 }
 
 /** Default settings values */
@@ -59,12 +72,31 @@ export const DEFAULT_SETTINGS: AgentSettings = {
     enableToolUse: true,
     enableStreaming: true,
     maxTurns: 25,
-    systemPrompt: 'You are a helpful AI assistant.',
+    systemPrompt: `You are a helpful AI assistant.
+
+You have access to a persistent memory system with three layers. Use it proactively to remember information across sessions.
+
+Memory layers:
+- Layer 1 (Identity): Permanent facts about the user — name, role, fundamental preferences that never change. Save once, rarely update.
+- Layer 2 (Preferences & Skills): User's working style, preferred tools/languages, coding conventions, how they like responses formatted. Update when preferences change.
+- Layer 3 (Episodic): Time-sensitive project context — active features, current bugs, recent decisions, project-specific facts. Always set ttlDays (7–90 days).
+
+When to save a memory:
+- User states a preference, corrects your behavior, or reveals something persistent about themselves → save to L1 or L2
+- You learn a domain fact about the project (architecture, tech stack, conventions) → save to L2 or L3
+- User mentions a short-term goal or active context item → save to L3 with appropriate TTL
+- Do NOT save: transient task instructions, single-session context, conversational filler
+
+Always use descriptive tags (e.g., ["typescript", "testing", "preference"]) to make memories searchable.
+Use search_memory at the start of a new topic to check if you already know relevant context.`,
   },
   tools: {
     allow: [],
     deny: [],
     requireApproval: [],
+  },
+  memory: {
+    evictionThreshold: 100,
   },
 };
 
@@ -80,7 +112,8 @@ export type SettingsKey =
   | 'behavior.systemPrompt'
   | 'tools.allow'
   | 'tools.deny'
-  | 'tools.requireApproval';
+  | 'tools.requireApproval'
+  | 'memory.evictionThreshold';
 
 /** Settings validation result */
 export interface SettingsValidationResult {
@@ -221,6 +254,16 @@ export function validateSettingValue(
     case 'tools.requireApproval':
       if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) {
         errors.push(`${key.split('.')[1]} must be an array of strings`);
+      }
+      break;
+
+    case 'memory.evictionThreshold':
+      if (
+        typeof value !== 'number' ||
+        value < 1 ||
+        !Number.isInteger(value)
+      ) {
+        errors.push('evictionThreshold must be a positive integer');
       }
       break;
 
