@@ -30,6 +30,10 @@ export interface MemoryEntry {
   readonly ttlDays?: number;
   /** Origin of the memory: "user" or "agent". */
   readonly source?: string;
+  /** Number of times this entry has been read. Influences eviction scoring. */
+  readonly accessCount?: number;
+  /** Number of times the TTL was explicitly refreshed. Influences eviction scoring. */
+  readonly ttlRenewals?: number;
 }
 
 /**
