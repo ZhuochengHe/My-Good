@@ -185,7 +185,7 @@ export async function bootstrap(
   );
 
   // Step 13 (formerly 12): Create output adapter
-  const output = new PlainTextOutput();
+  const output = new ColoredOutput();
 
   return {
     config,

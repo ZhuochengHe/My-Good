@@ -39,7 +39,6 @@ describe('chat command', () => {
       writeTokenUsage: vi.fn(),
       startLoading: vi.fn(),
       stopLoading: vi.fn(),
-      writeHeader: vi.fn(),
     };
 
     mockInput = {

@@ -132,9 +132,20 @@ async function runSingleMessage(
 
   options.output.write('');
 
-  if (options.output.writeChunk) {
-    // Streaming path: print agent label prefix, then stream chunks inline
-    await runStreaming(options, sessionId, agentLabel, options.message);
+  // Run agent with message
+  options.output.startLoading?.('Thinking...');
+  const result = await options.sessionManager.run(sessionId, options.message);
+  options.output.stopLoading?.();
+
+  // Display result
+  if (result.success) {
+    options.output.write(result.response);
+    options.output.write('');
+
+    // Display token usage
+    if (result.tokenUsage) {
+      options.output.writeTokenUsage(result.tokenUsage);
+    }
   } else {
     // Batch path: spinner while waiting, then print full response
     options.output.startLoading?.(LOADING_MESSAGE);
@@ -223,7 +234,12 @@ async function runInteractive(
         continue;
       }
 
-      // Run agent — streaming when supported, batch otherwise
+      // Run agent
+      options.output.startLoading?.('Thinking...');
+      const result = await options.sessionManager.run(sessionId, userInput);
+      options.output.stopLoading?.();
+
+      // Display result
       options.output.write('');
       if (options.output.writeChunk) {
         await runStreaming(options, sessionId, agentLabel, userInput);
