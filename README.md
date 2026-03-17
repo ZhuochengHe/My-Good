@@ -63,7 +63,7 @@ my-agent model update                   # fetch latest models from provider APIs
 ## Development
 
 ```bash
-npm test              # 1453+ tests across 54 files
+npm test              # 1200+ tests across 68 files
 npm run test:coverage
 npm run build
 npm run lint
