@@ -21,7 +21,7 @@ import { AnthropicProvider } from '../providers/anthropic.js';
 import { OpenAIProvider } from '../providers/openai.js';
 import type { ModelProvider } from '../types/providers.js';
 import { getProvider } from '../providers/registry.js';
-import { PlainTextOutput } from './plain-text-output.js';
+import { ColoredOutput } from './colored-output.js';
 import type { OutputAdapter } from './output-adapter.js';
 import { JsonMemoryStore } from '../memory/index.js';
 
@@ -155,7 +155,7 @@ export async function bootstrap(
   );
 
   // Step 13 (formerly 12): Create output adapter
-  const output = new PlainTextOutput();
+  const output = new ColoredOutput();
 
   return {
     config,

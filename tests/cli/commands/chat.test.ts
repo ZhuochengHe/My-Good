@@ -20,6 +20,8 @@ describe('chat command', () => {
       writeError: vi.fn(),
       writeSuccess: vi.fn(),
       writeTokenUsage: vi.fn(),
+      startLoading: vi.fn(),
+      stopLoading: vi.fn(),
     };
 
     mockInput = {
@@ -187,6 +189,29 @@ describe('chat command', () => {
       );
     });
 
+    it('should call startLoading and stopLoading around each turn', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+      vi.mocked(mockInput.prompt)
+        .mockResolvedValueOnce('Hello')
+        .mockResolvedValueOnce('exit');
+
+      const mockRunResult: RunResult = {
+        success: true,
+        response: 'Hi there!',
+        tokenUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      };
+      vi.mocked(mockSessionManager.run).mockResolvedValue(mockRunResult);
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        input: mockInput,
+      });
+
+      expect(mockOutput.startLoading).toHaveBeenCalledWith('Thinking...');
+      expect(mockOutput.stopLoading).toHaveBeenCalled();
+    });
+
     it('should handle agent errors gracefully', async () => {
       vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
       vi.mocked(mockInput.prompt)
@@ -288,6 +313,27 @@ describe('chat command', () => {
         'existing-session',
         'Test message'
       );
+    });
+
+    it('should call startLoading before run and stopLoading after', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+
+      const mockRunResult: RunResult = {
+        success: true,
+        response: 'Response',
+        tokenUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      };
+      vi.mocked(mockSessionManager.run).mockResolvedValue(mockRunResult);
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        input: mockInput,
+        message: 'Single message',
+      });
+
+      expect(mockOutput.startLoading).toHaveBeenCalledWith('Thinking...');
+      expect(mockOutput.stopLoading).toHaveBeenCalled();
     });
 
     it('should display token usage in single message mode', async () => {

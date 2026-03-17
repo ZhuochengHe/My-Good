@@ -80,21 +80,35 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
       return;
     }
 
-    // Display header
-    options.output.write(`\nFound ${sessions.length} session(s):\n`);
+    // Column widths
+    const ID_W = 36;
+    const CREATED_W = 19;
+    const MSGS_W = 5;
 
-    // Display each session
+    // Header
+    const header =
+      'ID'.padEnd(ID_W) + '  ' +
+      'CREATED'.padEnd(CREATED_W) + '  ' +
+      'MSGS'.padEnd(MSGS_W) + '  ' +
+      'DESCRIPTION';
+    const separator = '─'.repeat(header.length);
+    options.output.write('');
+    options.output.write(header);
+    options.output.write(separator);
+
+    // Rows
     for (const session of sessions) {
-      options.output.write(`\nID: ${session.id}`);
-      options.output.write(`Description: ${session.description || '(none)'}`);
-      options.output.write(`Tags: ${session.tags.join(', ') || '(none)'}`);
-      options.output.write(`Messages: ${session.messageCount}`);
-      options.output.write(
-        `Created: ${new Date(session.createdAt).toLocaleString()}`
-      );
-      options.output.write(
-        `Updated: ${new Date(session.updatedAt).toLocaleString()}`
-      );
+      const created = new Date(session.createdAt)
+        .toISOString()
+        .replace('T', ' ')
+        .slice(0, 19);
+      const description = session.description ?? '(none)';
+      const row =
+        session.id.padEnd(ID_W) + '  ' +
+        created.padEnd(CREATED_W) + '  ' +
+        String(session.messageCount).padEnd(MSGS_W) + '  ' +
+        description;
+      options.output.write(row);
     }
 
     options.output.write('');

@@ -89,7 +89,9 @@ async function runSingleMessage(
   options.output.write('');
 
   // Run agent with message
+  options.output.startLoading?.('Thinking...');
   const result = await options.sessionManager.run(sessionId, options.message);
+  options.output.stopLoading?.();
 
   // Display result
   if (result.success) {
@@ -143,7 +145,9 @@ async function runInteractive(
       }
 
       // Run agent
+      options.output.startLoading?.('Thinking...');
       const result = await options.sessionManager.run(sessionId, userInput);
+      options.output.stopLoading?.();
 
       // Display result
       options.output.write('');
