@@ -148,6 +148,36 @@ describe('session commands', () => {
       expect(allOutput).toContain('Test description');
       expect(allOutput).toContain('10');
     });
+
+    it('should display sessions in table format with header row', async () => {
+      const mockSessions: SearchResult[] = [
+        {
+          id: 'abc-123',
+          description: 'Debug memory module',
+          tags: ['debugging'],
+          createdAt: new Date('2026-03-15T14:32:00Z').getTime(),
+          updatedAt: Date.now(),
+          messageCount: 12,
+        },
+      ];
+
+      vi.mocked(mockSessionManager.searchSessions).mockResolvedValue(mockSessions);
+
+      await sessionList({ sessionManager: mockSessionManager, output: mockOutput });
+
+      const writeCalls = vi.mocked(mockOutput.write).mock.calls;
+      const allOutput = writeCalls.map((call) => call[0]).join('\n');
+
+      // Header row should be present
+      expect(allOutput).toContain('ID');
+      expect(allOutput).toContain('CREATED');
+      expect(allOutput).toContain('MSGS');
+      expect(allOutput).toContain('DESCRIPTION');
+      // Data row should contain session data
+      expect(allOutput).toContain('abc-123');
+      expect(allOutput).toContain('12');
+      expect(allOutput).toContain('Debug memory module');
+    });
   });
 
   describe('sessionShow', () => {

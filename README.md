@@ -16,33 +16,37 @@ Built from scratch in TypeScript with a custom agent loop. No frameworks, full c
 
 ```bash
 npm install
-npm run build
-./bin/my-agent setup   # pick a provider, enter your API key, select a model
+./install.sh   # builds and installs my-agent to ~/.local/bin
+my-agent setup # pick a provider, enter your API key, select a model
 ```
+
+`install.sh` builds the project, symlinks `my-agent` to `~/.local/bin`, and checks that directory is on your PATH. Re-run it whenever you pull new changes.
+
+> **Manual install:** if you prefer not to use the script, run `npm run build` then add `./bin/my-agent` to your PATH manually.
 
 ## Usage
 
 ```bash
-./bin/my-agent chat                      # start a conversation
-./bin/my-agent chat -m "summarize README.md"   # one-shot
-./bin/my-agent chat -s <session-id>      # resume a previous session
+my-agent chat                            # start a conversation
+my-agent chat -m "summarize README.md"  # one-shot
+my-agent chat -s <session-id>           # resume a previous session
 ```
 
 ### Managing sessions
 
 ```bash
-./bin/my-agent session list
-./bin/my-agent session list -t debugging        # filter by tag
-./bin/my-agent session show <id> --trace        # with per-turn token metrics
-./bin/my-agent session delete <id>
+my-agent session list
+my-agent session list -t debugging      # filter by tag
+my-agent session show <id> --trace      # with per-turn token metrics
+my-agent session delete <id>
 ```
 
 ### Other commands
 
 ```bash
-./bin/my-agent plugin list               # see loaded plugins and their tools
-./bin/my-agent settings set behavior.maxTurns 30
-./bin/my-agent model update              # fetch latest models from provider APIs
+my-agent plugin list                    # see loaded plugins and their tools
+my-agent settings set behavior.maxTurns 30
+my-agent model update                   # fetch latest models from provider APIs
 ```
 
 ## Plugins included
@@ -56,10 +60,10 @@ npm run build
 ## Development
 
 ```bash
-npm test              # 1095 tests across 46 files
+npm test              # 1200+ tests across 68 files
 npm run test:coverage
 npm run build
 npm run lint
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions, source layout, and interface definitions.
+See [docs/reference/ARCHITECTURE.md](docs/reference/ARCHITECTURE.md) for design decisions, source layout, memory module, and interface definitions.
