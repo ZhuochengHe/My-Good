@@ -66,4 +66,4 @@ npm run build
 npm run lint
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design decisions, source layout, and interface definitions.
+See [docs/reference/ARCHITECTURE.md](docs/reference/ARCHITECTURE.md) for design decisions, source layout, memory module, and interface definitions.
