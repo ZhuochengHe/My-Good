@@ -51,6 +51,8 @@ export interface ColoredOutputOptions {
 export class ColoredOutput implements OutputAdapter {
   private spinner: Ora | null = null;
   private readonly spinnerFactory: SpinnerFactory;
+  private elapsedTimer: ReturnType<typeof setInterval> | null = null;
+  private loadingStartTime: number = 0;
 
   constructor(options: ColoredOutputOptions = {}) {
     this.spinnerFactory = options.spinnerFactory ?? ((text: string): Ora => ora({ text }));
@@ -102,19 +104,37 @@ export class ColoredOutput implements OutputAdapter {
 
   /**
    * Start ora spinner with a loading message.
+   * After 5 seconds, updates the spinner text to include elapsed time.
    *
    * @param message - Loading message to display
    */
   startLoading(message: string): void {
+    if (this.elapsedTimer) {
+      clearInterval(this.elapsedTimer);
+      this.elapsedTimer = null;
+    }
     this.spinner = this.spinnerFactory(message);
     this.spinner.start();
+    this.loadingStartTime = Date.now();
+
+    this.elapsedTimer = setInterval(() => {
+      if (!this.spinner) return;
+      const elapsed = Math.floor((Date.now() - this.loadingStartTime) / 1000);
+      if (elapsed >= 5) {
+        this.spinner.text = `${message} (${elapsed}s)`;
+      }
+    }, 1000);
   }
 
   /**
-   * Stop the active spinner.
+   * Stop the active spinner and clear the elapsed timer.
    * No-op if no spinner is running.
    */
   stopLoading(): void {
+    if (this.elapsedTimer) {
+      clearInterval(this.elapsedTimer);
+      this.elapsedTimer = null;
+    }
     if (this.spinner) {
       this.spinner.stop();
       this.spinner = null;

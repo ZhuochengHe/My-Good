@@ -166,6 +166,7 @@ describe('ColoredOutput', () => {
   describe('startLoading and stopLoading with injectable spinner', () => {
     it('should start spinner on startLoading', () => {
       const mockSpinner = {
+        text: '',
         start: vi.fn().mockReturnThis(),
         stop: vi.fn().mockReturnThis(),
         succeed: vi.fn().mockReturnThis(),
@@ -173,12 +174,14 @@ describe('ColoredOutput', () => {
       const coloredOutput = new ColoredOutput({ spinnerFactory: () => mockSpinner as never });
 
       coloredOutput.startLoading('Thinking...');
+      coloredOutput.stopLoading();
 
       expect(mockSpinner.start).toHaveBeenCalledTimes(1);
     });
 
     it('should stop spinner on stopLoading', () => {
       const mockSpinner = {
+        text: '',
         start: vi.fn().mockReturnThis(),
         stop: vi.fn().mockReturnThis(),
         succeed: vi.fn().mockReturnThis(),
@@ -199,6 +202,7 @@ describe('ColoredOutput', () => {
     it('should pass message to spinner', () => {
       let capturedText = '';
       const mockSpinner = {
+        text: '',
         start: vi.fn().mockReturnThis(),
         stop: vi.fn().mockReturnThis(),
         succeed: vi.fn().mockReturnThis(),
@@ -211,8 +215,75 @@ describe('ColoredOutput', () => {
       });
 
       coloredOutput.startLoading('Processing files...');
+      coloredOutput.stopLoading();
 
       expect(capturedText).toBe('Processing files...');
+    });
+  });
+
+  describe('startLoading elapsed timer', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('shows original message before 5s', () => {
+      let spinnerText = 'Thinking...';
+      const mockSpinner = {
+        get text() { return spinnerText; },
+        set text(v: string) { spinnerText = v; },
+        start: vi.fn().mockReturnThis(),
+        stop: vi.fn().mockReturnThis(),
+        succeed: vi.fn().mockReturnThis(),
+      };
+      const coloredOutput = new ColoredOutput({ spinnerFactory: () => mockSpinner as never });
+
+      coloredOutput.startLoading('Thinking...');
+      vi.advanceTimersByTime(3000);
+
+      expect(spinnerText).toBe('Thinking...');
+
+      coloredOutput.stopLoading();
+    });
+
+    it('shows elapsed time after 5s', () => {
+      let spinnerText = 'Thinking...';
+      const mockSpinner = {
+        get text() { return spinnerText; },
+        set text(v: string) { spinnerText = v; },
+        start: vi.fn().mockReturnThis(),
+        stop: vi.fn().mockReturnThis(),
+        succeed: vi.fn().mockReturnThis(),
+      };
+      const coloredOutput = new ColoredOutput({ spinnerFactory: () => mockSpinner as never });
+
+      coloredOutput.startLoading('Thinking...');
+      vi.advanceTimersByTime(6000);
+
+      expect(spinnerText).toContain('(6s)');
+
+      coloredOutput.stopLoading();
+    });
+
+    it('clears timer on stopLoading', () => {
+      let spinnerText = 'Thinking...';
+      const mockSpinner = {
+        get text() { return spinnerText; },
+        set text(v: string) { spinnerText = v; },
+        start: vi.fn().mockReturnThis(),
+        stop: vi.fn().mockReturnThis(),
+        succeed: vi.fn().mockReturnThis(),
+      };
+      const coloredOutput = new ColoredOutput({ spinnerFactory: () => mockSpinner as never });
+
+      coloredOutput.startLoading('Thinking...');
+      coloredOutput.stopLoading();
+      vi.advanceTimersByTime(10000);
+
+      expect(spinnerText).toBe('Thinking...');
     });
   });
 });
