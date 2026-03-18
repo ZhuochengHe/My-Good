@@ -93,13 +93,13 @@ export class ColoredOutput implements OutputAdapter {
 
   /**
    * Write token usage information to stdout in dim cyan.
-   * Format: tokens 150→75  total 225
+   * Format: ↑ 150  ↓ 75  ∑ 225
    *
    * @param usage - Token usage statistics
    */
   writeTokenUsage(usage: TokenUsage): void {
-    const message = `tokens ${usage.inputTokens}→${usage.outputTokens}  total ${usage.totalTokens}`;
-    process.stdout.write(chalk.dim.cyan(message) + '\n');
+    const line = `↑ ${usage.inputTokens}  ↓ ${usage.outputTokens}  ∑ ${usage.totalTokens}`;
+    process.stdout.write(chalk.dim.cyan(`  ${line}\n`));
   }
 
   /**

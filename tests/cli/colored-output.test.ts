@@ -123,6 +123,14 @@ describe('ColoredOutput', () => {
       expect(written).toContain('225');
     });
 
+    it('should include Unicode direction symbols', () => {
+      output.writeTokenUsage({ inputTokens: 150, outputTokens: 75, totalTokens: 225 });
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).toContain('↑');
+      expect(written).toContain('↓');
+      expect(written).toContain('∑');
+    });
+
     it('should handle zero tokens', () => {
       output.writeTokenUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
       expect(stdoutSpy).toHaveBeenCalledTimes(1);

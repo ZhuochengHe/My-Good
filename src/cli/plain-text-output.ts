@@ -54,13 +54,12 @@ export class PlainTextOutput implements OutputAdapter {
 
   /**
    * Write token usage information to stdout.
-   * Format: [Tokens: X input / Y output / Z total]
+   * Format: ↑ X  ↓ Y  ∑ Z
    *
    * @param usage - Token usage statistics
    */
   writeTokenUsage(usage: TokenUsage): void {
-    const message = `[Tokens: ${usage.inputTokens} input / ${usage.outputTokens} output / ${usage.totalTokens} total]`;
-    this.write(message);
+    process.stdout.write(`  ↑ ${usage.inputTokens}  ↓ ${usage.outputTokens}  ∑ ${usage.totalTokens}\n`);
   }
 
   /**
