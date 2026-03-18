@@ -3,9 +3,14 @@
  * Provides styled terminal output with colors and spinner support.
  */
 
-import chalk from 'chalk';
+import { Chalk } from 'chalk';
 import ora, { type Ora } from 'ora';
 import type { OutputAdapter, TokenUsage } from './output-adapter.js';
+
+// Force at least basic color support when stdout is a TTY.
+// Chalk defaults to level 0 in some WSL2/terminal environments even when
+// colors are supported, so we override it when running interactively.
+const chalk = new Chalk({ level: process.stdout.isTTY ? 3 : 0 });
 
 /**
  * Factory function that creates a spinner instance.
