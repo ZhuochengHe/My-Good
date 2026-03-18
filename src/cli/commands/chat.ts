@@ -6,6 +6,13 @@
 import type { SessionManager } from '../../session/session-manager.js';
 import type { OutputAdapter } from '../output-adapter.js';
 import type { InputReader } from '../input-reader.js';
+import type { AppConfig } from '../../types/config.js';
+
+/** Default label shown in the user prompt. */
+const DEFAULT_USER_LABEL = 'you';
+
+/** Default label shown before each agent response. */
+const DEFAULT_AGENT_LABEL = 'agent';
 
 /**
  * Chat command options.
@@ -21,6 +28,12 @@ export interface ChatOptions {
   readonly sessionId?: string;
   /** Single message to send (non-interactive mode) */
   readonly message?: string;
+  /**
+   * Full application config.
+   * When provided, the styled header and configurable labels are used.
+   * When omitted, sensible defaults are applied.
+   */
+  readonly config?: AppConfig;
 }
 
 /**
@@ -51,20 +64,37 @@ export async function chat(options: ChatOptions): Promise<void> {
     if (options.sessionId) {
       await options.sessionManager.resumeSession(options.sessionId);
       sessionId = options.sessionId;
-      options.output.write(`Resumed session: ${sessionId}\n`);
     } else {
       sessionId = await options.sessionManager.createSession();
-      options.output.write(`Created new session: ${sessionId}\n`);
+    }
+
+    const userLabel  = options.config?.agent.userLabel  ?? DEFAULT_USER_LABEL;
+    const agentLabel = options.config?.agent.agentLabel ?? DEFAULT_AGENT_LABEL;
+
+    // Render styled header when the adapter supports it, otherwise fall back to
+    // the plain-text session line preserved for backward compatibility.
+    if (options.output.writeHeader) {
+      options.output.writeHeader({
+        agentName:  options.config?.agent.name     ?? 'My Agent',
+        provider:   options.config?.agent.provider ?? '',
+        model:      options.config?.agent.model    ?? '',
+        sessionId:  sessionId.slice(0, 8),
+        userLabel,
+        agentLabel,
+      });
+    } else {
+      const action = options.sessionId ? 'Resumed' : 'Created new';
+      options.output.write(`${action} session: ${sessionId}\n`);
     }
 
     // Single message mode
     if (options.message) {
-      await runSingleMessage(options, sessionId);
+      await runSingleMessage(options, sessionId, agentLabel);
       return;
     }
 
     // Interactive mode
-    await runInteractive(options, sessionId);
+    await runInteractive(options, sessionId, userLabel, agentLabel);
   } catch (error) {
     options.output.writeError(
       `Chat error: ${error instanceof Error ? error.message : String(error)}`
@@ -77,10 +107,12 @@ export async function chat(options: ChatOptions): Promise<void> {
  *
  * @param options - Command options
  * @param sessionId - Session ID
+ * @param agentLabel - Label to prefix agent response with
  */
 async function runSingleMessage(
   options: ChatOptions,
-  sessionId: string
+  sessionId: string,
+  agentLabel: string
 ): Promise<void> {
   if (!options.message) {
     return;
@@ -95,7 +127,7 @@ async function runSingleMessage(
 
   // Display result
   if (result.success) {
-    options.output.write(result.response);
+    options.output.write(`${agentLabel} › ${result.response}`);
     options.output.write('');
 
     // Display token usage
@@ -112,16 +144,23 @@ async function runSingleMessage(
  *
  * @param options - Command options
  * @param sessionId - Session ID
+ * @param userLabel - Label shown in the prompt
+ * @param agentLabel - Label prefixed to agent responses
  */
 async function runInteractive(
   options: ChatOptions,
-  sessionId: string
+  sessionId: string,
+  userLabel: string,
+  agentLabel: string
 ): Promise<void> {
-  // Display welcome message
-  options.output.write('\nWelcome to interactive chat!');
-  options.output.write('Type your message and press Enter.');
-  options.output.write('Use \\ at the end of a line to continue on the next line.');
-  options.output.write('Type "exit" or "quit" to end the session.\n');
+  // When no styled header was rendered, show the legacy welcome block so that
+  // consumers which do not implement writeHeader still get usage guidance.
+  if (!options.output.writeHeader) {
+    options.output.write('\nWelcome to interactive chat!');
+    options.output.write('Type your message and press Enter.');
+    options.output.write('Use \\ at the end of a line to continue on the next line.');
+    options.output.write('Type "exit" or "quit" to end the session.\n');
+  }
 
   // REPL loop
   let isRunning = true;
@@ -129,7 +168,7 @@ async function runInteractive(
   while (isRunning) {
     try {
       // Prompt for input
-      const userInput = await options.input.prompt('> ');
+      const userInput = await options.input.prompt(`${userLabel} › `);
 
       // Check for exit commands
       const trimmedInput = userInput.trim().toLowerCase();
@@ -152,7 +191,7 @@ async function runInteractive(
       // Display result
       options.output.write('');
       if (result.success) {
-        options.output.write(result.response);
+        options.output.write(`${agentLabel} › ${result.response}`);
         options.output.write('');
 
         // Display token usage

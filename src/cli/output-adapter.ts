@@ -13,6 +13,34 @@ export interface TokenUsage {
 }
 
 /**
+ * Information used to render the chat session header.
+ *
+ * Example:
+ *   const info: ChatHeaderInfo = {
+ *     agentName: 'My Agent',
+ *     provider: 'kimi',
+ *     model: 'kimi-k2-0905-preview',
+ *     sessionId: 'a1b2c3d4',
+ *     userLabel: 'you',
+ *     agentLabel: 'agent',
+ *   };
+ */
+export interface ChatHeaderInfo {
+  /** Display name of the agent */
+  readonly agentName: string;
+  /** Provider identifier (e.g. "anthropic", "openai") */
+  readonly provider: string;
+  /** Model identifier */
+  readonly model: string;
+  /** Session ID (typically shortened to first 8 chars at the call site) */
+  readonly sessionId: string;
+  /** Label shown in the user prompt (e.g. "you") */
+  readonly userLabel: string;
+  /** Label shown before each agent response (e.g. "agent") */
+  readonly agentLabel: string;
+}
+
+/**
  * Output adapter interface.
  * Implementations can provide different output formats (plain text, colors, TUI).
  *
@@ -63,4 +91,13 @@ export interface OutputAdapter {
    * Stop loading indicator (optional).
    */
   stopLoading?(): void;
+
+  /**
+   * Render a styled chat session header (optional).
+   * Implementations should display agent name, provider, model,
+   * session ID, and exit hint in a visually distinct box.
+   *
+   * @param info - Header data to render
+   */
+  writeHeader?(info: ChatHeaderInfo): void;
 }

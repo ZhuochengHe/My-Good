@@ -44,6 +44,16 @@ export interface AgentConfig {
   readonly model: string;
   /** Selected provider ID */
   readonly provider: ProviderType;
+  /**
+   * Label shown in the chat prompt for the user.
+   * Defaults to "you" if not set.
+   */
+  readonly userLabel?: string;
+  /**
+   * Label shown before each agent response.
+   * Defaults to "agent" if not set.
+   */
+  readonly agentLabel?: string;
 }
 
 /** Agent execution options */

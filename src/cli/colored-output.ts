@@ -5,7 +5,7 @@
 
 import { Chalk } from 'chalk';
 import ora, { type Ora } from 'ora';
-import type { OutputAdapter, TokenUsage } from './output-adapter.js';
+import type { OutputAdapter, TokenUsage, ChatHeaderInfo } from './output-adapter.js';
 
 // Determine color support level.
 // process.stdout.isTTY is undefined in some WSL2/subprocess contexts even
@@ -119,5 +119,61 @@ export class ColoredOutput implements OutputAdapter {
       this.spinner.stop();
       this.spinner = null;
     }
+  }
+
+  /**
+   * Render a styled chat header box to stdout.
+   * Fixed 56-char inner width; fits cleanly on standard 80-col terminals.
+   *
+   * Example output:
+   *   ╭──────────────────────────────────────────────────────╮
+   *   │  My Agent  ·  anthropic  ·  claude-sonnet-4          │
+   *   │  Session: a1b2c3d4  ·  Type "exit" to quit           │
+   *   ╰──────────────────────────────────────────────────────╯
+   *
+   * @param info - Header data to render
+   */
+  writeHeader(info: ChatHeaderInfo): void {
+    // Inner width between the two vertical bars (excluding the bars themselves).
+    const INNER = 56;
+    const HORIZONTAL = '─'.repeat(INNER);
+
+    const top    = chalk.dim(`╭${HORIZONTAL}╮`);
+    const bottom = chalk.dim(`╰${HORIZONTAL}╯`);
+
+    // Row 1: agent name  ·  provider  ·  model
+    const agentPart    = chalk.bold.white(info.agentName);
+    const providerPart = chalk.dim(info.provider);
+    const modelPart    = chalk.dim.cyan(info.model);
+    const separator    = chalk.dim('  ·  ');
+    const row1Content  = `${agentPart}${separator}${providerPart}${separator}${modelPart}`;
+    const row1         = this.buildBoxRow(row1Content, INNER);
+
+    // Row 2: Session: <short id>  ·  Type "exit" to quit
+    const sessionPart  = chalk.dim(`Session: ${chalk.white(info.sessionId)}`);
+    const hintPart     = chalk.dim('Type "exit" to quit');
+    const row2Content  = `${sessionPart}${chalk.dim('  ·  ')}${hintPart}`;
+    const row2         = this.buildBoxRow(row2Content, INNER);
+
+    process.stdout.write(`\n${top}\n${row1}\n${row2}\n${bottom}\n\n`);
+  }
+
+  /**
+   * Build a single box row padded to INNER visible characters.
+   * Because chalk escape sequences have zero visible width, we pad based
+   * on the raw text length rather than the styled string length.
+   *
+   * @param styledContent - Chalk-styled string for the row body
+   * @param innerWidth - Total inner width in visible characters
+   * @returns Formatted box row string with dim vertical borders
+   */
+  private buildBoxRow(styledContent: string, innerWidth: number): string {
+    // Strip ANSI codes to measure visible length.
+    // eslint-disable-next-line no-control-regex
+    const ansiPattern = /\x1B\[[0-9;]*m/g;
+    const visibleLength = styledContent.replace(ansiPattern, '').length;
+    // Leading two spaces + content + trailing padding + two spaces before border
+    const contentWithPadding = `  ${styledContent}${' '.repeat(Math.max(0, innerWidth - visibleLength - 2))}`;
+    return `${chalk.dim('│')}${contentWithPadding}${chalk.dim('│')}`;
   }
 }

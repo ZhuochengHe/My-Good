@@ -231,7 +231,7 @@ export async function main(argv: string[]): Promise<void> {
     .action(async (cmdOptions: { session?: string; message?: string }) => {
       const opts = program.opts();
       const configPath = opts['config'];
-      const { sessionManager, output, warnings } = await bootstrap({
+      const { sessionManager, output, config, warnings } = await bootstrap({
         configPath,
       });
 
@@ -248,6 +248,7 @@ export async function main(argv: string[]): Promise<void> {
         sessionManager,
         output,
         input,
+        config,
         ...(cmdOptions.session && { sessionId: cmdOptions.session }),
         ...(cmdOptions.message && { message: cmdOptions.message }),
       });

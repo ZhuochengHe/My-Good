@@ -5,12 +5,29 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { chat } from '../../../src/cli/commands/chat.js';
-import type { OutputAdapter } from '../../../src/cli/output-adapter.js';
+import type { OutputAdapter, ChatHeaderInfo } from '../../../src/cli/output-adapter.js';
 import type { InputReader } from '../../../src/cli/input-reader.js';
 import type { SessionManager, RunResult } from '../../../src/session/session-manager.js';
+import type { AppConfig } from '../../../src/types/config.js';
+
+/** Minimal config fixture used across header/label tests. */
+const TEST_CONFIG: AppConfig = {
+  agent: {
+    id: 'test-agent',
+    name: 'Test Agent',
+    model: 'test-model',
+    provider: 'anthropic',
+    userLabel: 'me',
+    agentLabel: 'bot',
+  },
+  providers: { anthropic: { apiKey: 'test-key' } },
+  plugins: { directories: [], enabled: [], disabled: [] },
+  session: { storePath: './.sessions', maxMessages: 100, idleTimeoutMinutes: 30 },
+  logging: { level: 'info', format: 'pretty' },
+};
 
 describe('chat command', () => {
-  let mockOutput: OutputAdapter;
+  let mockOutput: OutputAdapter & { writeHeader: ReturnType<typeof vi.fn> };
   let mockInput: InputReader;
   let mockSessionManager: SessionManager;
 
@@ -22,6 +39,7 @@ describe('chat command', () => {
       writeTokenUsage: vi.fn(),
       startLoading: vi.fn(),
       stopLoading: vi.fn(),
+      writeHeader: vi.fn(),
     };
 
     mockInput = {
@@ -67,18 +85,106 @@ describe('chat command', () => {
       );
     });
 
-    it('should display welcome message', async () => {
+    it('should display welcome message when no writeHeader is available', async () => {
+      // Use an output adapter that does NOT implement writeHeader
+      const plainOutput: OutputAdapter = {
+        write: vi.fn(),
+        writeError: vi.fn(),
+        writeSuccess: vi.fn(),
+        writeTokenUsage: vi.fn(),
+      };
+
       vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+      vi.mocked(mockInput.prompt).mockResolvedValueOnce('exit');
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: plainOutput,
+        input: mockInput,
+      });
+
+      expect(plainOutput.write).toHaveBeenCalledWith(
+        expect.stringContaining('Welcome')
+      );
+    });
+
+    it('should call writeHeader on session start when adapter supports it', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue(
+        'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+      );
       vi.mocked(mockInput.prompt).mockResolvedValueOnce('exit');
 
       await chat({
         sessionManager: mockSessionManager,
         output: mockOutput,
         input: mockInput,
+        config: TEST_CONFIG,
       });
 
+      expect(mockOutput.writeHeader).toHaveBeenCalledOnce();
+      const headerArg: ChatHeaderInfo = vi.mocked(mockOutput.writeHeader).mock.calls[0][0];
+      expect(headerArg.agentName).toBe('Test Agent');
+      expect(headerArg.provider).toBe('anthropic');
+      expect(headerArg.model).toBe('test-model');
+      // Session ID is sliced to first 8 characters
+      expect(headerArg.sessionId).toBe('a1b2c3d4');
+      expect(headerArg.userLabel).toBe('me');
+      expect(headerArg.agentLabel).toBe('bot');
+    });
+
+    it('should use default labels when config is absent', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('session-id');
+      vi.mocked(mockInput.prompt)
+        .mockResolvedValueOnce('hi')
+        .mockResolvedValueOnce('exit');
+
+      const mockResult: RunResult = {
+        success: true,
+        response: 'hello',
+        tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+      vi.mocked(mockSessionManager.run).mockResolvedValue(mockResult);
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        input: mockInput,
+        // No config — defaults apply
+      });
+
+      // Default userLabel is "you", so prompt should use "you › "
+      expect(mockInput.prompt).toHaveBeenCalledWith('you › ');
+      // Default agentLabel is "agent"
       expect(mockOutput.write).toHaveBeenCalledWith(
-        expect.stringContaining('Welcome')
+        expect.stringContaining('agent › hello')
+      );
+    });
+
+    it('should use configurable labels from config', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('session-id');
+      vi.mocked(mockInput.prompt)
+        .mockResolvedValueOnce('hello')
+        .mockResolvedValueOnce('exit');
+
+      const mockResult: RunResult = {
+        success: true,
+        response: 'Hi there!',
+        tokenUsage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      };
+      vi.mocked(mockSessionManager.run).mockResolvedValue(mockResult);
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        input: mockInput,
+        config: TEST_CONFIG,
+      });
+
+      // userLabel from config is "me"
+      expect(mockInput.prompt).toHaveBeenCalledWith('me › ');
+      // agentLabel from config is "bot"
+      expect(mockOutput.write).toHaveBeenCalledWith(
+        expect.stringContaining('bot › Hi there!')
       );
     });
 
@@ -283,6 +389,28 @@ describe('chat command', () => {
       );
       // Should not prompt for more input
       expect(mockInput.prompt).not.toHaveBeenCalled();
+    });
+
+    it('should prefix agent response with agentLabel in single message mode', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+
+      const mockRunResult: RunResult = {
+        success: true,
+        response: 'Hello world',
+        tokenUsage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      };
+      vi.mocked(mockSessionManager.run).mockResolvedValue(mockRunResult);
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        input: mockInput,
+        message: 'Hi',
+        config: TEST_CONFIG,
+      });
+
+      // agentLabel from TEST_CONFIG is "bot"
+      expect(mockOutput.write).toHaveBeenCalledWith('bot › Hello world');
     });
 
     it('should work with existing session', async () => {
