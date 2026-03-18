@@ -47,6 +47,8 @@ export interface BootstrapResult {
   readonly output: OutputAdapter;
   /** Warnings during bootstrap */
   readonly warnings: readonly string[];
+  /** Total number of non-expired memory entries across all layers at startup */
+  readonly memoryEntryCount: number;
 }
 
 /**
@@ -157,12 +159,23 @@ export async function bootstrap(
   // Step 13 (formerly 12): Create output adapter
   const output = new ColoredOutput();
 
+  // Step 14: Query total memory entry count across all layers for header display
+  let memoryEntryCount = 0;
+  try {
+    const entries = await memoryStore.search({});
+    memoryEntryCount = entries.length;
+  } catch {
+    // Non-fatal: continue without memory count if storage is unavailable
+    memoryEntryCount = 0;
+  }
+
   return {
     config,
     sessionManager,
     pluginManager,
     output,
     warnings,
+    memoryEntryCount,
   };
 }
 

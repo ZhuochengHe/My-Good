@@ -5,10 +5,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SessionManager } from '../../src/session/session-manager.js';
+import type { RunOptions } from '../../src/session/session-manager.js';
 import { JsonlSessionStore } from '../../src/session/jsonl-store.js';
 import type { Session, SessionMetadata } from '../../src/types/sessions.js';
 import type { ModelProvider, CompletionResponse } from '../../src/types/providers.js';
 import type { UserMessage, AssistantMessage } from '../../src/types/messages.js';
+import type { AgentEvent } from '../../src/types/events.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { tmpdir } from 'os';
@@ -1585,6 +1587,55 @@ describe('SessionManager', () => {
 
       expect(spy).toHaveBeenCalledWith(sessionId);
       expect(spy).toHaveBeenCalledWith(null); // Cleanup
+    });
+
+    it('runWithExecutionLoop forwards caller onEvent alongside internal handler', async () => {
+      const emittedEvents: AgentEvent[] = [];
+
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(async (_input: string, opts?: { onEvent?: (e: AgentEvent) => void }) => {
+          // Simulate the execution loop emitting a tool_call_start event
+          opts?.onEvent?.({
+            type: 'tool_call_start',
+            toolCall: { id: 'tc1', name: 'read_file', input: {} },
+            timestamp: Date.now(),
+          });
+          return {
+            sessionId: 'test-session',
+            messages: [
+              { id: '1', role: 'user' as const, content: 'Hello', timestamp: Date.now() },
+              { id: '2', role: 'assistant' as const, content: 'Result', stopReason: 'end_turn' as const, timestamp: Date.now() },
+            ],
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            turns: 1,
+            finishReason: 'completed' as const,
+          };
+        }),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop
+      );
+
+      const sessionId = await managerWithLoop.createSession();
+      const runOptions: RunOptions = {
+        onEvent: (event) => { emittedEvents.push(event); },
+      };
+      await managerWithLoop.run(sessionId, 'Hello', runOptions);
+
+      // The caller-supplied onEvent should have received the tool_call_start event
+      expect(emittedEvents).toHaveLength(1);
+      expect(emittedEvents[0].type).toBe('tool_call_start');
     });
   });
 });

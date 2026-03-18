@@ -23,6 +23,7 @@ export interface TokenUsage {
  *     sessionId: 'a1b2c3d4',
  *     userLabel: 'you',
  *     agentLabel: 'agent',
+ *     memoryEntryCount: 12,
  *   };
  */
 export interface ChatHeaderInfo {
@@ -38,6 +39,8 @@ export interface ChatHeaderInfo {
   readonly userLabel: string;
   /** Label shown before each agent response (e.g. "agent") */
   readonly agentLabel: string;
+  /** Optional count of memory entries; shown as indicator if > 0 */
+  readonly memoryEntryCount?: number;
 }
 
 /**
@@ -91,6 +94,13 @@ export interface OutputAdapter {
    * Stop loading indicator (optional).
    */
   stopLoading?(): void;
+
+  /**
+   * Updates the loading spinner text without stopping it (optional).
+   *
+   * @param message - New spinner message to display
+   */
+  updateLoading?(message: string): void;
 
   /**
    * Render a styled chat session header (optional).

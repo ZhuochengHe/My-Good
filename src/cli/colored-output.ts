@@ -132,6 +132,18 @@ export class ColoredOutput implements OutputAdapter {
   }
 
   /**
+   * Update the active spinner text without stopping it.
+   * No-op if no spinner is running.
+   *
+   * @param message - New spinner message to display
+   */
+  updateLoading(message: string): void {
+    if (this.spinner) {
+      this.spinner.text = message;
+    }
+  }
+
+  /**
    * Stop the active spinner and clear the elapsed timer.
    * No-op if no spinner is running.
    */
@@ -150,10 +162,16 @@ export class ColoredOutput implements OutputAdapter {
    * Render a styled chat header box to stdout.
    * Fixed 56-char inner width; fits cleanly on standard 80-col terminals.
    *
-   * Example output:
+   * Example output (no memory entries):
    *   ╭──────────────────────────────────────────────────────╮
    *   │  My Agent  ·  anthropic  ·  claude-sonnet-4          │
-   *   │  Session: a1b2c3d4  ·  Type "exit" to quit           │
+   *   │  Session: a1b2c3d4  ·  ? for help · exit            │
+   *   ╰──────────────────────────────────────────────────────╯
+   *
+   * Example output (with memory entries):
+   *   ╭──────────────────────────────────────────────────────╮
+   *   │  My Agent  ·  anthropic  ·  claude-sonnet-4          │
+   *   │  Session: a1b2c3d4  ·  mem 12  ·  exit              │
    *   ╰──────────────────────────────────────────────────────╯
    *
    * @param info - Header data to render
@@ -174,11 +192,21 @@ export class ColoredOutput implements OutputAdapter {
     const row1Content  = `${agentPart}${separator}${providerPart}${separator}${modelPart}`;
     const row1         = this.buildBoxRow(row1Content, INNER);
 
-    // Row 2: Session: <short id>  ·  Type "exit" to quit
-    const sessionPart  = chalk.dim(`Session: ${chalk.white(info.sessionId)}`);
-    const hintPart     = chalk.dim('Type "exit" to quit');
-    const row2Content  = `${sessionPart}${chalk.dim('  ·  ')}${hintPart}`;
-    const row2         = this.buildBoxRow(row2Content, INNER);
+    // Row 2: Session: <short id>  ·  [mem N  ·  ]? for help · exit
+    // When memoryEntryCount is provided and > 0, a compact "mem N  ·  exit"
+    // variant is shown so all content fits within INNER=56 visible characters.
+    // Without memory indicator the full hint "? for help · exit" is shown.
+    const sessionPart = chalk.dim(`Session: ${chalk.white(info.sessionId)}`);
+    let row2Content: string;
+    if (info.memoryEntryCount !== undefined && info.memoryEntryCount > 0) {
+      const memPart  = chalk.dim(`mem ${info.memoryEntryCount}`);
+      const exitPart = chalk.dim('exit');
+      row2Content = `${sessionPart}${separator}${memPart}${separator}${exitPart}`;
+    } else {
+      const hintPart = chalk.dim('? for help · exit');
+      row2Content = `${sessionPart}${separator}${hintPart}`;
+    }
+    const row2 = this.buildBoxRow(row2Content, INNER);
 
     process.stdout.write(`\n${top}\n${row1}\n${row2}\n${bottom}\n\n`);
   }

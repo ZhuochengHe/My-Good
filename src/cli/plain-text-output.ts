@@ -100,4 +100,14 @@ export class PlainTextOutput implements OutputAdapter {
   stopLoading(): void {
     // No-op for plain text output
   }
+
+  /**
+   * Update loading indicator text.
+   * For plain text output, this is a no-op (no spinner to update).
+   *
+   * @param _message - Ignored for plain text output
+   */
+  updateLoading(_message: string): void {
+    // no-op for plain text output
+  }
 }

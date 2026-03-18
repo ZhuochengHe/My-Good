@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { chat } from '../../../src/cli/commands/chat.js';
 import type { OutputAdapter, ChatHeaderInfo } from '../../../src/cli/output-adapter.js';
 import type { InputReader } from '../../../src/cli/input-reader.js';
-import type { SessionManager, RunResult } from '../../../src/session/session-manager.js';
+import type { SessionManager, RunResult, RunOptions } from '../../../src/session/session-manager.js';
 import type { AppConfig } from '../../../src/types/config.js';
 
 /** Minimal config fixture used across header/label tests. */
@@ -51,6 +51,7 @@ describe('chat command', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       run: vi.fn(),
+      searchSessions: vi.fn().mockResolvedValue([]),
     } as unknown as SessionManager;
   });
 
@@ -130,6 +131,43 @@ describe('chat command', () => {
       expect(headerArg.sessionId).toBe('a1b2c3d4');
       expect(headerArg.userLabel).toBe('me');
       expect(headerArg.agentLabel).toBe('bot');
+    });
+
+    it('should pass memoryEntryCount to writeHeader when provided', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue(
+        'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+      );
+      vi.mocked(mockInput.prompt).mockResolvedValueOnce('exit');
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        input: mockInput,
+        config: TEST_CONFIG,
+        memoryEntryCount: 7,
+      });
+
+      expect(mockOutput.writeHeader).toHaveBeenCalledOnce();
+      const headerArg: ChatHeaderInfo = vi.mocked(mockOutput.writeHeader).mock.calls[0][0];
+      expect(headerArg.memoryEntryCount).toBe(7);
+    });
+
+    it('should pass undefined memoryEntryCount to writeHeader when not provided', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue(
+        'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+      );
+      vi.mocked(mockInput.prompt).mockResolvedValueOnce('exit');
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput,
+        input: mockInput,
+        config: TEST_CONFIG,
+      });
+
+      expect(mockOutput.writeHeader).toHaveBeenCalledOnce();
+      const headerArg: ChatHeaderInfo = vi.mocked(mockOutput.writeHeader).mock.calls[0][0];
+      expect(headerArg.memoryEntryCount).toBeUndefined();
     });
 
     it('should use default labels when config is absent', async () => {
@@ -212,7 +250,7 @@ describe('chat command', () => {
         input: mockInput,
       });
 
-      expect(mockSessionManager.run).toHaveBeenCalledWith('test-id', 'Hello');
+      expect(mockSessionManager.run).toHaveBeenCalledWith('test-id', 'Hello', expect.objectContaining({ onEvent: expect.any(Function) }));
       expect(mockOutput.write).toHaveBeenCalledWith(
         expect.stringContaining('Hi there!')
       );
@@ -355,6 +393,87 @@ describe('chat command', () => {
 
       expect(mockInput.close).toHaveBeenCalled();
     });
+
+    describe('slash commands in REPL', () => {
+      it('handles /exit slash command without LLM call', async () => {
+        vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+        vi.mocked(mockInput.prompt).mockResolvedValueOnce('/exit');
+
+        await chat({
+          sessionManager: mockSessionManager,
+          output: mockOutput,
+          input: mockInput,
+        });
+
+        expect(mockSessionManager.run).not.toHaveBeenCalled();
+      });
+
+      it('handles /help slash command without LLM call', async () => {
+        vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+        vi.mocked(mockInput.prompt)
+          .mockResolvedValueOnce('/help')
+          .mockResolvedValueOnce('exit');
+
+        await chat({
+          sessionManager: mockSessionManager,
+          output: mockOutput,
+          input: mockInput,
+        });
+
+        expect(mockSessionManager.run).not.toHaveBeenCalled();
+        // Help text should have been written
+        expect(mockOutput.write).toHaveBeenCalledWith(
+          expect.stringContaining('Available commands'),
+        );
+      });
+
+      it('handles /quit slash command without LLM call', async () => {
+        vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+        vi.mocked(mockInput.prompt).mockResolvedValueOnce('/quit');
+
+        await chat({
+          sessionManager: mockSessionManager,
+          output: mockOutput,
+          input: mockInput,
+        });
+
+        expect(mockSessionManager.run).not.toHaveBeenCalled();
+      });
+
+      it('handles /clear slash command without LLM call', async () => {
+        vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+        vi.mocked(mockInput.prompt)
+          .mockResolvedValueOnce('/clear')
+          .mockResolvedValueOnce('exit');
+
+        await chat({
+          sessionManager: mockSessionManager,
+          output: mockOutput,
+          input: mockInput,
+        });
+
+        expect(mockSessionManager.run).not.toHaveBeenCalled();
+        expect(mockOutput.write).toHaveBeenCalledWith('\x1Bc');
+      });
+
+      it('handles unknown slash command without LLM call', async () => {
+        vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+        vi.mocked(mockInput.prompt)
+          .mockResolvedValueOnce('/notacommand')
+          .mockResolvedValueOnce('exit');
+
+        await chat({
+          sessionManager: mockSessionManager,
+          output: mockOutput,
+          input: mockInput,
+        });
+
+        expect(mockSessionManager.run).not.toHaveBeenCalled();
+        expect(mockOutput.writeError).toHaveBeenCalledWith(
+          expect.stringContaining('/notacommand'),
+        );
+      });
+    });
   });
 
   describe('single message mode', () => {
@@ -382,7 +501,8 @@ describe('chat command', () => {
 
       expect(mockSessionManager.run).toHaveBeenCalledWith(
         'test-id',
-        'Single message'
+        'Single message',
+        expect.objectContaining({ onEvent: expect.any(Function) })
       );
       expect(mockOutput.write).toHaveBeenCalledWith(
         expect.stringContaining('Response to message')
@@ -439,7 +559,8 @@ describe('chat command', () => {
       );
       expect(mockSessionManager.run).toHaveBeenCalledWith(
         'existing-session',
-        'Test message'
+        'Test message',
+        expect.objectContaining({ onEvent: expect.any(Function) })
       );
     });
 
@@ -491,6 +612,98 @@ describe('chat command', () => {
         outputTokens: 25,
         totalTokens: 75,
       });
+    });
+
+    it('updates spinner text when tool_call_start event fires in single message mode', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+
+      vi.mocked(mockSessionManager.run).mockImplementation(
+        async (_sessionId: string, _input: string, options?: RunOptions) => {
+          options?.onEvent?.({
+            type: 'tool_call_start',
+            toolCall: { id: 'tc1', name: 'read_file', input: {} },
+            timestamp: Date.now(),
+          });
+          return { success: true, response: 'done', tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+        }
+      );
+
+      const mockUpdateLoading = vi.fn();
+      const outputWithUpdate: OutputAdapter = { ...mockOutput, updateLoading: mockUpdateLoading };
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: outputWithUpdate,
+        input: mockInput,
+        message: 'Hello',
+      });
+
+      expect(mockUpdateLoading).toHaveBeenCalledWith(expect.stringContaining('read_file'));
+    });
+
+    it('resets spinner text to Thinking... when tool_call_end event fires in single message mode', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+
+      vi.mocked(mockSessionManager.run).mockImplementation(
+        async (_sessionId: string, _input: string, options?: RunOptions) => {
+          options?.onEvent?.({
+            type: 'tool_call_start',
+            toolCall: { id: 'tc1', name: 'shell', input: {} },
+            timestamp: Date.now(),
+          });
+          options?.onEvent?.({
+            type: 'tool_call_end',
+            result: { id: 'tc1', toolCallId: 'tc1', content: '' },
+            timestamp: Date.now(),
+          });
+          return { success: true, response: 'done', tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+        }
+      );
+
+      const updateCalls: string[] = [];
+      const mockUpdateLoading = vi.fn((msg: string) => { updateCalls.push(msg); });
+      const outputWithUpdate: OutputAdapter = { ...mockOutput, updateLoading: mockUpdateLoading };
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: outputWithUpdate,
+        input: mockInput,
+        message: 'Hello',
+      });
+
+      expect(updateCalls[0]).toContain('shell');
+      expect(updateCalls[1]).toBe('Thinking...');
+    });
+  });
+
+  describe('tool call surfacing in interactive mode', () => {
+    it('updates spinner text when tool_call_start event fires', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('test-id');
+      vi.mocked(mockInput.prompt)
+        .mockResolvedValueOnce('Hello')
+        .mockResolvedValueOnce('exit');
+
+      vi.mocked(mockSessionManager.run).mockImplementation(
+        async (_sessionId: string, _input: string, options?: RunOptions) => {
+          options?.onEvent?.({
+            type: 'tool_call_start',
+            toolCall: { id: 'tc1', name: 'read_file', input: {} },
+            timestamp: Date.now(),
+          });
+          return { success: true, response: 'done', tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+        }
+      );
+
+      const mockUpdateLoading = vi.fn();
+      const outputWithUpdate: OutputAdapter = { ...mockOutput, updateLoading: mockUpdateLoading };
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: outputWithUpdate,
+        input: mockInput,
+      });
+
+      expect(mockUpdateLoading).toHaveBeenCalledWith(expect.stringContaining('read_file'));
     });
   });
 });

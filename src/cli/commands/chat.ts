@@ -7,6 +7,11 @@ import type { SessionManager } from '../../session/session-manager.js';
 import type { OutputAdapter } from '../output-adapter.js';
 import type { InputReader } from '../input-reader.js';
 import type { AppConfig } from '../../types/config.js';
+import type { ToolCallStartEvent } from '../../types/events.js';
+import { handleSlashCommand } from '../slash-commands.js';
+
+/** Constant loading message shown while the agent is thinking. */
+const LOADING_MESSAGE = 'Thinking...';
 
 /** Default label shown in the user prompt. */
 const DEFAULT_USER_LABEL = 'you';
@@ -34,6 +39,8 @@ export interface ChatOptions {
    * When omitted, sensible defaults are applied.
    */
   readonly config?: AppConfig;
+  /** Total number of memory entries to display in the header indicator */
+  readonly memoryEntryCount?: number;
 }
 
 /**
@@ -75,12 +82,15 @@ export async function chat(options: ChatOptions): Promise<void> {
     // the plain-text session line preserved for backward compatibility.
     if (options.output.writeHeader) {
       options.output.writeHeader({
-        agentName:  options.config?.agent.name     ?? 'My Agent',
-        provider:   options.config?.agent.provider ?? '',
-        model:      options.config?.agent.model    ?? '',
-        sessionId:  sessionId.slice(0, 8),
+        agentName: options.config?.agent.name     ?? 'My Agent',
+        provider:  options.config?.agent.provider ?? '',
+        model:     options.config?.agent.model    ?? '',
+        sessionId: sessionId.slice(0, 8),
         userLabel,
         agentLabel,
+        ...(options.memoryEntryCount !== undefined && {
+          memoryEntryCount: options.memoryEntryCount,
+        }),
       });
     } else {
       const action = options.sessionId ? 'Resumed' : 'Created new';
@@ -120,9 +130,18 @@ async function runSingleMessage(
 
   options.output.write('');
 
-  // Run agent with message
-  options.output.startLoading?.('Thinking...');
-  const result = await options.sessionManager.run(sessionId, options.message);
+  // Run agent with message, surfacing tool call names in the spinner
+  options.output.startLoading?.(LOADING_MESSAGE);
+  const result = await options.sessionManager.run(sessionId, options.message, {
+    onEvent: (event) => {
+      if (event.type === 'tool_call_start') {
+        const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+        options.output.updateLoading?.(`Using tool: ${toolName}`);
+      } else if (event.type === 'tool_call_end') {
+        options.output.updateLoading?.(LOADING_MESSAGE);
+      }
+    },
+  });
   options.output.stopLoading?.();
 
   // Display result
@@ -180,14 +199,38 @@ async function runInteractive(
         break;
       }
 
+      // Handle slash commands
+      if (userInput.trim().startsWith('/')) {
+        const slashResult = await handleSlashCommand(userInput.trim(), {
+          output: options.output,
+          sessionManager: options.sessionManager,
+          sessionId,
+          ...(options.config !== undefined && { config: options.config }),
+        });
+        if (slashResult.shouldExit) {
+          isRunning = false;
+          break;
+        }
+        if (slashResult.handled) continue;
+      }
+
       // Skip empty input
       if (userInput.trim() === '') {
         continue;
       }
 
-      // Run agent
-      options.output.startLoading?.('Thinking...');
-      const result = await options.sessionManager.run(sessionId, userInput);
+      // Run agent, surfacing tool call names in the spinner
+      options.output.startLoading?.(LOADING_MESSAGE);
+      const result = await options.sessionManager.run(sessionId, userInput, {
+        onEvent: (event) => {
+          if (event.type === 'tool_call_start') {
+            const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+            options.output.updateLoading?.(`Using tool: ${toolName}`);
+          } else if (event.type === 'tool_call_end') {
+            options.output.updateLoading?.(LOADING_MESSAGE);
+          }
+        },
+      });
       options.output.stopLoading?.();
 
       // Display result

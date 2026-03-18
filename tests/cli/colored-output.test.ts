@@ -293,6 +293,53 @@ describe('ColoredOutput', () => {
     });
   });
 
+  describe('updateLoading', () => {
+    it('updates spinner text when spinner is active', () => {
+      let spinnerText = 'Thinking...';
+      const mockSpinner = {
+        get text() { return spinnerText; },
+        set text(v: string) { spinnerText = v; },
+        start: vi.fn().mockReturnThis(),
+        stop: vi.fn().mockReturnThis(),
+        succeed: vi.fn().mockReturnThis(),
+      };
+      const coloredOutput = new ColoredOutput({ spinnerFactory: () => mockSpinner as never });
+
+      coloredOutput.startLoading('Thinking...');
+      coloredOutput.updateLoading('Using tool: read_file');
+
+      expect(spinnerText).toBe('Using tool: read_file');
+
+      coloredOutput.stopLoading();
+    });
+
+    it('is a no-op when spinner is not active', () => {
+      const coloredOutput = new ColoredOutput();
+      // Should not throw when no spinner is running
+      expect(() => coloredOutput.updateLoading('test')).not.toThrow();
+    });
+
+    it('resets spinner text back to original message after tool call', () => {
+      let spinnerText = 'Thinking...';
+      const mockSpinner = {
+        get text() { return spinnerText; },
+        set text(v: string) { spinnerText = v; },
+        start: vi.fn().mockReturnThis(),
+        stop: vi.fn().mockReturnThis(),
+        succeed: vi.fn().mockReturnThis(),
+      };
+      const coloredOutput = new ColoredOutput({ spinnerFactory: () => mockSpinner as never });
+
+      coloredOutput.startLoading('Thinking...');
+      coloredOutput.updateLoading('Using tool: shell');
+      coloredOutput.updateLoading('Thinking...');
+
+      expect(spinnerText).toBe('Thinking...');
+
+      coloredOutput.stopLoading();
+    });
+  });
+
   describe('startLoading elapsed timer', () => {
     beforeEach(() => {
       vi.useFakeTimers();
@@ -356,6 +403,88 @@ describe('ColoredOutput', () => {
       vi.advanceTimersByTime(10000);
 
       expect(spinnerText).toBe('Thinking...');
+    });
+  });
+
+  describe('writeHeader', () => {
+    /** Minimal ChatHeaderInfo fixture for header tests. */
+    const BASE_INFO = {
+      agentName:  'Test Agent',
+      provider:   'anthropic',
+      model:      'claude-3',
+      sessionId:  'a1b2c3d4',
+      userLabel:  'you',
+      agentLabel: 'agent',
+    };
+
+    it('should write to stdout', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader(BASE_INFO);
+      expect(stdoutSpy).toHaveBeenCalled();
+    });
+
+    it('should include agent name in output', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader(BASE_INFO);
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).toContain('Test Agent');
+    });
+
+    it('should include session id in output', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader(BASE_INFO);
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).toContain('a1b2c3d4');
+    });
+
+    it('hint text contains "? for help" when no memoryEntryCount', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader(BASE_INFO);
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).toContain('? for help');
+    });
+
+    it('hint text contains "exit" when no memoryEntryCount', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader(BASE_INFO);
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).toContain('exit');
+    });
+
+    it('should not show memory indicator when memoryEntryCount is 0', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader({ ...BASE_INFO, memoryEntryCount: 0 });
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).not.toContain('mem');
+    });
+
+    it('should not show memory indicator when memoryEntryCount is undefined', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader({ ...BASE_INFO, memoryEntryCount: undefined });
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).not.toContain('mem');
+    });
+
+    it('should show memory indicator when memoryEntryCount is 5', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader({ ...BASE_INFO, memoryEntryCount: 5 });
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).toContain('mem');
+      expect(written).toContain('5');
+    });
+
+    it('should show memory count value when memoryEntryCount is 42', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader({ ...BASE_INFO, memoryEntryCount: 42 });
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).toContain('42');
+    });
+
+    it('should not show "? for help" hint when memory indicator is present', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeHeader({ ...BASE_INFO, memoryEntryCount: 7 });
+      const written = String(stdoutSpy.mock.calls[0][0]);
+      expect(written).not.toContain('? for help');
     });
   });
 });

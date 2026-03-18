@@ -41,6 +41,13 @@ export interface RunOptions {
   readonly temperature?: number;
   /** System prompt override */
   readonly systemPrompt?: string;
+  /**
+   * Optional callback to receive agent lifecycle events during execution.
+   * Receives tool_call_start, tool_call_end, and other events as they occur.
+   *
+   * @param event - Agent event emitted during execution
+   */
+  readonly onEvent?: (event: AgentEvent) => void;
 }
 
 /** Result from agent run */
@@ -378,7 +385,7 @@ export class SessionManager implements EventSubscriber {
   private async runWithExecutionLoop(
     sessionId: string,
     input: string,
-    _options?: RunOptions
+    options?: RunOptions
   ): Promise<RunResult> {
     if (!this.executionLoop) {
       throw new Error('ExecutionLoop not configured');
@@ -390,11 +397,12 @@ export class SessionManager implements EventSubscriber {
       // Set current session for event tracking
       this.setCurrentSessionId(sessionId);
 
-      // Run execution loop with event tracking
+      // Run execution loop with event tracking, composing internal handler with caller-supplied handler
       const result = await this.executionLoop.run(input, {
         sessionId,
         onEvent: (event) => {
           void this.onEvent(event);
+          options?.onEvent?.(event);
         },
         ...(this.onToolCall && { onToolCall: this.onToolCall }),
       });
