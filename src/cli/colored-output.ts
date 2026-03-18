@@ -75,8 +75,7 @@ export class ColoredOutput implements OutputAdapter {
    */
   writeError(text: string): void {
     const message = text.startsWith('Error:') ? text : `Error: ${text}`;
-    const output = message.endsWith('\n') ? message : `${message}\n`;
-    process.stderr.write(chalk.bold.red(output));
+    process.stderr.write(chalk.bold.red(message.trimEnd()) + '\n');
   }
 
   /**
@@ -87,8 +86,7 @@ export class ColoredOutput implements OutputAdapter {
    */
   writeSuccess(text: string): void {
     const message = text.startsWith('Success:') ? text : `Success: ${text}`;
-    const output = message.endsWith('\n') ? message : `${message}\n`;
-    process.stdout.write(chalk.bold.green(output));
+    process.stdout.write(chalk.bold.green(message.trimEnd()) + '\n');
   }
 
   /**
@@ -98,8 +96,8 @@ export class ColoredOutput implements OutputAdapter {
    * @param usage - Token usage statistics
    */
   writeTokenUsage(usage: TokenUsage): void {
-    const message = `tokens ${usage.inputTokens}→${usage.outputTokens}  total ${usage.totalTokens}\n`;
-    process.stdout.write(chalk.dim.cyan(message));
+    const message = `tokens ${usage.inputTokens}→${usage.outputTokens}  total ${usage.totalTokens}`;
+    process.stdout.write(chalk.dim.cyan(message) + '\n');
   }
 
   /**
