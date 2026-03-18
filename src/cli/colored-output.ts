@@ -7,10 +7,20 @@ import { Chalk } from 'chalk';
 import ora, { type Ora } from 'ora';
 import type { OutputAdapter, TokenUsage } from './output-adapter.js';
 
-// Force at least basic color support when stdout is a TTY.
-// Chalk defaults to level 0 in some WSL2/terminal environments even when
-// colors are supported, so we override it when running interactively.
-const chalk = new Chalk({ level: process.stdout.isTTY ? 3 : 0 });
+// Determine color support level.
+// process.stdout.isTTY is undefined in some WSL2/subprocess contexts even
+// when the terminal supports colors. Fall back to TERM/COLORTERM env vars.
+function resolveChalkLevel(): 0 | 1 | 2 | 3 {
+  if (process.stdout.isTTY) return 3;
+  const term = process.env['TERM'] ?? '';
+  const colorterm = process.env['COLORTERM'] ?? '';
+  if (colorterm === 'truecolor' || colorterm === '24bit') return 3;
+  if (term.includes('256color')) return 2;
+  if (term !== '' && term !== 'dumb') return 1;
+  return 0;
+}
+
+const chalk = new Chalk({ level: resolveChalkLevel() });
 
 /**
  * Factory function that creates a spinner instance.
