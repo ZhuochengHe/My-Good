@@ -7,10 +7,15 @@ import { Chalk } from 'chalk';
 import ora, { type Ora } from 'ora';
 import type { OutputAdapter, TokenUsage, ChatHeaderInfo } from './output-adapter.js';
 
-// Determine color support level.
-// process.stdout.isTTY is undefined in some WSL2/subprocess contexts even
-// when the terminal supports colors. Fall back to TERM/COLORTERM env vars.
-function resolveChalkLevel(): 0 | 1 | 2 | 3 {
+/**
+ * Determine the chalk color support level for the current environment.
+ * Respects NO_COLOR per https://no-color.org, then falls back to TTY detection
+ * and TERM/COLORTERM env vars for WSL2/subprocess contexts.
+ *
+ * @returns Chalk color level (0 = no color, 1 = basic, 2 = 256, 3 = truecolor)
+ */
+export function resolveChalkLevel(): 0 | 1 | 2 | 3 {
+  if (process.env['NO_COLOR'] !== undefined) return 0;
   if (process.stdout.isTTY) return 3;
   const term = process.env['TERM'] ?? '';
   const colorterm = process.env['COLORTERM'] ?? '';

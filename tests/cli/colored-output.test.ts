@@ -229,6 +229,70 @@ describe('ColoredOutput', () => {
     });
   });
 
+  describe('resolveChalkLevel', () => {
+    const savedEnv: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      savedEnv['NO_COLOR'] = process.env['NO_COLOR'];
+      savedEnv['TERM'] = process.env['TERM'];
+      savedEnv['COLORTERM'] = process.env['COLORTERM'];
+    });
+
+    afterEach(() => {
+      if (savedEnv['NO_COLOR'] === undefined) {
+        delete process.env['NO_COLOR'];
+      } else {
+        process.env['NO_COLOR'] = savedEnv['NO_COLOR'];
+      }
+      if (savedEnv['TERM'] === undefined) {
+        delete process.env['TERM'];
+      } else {
+        process.env['TERM'] = savedEnv['TERM'];
+      }
+      if (savedEnv['COLORTERM'] === undefined) {
+        delete process.env['COLORTERM'];
+      } else {
+        process.env['COLORTERM'] = savedEnv['COLORTERM'];
+      }
+    });
+
+    it('returns 0 when NO_COLOR is set to empty string', () => {
+      process.env['NO_COLOR'] = '';
+      expect(resolveChalkLevel()).toBe(0);
+    });
+
+    it('returns 0 when NO_COLOR is set to any value', () => {
+      process.env['NO_COLOR'] = '1';
+      expect(resolveChalkLevel()).toBe(0);
+    });
+
+    it('returns 2 for 256color terminal when NO_COLOR is absent', () => {
+      delete process.env['NO_COLOR'];
+      delete process.env['COLORTERM'];
+      process.env['TERM'] = 'xterm-256color';
+      // isTTY is likely undefined in test env so TERM fallback applies
+      if (!process.stdout.isTTY) {
+        expect(resolveChalkLevel()).toBe(2);
+      }
+    });
+
+    it('returns 3 for truecolor COLORTERM when NO_COLOR is absent', () => {
+      delete process.env['NO_COLOR'];
+      process.env['COLORTERM'] = 'truecolor';
+      if (!process.stdout.isTTY) {
+        expect(resolveChalkLevel()).toBe(3);
+      }
+    });
+
+    it('returns 3 for 24bit COLORTERM when NO_COLOR is absent', () => {
+      delete process.env['NO_COLOR'];
+      process.env['COLORTERM'] = '24bit';
+      if (!process.stdout.isTTY) {
+        expect(resolveChalkLevel()).toBe(3);
+      }
+    });
+  });
+
   describe('startLoading elapsed timer', () => {
     beforeEach(() => {
       vi.useFakeTimers();
