@@ -487,4 +487,24 @@ describe('ColoredOutput', () => {
       expect(written).not.toContain('? for help');
     });
   });
+
+  describe('writeChunk', () => {
+    it('writes chunk directly to stdout without adding a newline', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeChunk('hello');
+      expect(stdoutSpy).toHaveBeenCalledWith('hello');
+    });
+
+    it('writes multiple chunks consecutively without newlines', () => {
+      const coloredOutput = new ColoredOutput();
+      coloredOutput.writeChunk('foo');
+      coloredOutput.writeChunk(' bar');
+      expect(stdoutSpy).toHaveBeenNthCalledWith(1, 'foo');
+      expect(stdoutSpy).toHaveBeenNthCalledWith(2, ' bar');
+    });
+
+    it('is defined on the OutputAdapter interface', () => {
+      expect(typeof output.writeChunk).toBe('function');
+    });
+  });
 });

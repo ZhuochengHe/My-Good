@@ -1637,5 +1637,67 @@ describe('SessionManager', () => {
       expect(emittedEvents).toHaveLength(1);
       expect(emittedEvents[0].type).toBe('tool_call_start');
     });
+
+    it('streamRun yields text_delta and agent_end events from executionLoop.stream()', async () => {
+      const yieldedEvents: AgentEvent[] = [
+        { type: 'text_delta', delta: 'Hello', timestamp: Date.now() },
+        { type: 'agent_end', result: { sessionId: 'sid', messages: [], toolCalls: [], turns: 1, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, finishReason: 'completed' }, timestamp: Date.now() },
+      ];
+
+      async function* fakeStream() {
+        for (const event of yieldedEvents) yield event;
+      }
+
+      const mockLoop = {
+        config: { id: 'test', name: 'test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(),
+        stream: vi.fn(() => fakeStream()),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockLoop
+      );
+
+      const sessionId = await manager.createSession();
+      const collected: AgentEvent[] = [];
+      for await (const event of manager.streamRun(sessionId, 'Hi')) {
+        collected.push(event);
+      }
+
+      expect(collected.map((e) => e.type)).toEqual(['text_delta', 'agent_end']);
+      expect((collected[0] as { delta: string }).delta).toBe('Hello');
+    });
+
+    it('streamRun falls back to batch run() when no executionLoop is configured', async () => {
+      vi.mocked(mockProvider.complete).mockResolvedValue({
+        message: {
+          id: 'msg1',
+          role: 'assistant',
+          content: 'Fallback response',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      });
+
+      const sessionId = await sessionManager.createSession(); // no executionLoop
+      const collected: AgentEvent[] = [];
+      for await (const event of sessionManager.streamRun(sessionId, 'Hello')) {
+        collected.push(event);
+      }
+
+      // Should emit synthetic text_delta and agent_end
+      expect(collected.some((e) => e.type === 'text_delta')).toBe(true);
+      expect(collected.some((e) => e.type === 'agent_end')).toBe(true);
+      const delta = collected.find((e) => e.type === 'text_delta') as { delta: string };
+      expect(delta.delta).toBe('Fallback response');
+    });
   });
 });

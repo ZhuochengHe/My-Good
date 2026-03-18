@@ -129,4 +129,13 @@ export interface OutputAdapter {
    * @returns Formatted agent line string
    */
   formatAgentLine?(label: string, response: string): string;
+
+  /**
+   * Write a streaming text chunk directly to output (optional).
+   * Called per token during streaming responses; no newline is added.
+   * When present, the chat command uses streaming mode instead of batch.
+   *
+   * @param chunk - Partial text token to write
+   */
+  writeChunk?(chunk: string): void;
 }

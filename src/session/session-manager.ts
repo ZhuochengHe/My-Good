@@ -371,6 +371,56 @@ export class SessionManager implements EventSubscriber {
   }
 
   /**
+   * Stream agent execution, yielding AgentEvents as they are emitted.
+   *
+   * Uses the ExecutionLoop streaming path so text_delta events are yielded
+   * incrementally per token. Callers should consume text_delta events for
+   * real-time output and agent_end for final token usage.
+   *
+   * Falls back to the non-streaming run() path if no ExecutionLoop is configured
+   * by yielding a single synthetic text_delta and agent_end event.
+   *
+   * @param sessionId - Session ID to run
+   * @param input - User input message
+   * @yields AgentEvent — text_delta, tool_call_start, tool_call_end, agent_end, etc.
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async *streamRun(
+    sessionId: string,
+    input: string,
+  ): AsyncGenerator<AgentEvent> {
+    if (!this.executionLoop) {
+      // Fallback: run non-streaming and emit a single text_delta + agent_end
+      const result = await this.run(sessionId, input);
+      yield {
+        type: 'text_delta',
+        delta: result.response,
+        timestamp: Date.now(),
+      } satisfies AgentEvent;
+      yield {
+        type: 'agent_end',
+        result: {
+          sessionId,
+          messages: [],
+          toolCalls: [],
+          turns: 1,
+          usage: result.tokenUsage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          finishReason: 'completed',
+        },
+        timestamp: Date.now(),
+      } satisfies AgentEvent;
+      return;
+    }
+
+    this.setCurrentSessionId(sessionId);
+
+    for await (const event of this.executionLoop.stream(input, { sessionId })) {
+      void this.onEvent(event);
+      yield event;
+    }
+  }
+
+  /**
    * Run with ExecutionLoop (new path).
    *
    * Uses the ExecutionLoop for full agent capabilities including tool execution.

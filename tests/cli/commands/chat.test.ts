@@ -706,4 +706,87 @@ describe('chat command', () => {
       expect(mockUpdateLoading).toHaveBeenCalledWith(expect.stringContaining('read_file'));
     });
   });
+
+  describe('streaming mode (writeChunk)', () => {
+    async function* makeStream(events: object[]) {
+      for (const event of events) {
+        yield event;
+      }
+    }
+
+    it('uses streamRun when writeChunk is present (single message)', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('stream-session');
+
+      const chunks: string[] = [];
+      const outputWithChunk: OutputAdapter = {
+        ...mockOutput,
+        writeChunk: vi.fn((c: string) => { chunks.push(c); }),
+      };
+      (mockSessionManager as unknown as Record<string, unknown>)['streamRun'] = vi.fn(() =>
+        makeStream([
+          { type: 'text_delta', delta: 'Hello', timestamp: Date.now() },
+          { type: 'agent_end', result: { usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 }, sessionId: 'stream-session', messages: [], toolCalls: [], turns: 1, finishReason: 'completed' }, timestamp: Date.now() },
+        ])
+      );
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: outputWithChunk,
+        input: mockInput,
+        message: 'Hi',
+      });
+
+      expect(chunks).toContain('Hello');
+      expect(mockOutput.writeTokenUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ totalTokens: 10 })
+      );
+    });
+
+    it('uses streamRun when writeChunk is present (interactive)', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('stream-session');
+      vi.mocked(mockInput.prompt)
+        .mockResolvedValueOnce('ping')
+        .mockResolvedValueOnce('exit');
+
+      const chunks: string[] = [];
+      const outputWithChunk: OutputAdapter = {
+        ...mockOutput,
+        writeChunk: vi.fn((c: string) => { chunks.push(c); }),
+      };
+      (mockSessionManager as unknown as Record<string, unknown>)['streamRun'] = vi.fn(() =>
+        makeStream([
+          { type: 'text_delta', delta: 'pong', timestamp: Date.now() },
+          { type: 'agent_end', result: { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, sessionId: 'stream-session', messages: [], toolCalls: [], turns: 1, finishReason: 'completed' }, timestamp: Date.now() },
+        ])
+      );
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: outputWithChunk,
+        input: mockInput,
+      });
+
+      expect(chunks).toContain('pong');
+      // run() should NOT be called in streaming path
+      expect(mockSessionManager.run).not.toHaveBeenCalled();
+    });
+
+    it('falls back to batch run() when writeChunk is absent', async () => {
+      vi.mocked(mockSessionManager.createSession).mockResolvedValue('batch-session');
+      vi.mocked(mockSessionManager.run).mockResolvedValue({
+        success: true,
+        response: 'batch response',
+        tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      });
+
+      await chat({
+        sessionManager: mockSessionManager,
+        output: mockOutput, // no writeChunk
+        input: mockInput,
+        message: 'hello',
+      });
+
+      expect(mockSessionManager.run).toHaveBeenCalled();
+    });
+  });
 });

@@ -233,6 +233,16 @@ export class ColoredOutput implements OutputAdapter {
   }
 
   /**
+   * Write a streaming text chunk directly to stdout without a newline.
+   * Used during streaming responses where tokens arrive incrementally.
+   *
+   * @param chunk - Partial text token to write
+   */
+  writeChunk(chunk: string): void {
+    process.stdout.write(chunk);
+  }
+
+  /**
    * Build a single box row padded to INNER visible characters.
    * Because chalk escape sequences have zero visible width, we pad based
    * on the raw text length rather than the styled string length.

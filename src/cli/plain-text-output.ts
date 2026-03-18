@@ -110,4 +110,13 @@ export class PlainTextOutput implements OutputAdapter {
   updateLoading(_message: string): void {
     // no-op for plain text output
   }
+
+  /**
+   * Write a streaming text chunk directly to stdout without a newline.
+   *
+   * @param chunk - Partial text token to write
+   */
+  writeChunk(chunk: string): void {
+    process.stdout.write(chunk);
+  }
 }

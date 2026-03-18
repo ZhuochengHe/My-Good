@@ -7,7 +7,7 @@ import type { SessionManager } from '../../session/session-manager.js';
 import type { OutputAdapter } from '../output-adapter.js';
 import type { InputReader } from '../input-reader.js';
 import type { AppConfig } from '../../types/config.js';
-import type { ToolCallStartEvent } from '../../types/events.js';
+import type { ToolCallStartEvent, AgentEndEvent } from '../../types/events.js';
 import { handleSlashCommand } from '../slash-commands.js';
 
 /** Constant loading message shown while the agent is thinking. */
@@ -130,32 +130,34 @@ async function runSingleMessage(
 
   options.output.write('');
 
-  // Run agent with message, surfacing tool call names in the spinner
-  options.output.startLoading?.(LOADING_MESSAGE);
-  const result = await options.sessionManager.run(sessionId, options.message, {
-    onEvent: (event) => {
-      if (event.type === 'tool_call_start') {
-        const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
-        options.output.updateLoading?.(`Using tool: ${toolName}`);
-      } else if (event.type === 'tool_call_end') {
-        options.output.updateLoading?.(LOADING_MESSAGE);
-      }
-    },
-  });
-  options.output.stopLoading?.();
-
-  // Display result
-  if (result.success) {
-    const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
-    options.output.write(agentLine);
-    options.output.write('');
-
-    // Display token usage
-    if (result.tokenUsage) {
-      options.output.writeTokenUsage(result.tokenUsage);
-    }
+  if (options.output.writeChunk) {
+    // Streaming path: print agent label prefix, then stream chunks inline
+    await runStreaming(options, sessionId, agentLabel, options.message);
   } else {
-    options.output.writeError(result.error ?? 'Unknown error');
+    // Batch path: spinner while waiting, then print full response
+    options.output.startLoading?.(LOADING_MESSAGE);
+    const result = await options.sessionManager.run(sessionId, options.message, {
+      onEvent: (event) => {
+        if (event.type === 'tool_call_start') {
+          const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+          options.output.updateLoading?.(`Using tool: ${toolName}`);
+        } else if (event.type === 'tool_call_end') {
+          options.output.updateLoading?.(LOADING_MESSAGE);
+        }
+      },
+    });
+    options.output.stopLoading?.();
+
+    if (result.success) {
+      const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
+      options.output.write(agentLine);
+      options.output.write('');
+      if (result.tokenUsage) {
+        options.output.writeTokenUsage(result.tokenUsage);
+      }
+    } else {
+      options.output.writeError(result.error ?? 'Unknown error');
+    }
   }
 }
 
@@ -219,33 +221,34 @@ async function runInteractive(
         continue;
       }
 
-      // Run agent, surfacing tool call names in the spinner
-      options.output.startLoading?.(LOADING_MESSAGE);
-      const result = await options.sessionManager.run(sessionId, userInput, {
-        onEvent: (event) => {
-          if (event.type === 'tool_call_start') {
-            const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
-            options.output.updateLoading?.(`Using tool: ${toolName}`);
-          } else if (event.type === 'tool_call_end') {
-            options.output.updateLoading?.(LOADING_MESSAGE);
-          }
-        },
-      });
-      options.output.stopLoading?.();
-
-      // Display result
+      // Run agent — streaming when supported, batch otherwise
       options.output.write('');
-      if (result.success) {
-        const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
-        options.output.write(agentLine);
-        options.output.write('');
-
-        // Display token usage
-        if (result.tokenUsage) {
-          options.output.writeTokenUsage(result.tokenUsage);
-        }
+      if (options.output.writeChunk) {
+        await runStreaming(options, sessionId, agentLabel, userInput);
       } else {
-        options.output.writeError(result.error ?? 'Unknown error');
+        options.output.startLoading?.(LOADING_MESSAGE);
+        const result = await options.sessionManager.run(sessionId, userInput, {
+          onEvent: (event) => {
+            if (event.type === 'tool_call_start') {
+              const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+              options.output.updateLoading?.(`Using tool: ${toolName}`);
+            } else if (event.type === 'tool_call_end') {
+              options.output.updateLoading?.(LOADING_MESSAGE);
+            }
+          },
+        });
+        options.output.stopLoading?.();
+
+        if (result.success) {
+          const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
+          options.output.write(agentLine);
+          options.output.write('');
+          if (result.tokenUsage) {
+            options.output.writeTokenUsage(result.tokenUsage);
+          }
+        } else {
+          options.output.writeError(result.error ?? 'Unknown error');
+        }
       }
 
       options.output.write('');
@@ -258,4 +261,65 @@ async function runInteractive(
 
   // Clean up
   options.input.close();
+}
+
+/**
+ * Stream agent response token-by-token, printing each chunk as it arrives.
+ *
+ * Prints the agent label prefix before the first chunk, then streams tokens
+ * inline. Shows a spinner for tool calls mid-stream, resuming output after.
+ * Writes token usage from the agent_end event when streaming completes.
+ *
+ * @param options - Chat command options (must have output.writeChunk defined)
+ * @param sessionId - Active session ID
+ * @param agentLabel - Label to prefix before the streamed response
+ * @param input - User input message to send
+ */
+async function runStreaming(
+  options: ChatOptions,
+  sessionId: string,
+  agentLabel: string,
+  input: string,
+): Promise<void> {
+  const prefix = options.output.formatAgentLine?.(agentLabel, '') ?? `${agentLabel} › `;
+  let prefixWritten = false;
+  let inToolCall = false;
+
+  for await (const event of options.sessionManager.streamRun(sessionId, input)) {
+    if (event.type === 'text_delta') {
+      // If we were in a tool call, stop the spinner before resuming text output
+      if (inToolCall) {
+        options.output.stopLoading?.();
+        inToolCall = false;
+      }
+      // Print the agent label prefix before the first text chunk
+      if (!prefixWritten) {
+        options.output.writeChunk!(prefix);
+        prefixWritten = true;
+      }
+      options.output.writeChunk!(event.delta);
+    } else if (event.type === 'tool_call_start') {
+      inToolCall = true;
+      const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+      options.output.startLoading?.(`Using tool: ${toolName}`);
+    } else if (event.type === 'tool_call_end') {
+      options.output.stopLoading?.();
+      inToolCall = false;
+    } else if (event.type === 'agent_end') {
+      // Terminate the streamed response line
+      if (prefixWritten) {
+        options.output.write('');
+      }
+      // Display token usage
+      const usage = (event as AgentEndEvent).result.usage;
+      if (usage.totalTokens > 0) {
+        options.output.writeTokenUsage(usage);
+      }
+    }
+  }
+
+  // If no text was streamed (e.g. pure tool-call response), ensure newline
+  if (!prefixWritten) {
+    options.output.write('');
+  }
 }
