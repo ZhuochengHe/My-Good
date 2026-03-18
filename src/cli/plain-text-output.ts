@@ -64,6 +64,27 @@ export class PlainTextOutput implements OutputAdapter {
   }
 
   /**
+   * Format the user prompt string as plain text.
+   *
+   * @param label - User label (e.g. "you")
+   * @returns Plain prompt string
+   */
+  formatUserPrompt(label: string): string {
+    return `${label} › `;
+  }
+
+  /**
+   * Format an agent response line as plain text.
+   *
+   * @param label - Agent label (e.g. "agent")
+   * @param response - Agent response text
+   * @returns Plain agent line string
+   */
+  formatAgentLine(label: string, response: string): string {
+    return `${label} › ${response}`;
+  }
+
+  /**
    * Start loading indicator.
    * For plain text output, just writes the message.
    *

@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { OutputAdapter } from '../../src/cli/output-adapter.js';
-import { ColoredOutput } from '../../src/cli/colored-output.js';
+import { ColoredOutput, resolveChalkLevel } from '../../src/cli/colored-output.js';
 
 describe('ColoredOutput', () => {
   let output: OutputAdapter;
@@ -126,6 +126,40 @@ describe('ColoredOutput', () => {
     it('should handle zero tokens', () => {
       output.writeTokenUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
       expect(stdoutSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('formatUserPrompt', () => {
+    it('should return string containing the label', () => {
+      const coloredOutput = new ColoredOutput();
+      const result = coloredOutput.formatUserPrompt('you');
+      expect(result).toContain('you');
+    });
+
+    it('should return string containing the › separator', () => {
+      const coloredOutput = new ColoredOutput();
+      const result = coloredOutput.formatUserPrompt('you');
+      expect(result).toContain('›');
+    });
+  });
+
+  describe('formatAgentLine', () => {
+    it('should return string containing the label', () => {
+      const coloredOutput = new ColoredOutput();
+      const result = coloredOutput.formatAgentLine('agent', 'hello');
+      expect(result).toContain('agent');
+    });
+
+    it('should return string containing the › separator', () => {
+      const coloredOutput = new ColoredOutput();
+      const result = coloredOutput.formatAgentLine('agent', 'hello');
+      expect(result).toContain('›');
+    });
+
+    it('should return string containing the response', () => {
+      const coloredOutput = new ColoredOutput();
+      const result = coloredOutput.formatAgentLine('agent', 'hello');
+      expect(result).toContain('hello');
     });
   });
 

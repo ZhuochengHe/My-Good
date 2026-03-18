@@ -159,6 +159,27 @@ export class ColoredOutput implements OutputAdapter {
   }
 
   /**
+   * Format the user prompt string with cyan label and dim separator.
+   *
+   * @param label - User label (e.g. "you")
+   * @returns Chalk-styled prompt string
+   */
+  formatUserPrompt(label: string): string {
+    return chalk.cyan(label) + chalk.dim(' › ');
+  }
+
+  /**
+   * Format an agent response line with green label and dim separator.
+   *
+   * @param label - Agent label (e.g. "agent")
+   * @param response - Agent response text
+   * @returns Chalk-styled agent line string
+   */
+  formatAgentLine(label: string, response: string): string {
+    return chalk.green(label) + chalk.dim(' › ') + response;
+  }
+
+  /**
    * Build a single box row padded to INNER visible characters.
    * Because chalk escape sequences have zero visible width, we pad based
    * on the raw text length rather than the styled string length.

@@ -127,7 +127,8 @@ async function runSingleMessage(
 
   // Display result
   if (result.success) {
-    options.output.write(`${agentLabel} › ${result.response}`);
+    const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
+    options.output.write(agentLine);
     options.output.write('');
 
     // Display token usage
@@ -168,7 +169,8 @@ async function runInteractive(
   while (isRunning) {
     try {
       // Prompt for input
-      const userInput = await options.input.prompt(`${userLabel} › `);
+      const promptText = options.output.formatUserPrompt?.(userLabel) ?? `${userLabel} › `;
+      const userInput = await options.input.prompt(promptText);
 
       // Check for exit commands
       const trimmedInput = userInput.trim().toLowerCase();
@@ -191,7 +193,8 @@ async function runInteractive(
       // Display result
       options.output.write('');
       if (result.success) {
-        options.output.write(`${agentLabel} › ${result.response}`);
+        const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
+        options.output.write(agentLine);
         options.output.write('');
 
         // Display token usage

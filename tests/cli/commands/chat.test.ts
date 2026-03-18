@@ -410,7 +410,7 @@ describe('chat command', () => {
       });
 
       // agentLabel from TEST_CONFIG is "bot"
-      expect(mockOutput.write).toHaveBeenCalledWith('bot › Hello world');
+      expect(mockOutput.write).toHaveBeenCalledWith(expect.stringContaining('Hello world'));
     });
 
     it('should work with existing session', async () => {

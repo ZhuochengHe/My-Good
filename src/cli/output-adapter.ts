@@ -100,4 +100,23 @@ export interface OutputAdapter {
    * @param info - Header data to render
    */
   writeHeader?(info: ChatHeaderInfo): void;
+
+  /**
+   * Format the user prompt string (optional).
+   * Returns a styled prompt prefix including the label and separator.
+   *
+   * @param label - User label (e.g. "you")
+   * @returns Formatted prompt string
+   */
+  formatUserPrompt?(label: string): string;
+
+  /**
+   * Format an agent response line (optional).
+   * Returns a styled string combining the agent label and response text.
+   *
+   * @param label - Agent label (e.g. "agent")
+   * @param response - Agent response text
+   * @returns Formatted agent line string
+   */
+  formatAgentLine?(label: string, response: string): string;
 }
