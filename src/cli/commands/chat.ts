@@ -276,7 +276,7 @@ async function runInteractive(
  * @param input - User input message to send
  */
 /** Default typewriter interval in milliseconds (~55 chars/s). */
-const DEFAULT_TYPEWRITER_SPEED_MS = 18;
+const DEFAULT_TYPEWRITER_SPEED_MS = 30;
 
 /**
  * Minimum characters to accumulate before flushing when typewriter is off.

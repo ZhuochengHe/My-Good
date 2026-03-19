@@ -18,6 +18,8 @@ export function getDefaultConfig(): AppConfig {
       // Placeholder values - user must run setup
       model: 'claude-sonnet-4-20250514',
       provider: 'anthropic',
+      typewriterEffect: true,
+      typewriterSpeedMs: 30,
     },
     providers: {
       // Placeholder API key - user must configure
