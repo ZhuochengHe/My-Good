@@ -24,7 +24,7 @@ import { settingsShow, settingsGet, settingsSet, settingsReset } from './command
 import { updateModels } from './commands/model.js';
 import { StdinInputReader } from './stdin-input-reader.js';
 import { promptPassword, promptLine } from './password-input.js';
-import { PlainTextOutput } from './plain-text-output.js';
+import { ColoredOutput } from './colored-output.js';
 
 /**
  * Main CLI function.
@@ -55,7 +55,7 @@ export async function main(argv: string[]): Promise<void> {
     .action(async () => {
       const opts = program.opts();
       const configPath = opts['config'];
-      const output = new PlainTextOutput();
+      const output = new ColoredOutput();
 
       const result = await runSetup({
         configPath,
@@ -81,7 +81,7 @@ export async function main(argv: string[]): Promise<void> {
     .command('show')
     .description('Show all settings')
     .action(async () => {
-      const output = new PlainTextOutput();
+      const output = new ColoredOutput();
       await settingsShow({ output });
     });
 
@@ -89,7 +89,7 @@ export async function main(argv: string[]): Promise<void> {
     .command('get <key>')
     .description('Get a specific setting value')
     .action(async (key: string) => {
-      const output = new PlainTextOutput();
+      const output = new ColoredOutput();
       await settingsGet({ output, key });
     });
 
@@ -97,7 +97,7 @@ export async function main(argv: string[]): Promise<void> {
     .command('set <key> <value>')
     .description('Set a setting value')
     .action(async (key: string, value: string) => {
-      const output = new PlainTextOutput();
+      const output = new ColoredOutput();
       await settingsSet({ output, key, value });
     });
 
@@ -105,7 +105,7 @@ export async function main(argv: string[]): Promise<void> {
     .command('reset')
     .description('Reset settings to defaults')
     .action(async () => {
-      const output = new PlainTextOutput();
+      const output = new ColoredOutput();
       await settingsReset({ output });
     });
 
@@ -211,7 +211,7 @@ export async function main(argv: string[]): Promise<void> {
     .action(() => {
       const opts = program.opts();
       const configPath = opts['config'];
-      const output = new PlainTextOutput();
+      const output = new ColoredOutput();
 
       try {
         updateModels({ configPath, output });
@@ -231,7 +231,7 @@ export async function main(argv: string[]): Promise<void> {
     .action(async (cmdOptions: { session?: string; message?: string }) => {
       const opts = program.opts();
       const configPath = opts['config'];
-      const { sessionManager, output, warnings } = await bootstrap({
+      const { sessionManager, output, config, warnings, memoryEntryCount } = await bootstrap({
         configPath,
       });
 
@@ -248,6 +248,8 @@ export async function main(argv: string[]): Promise<void> {
         sessionManager,
         output,
         input,
+        config,
+        memoryEntryCount,
         ...(cmdOptions.session && { sessionId: cmdOptions.session }),
         ...(cmdOptions.message && { message: cmdOptions.message }),
       });

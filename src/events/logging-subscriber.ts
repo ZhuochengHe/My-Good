@@ -43,7 +43,6 @@ export function createLoggingSubscriber(logger?: Logger): EventSubscriber {
             toolName: event.toolCall.name,
             toolCallId: event.toolCall.id,
             arguments: CredentialDetector.sanitizeObject(event.toolCall.arguments),
-            eventTimestamp: event.timestamp,
           });
           break;
 
@@ -53,14 +52,12 @@ export function createLoggingSubscriber(logger?: Logger): EventSubscriber {
             toolCallId: event.result.callId,
             success: event.result.success,
             durationMs: event.result.durationMs,
-            eventTimestamp: event.timestamp,
           });
           break;
 
         case 'turn_start':
           log.debug('Turn started', {
             turnNumber: event.turnNumber,
-            eventTimestamp: event.timestamp,
           });
           break;
 
@@ -75,7 +72,6 @@ export function createLoggingSubscriber(logger?: Logger): EventSubscriber {
         case 'text_delta':
           log.debug('Text delta', {
             deltaLength: event.delta.length,
-            eventTimestamp: event.timestamp,
           });
           break;
 

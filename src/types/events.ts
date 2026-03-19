@@ -18,28 +18,24 @@ export interface AgentStartEvent {
 export interface TurnStartEvent {
   readonly type: 'turn_start';
   readonly turnNumber: number;
-  readonly timestamp: number;
 }
 
 /** Text delta event for streaming */
 export interface TextDeltaEvent {
   readonly type: 'text_delta';
   readonly delta: string;
-  readonly timestamp: number;
 }
 
 /** Tool call start event */
 export interface ToolCallStartEvent {
   readonly type: 'tool_call_start';
   readonly toolCall: ToolCall;
-  readonly timestamp: number;
 }
 
 /** Tool call end event */
 export interface ToolCallEndEvent {
   readonly type: 'tool_call_end';
   readonly result: ToolResult;
-  readonly timestamp: number;
 }
 
 /** Turn end event */

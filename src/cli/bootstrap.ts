@@ -3,7 +3,8 @@
  * Handles configuration loading, auto-creation, and dependency wiring.
  */
 
-import { mkdir, access, writeFile } from 'node:fs/promises';
+import { mkdir, access, writeFile, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, isAbsolute } from 'node:path';
 import { stringify } from 'yaml';
@@ -47,6 +48,8 @@ export interface BootstrapResult {
   readonly output: OutputAdapter;
   /** Warnings during bootstrap */
   readonly warnings: readonly string[];
+  /** Total number of non-expired memory entries across all layers at startup */
+  readonly memoryEntryCount: number;
 }
 
 /**
@@ -77,6 +80,21 @@ export async function bootstrap(
 
   // Step 3: Load agent settings
   const settings = await loadSettings();
+
+  // Step 3a: Override systemPrompt from the bundled prompt file when available
+  let effectiveSettings = settings;
+  try {
+    const promptPath = fileURLToPath(
+      new URL('../../cli/prompts/system-prompt.md', import.meta.url)
+    );
+    const promptContent = await readFile(promptPath, 'utf-8');
+    effectiveSettings = {
+      ...settings,
+      behavior: { ...settings.behavior, systemPrompt: promptContent },
+    };
+  } catch {
+    // File not found or unreadable; keep existing settings.behavior.systemPrompt
+  }
 
   // Step 4: Check for API keys in environment
   checkApiKeys(config, warnings);
@@ -128,7 +146,7 @@ export async function bootstrap(
       model: config.agent.model,
       provider: config.agent.provider,
     },
-    settings,
+    effectiveSettings,
     provider,
     toolDefinitions,
     workingDirectory,
@@ -157,12 +175,23 @@ export async function bootstrap(
   // Step 13 (formerly 12): Create output adapter
   const output = new ColoredOutput();
 
+  // Step 14: Query total memory entry count across all layers for header display
+  let memoryEntryCount = 0;
+  try {
+    const entries = await memoryStore.search({});
+    memoryEntryCount = entries.length;
+  } catch {
+    // Non-fatal: continue without memory count if storage is unavailable
+    memoryEntryCount = 0;
+  }
+
   return {
     config,
     sessionManager,
     pluginManager,
     output,
     warnings,
+    memoryEntryCount,
   };
 }
 

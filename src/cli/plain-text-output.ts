@@ -54,13 +54,33 @@ export class PlainTextOutput implements OutputAdapter {
 
   /**
    * Write token usage information to stdout.
-   * Format: [Tokens: X input / Y output / Z total]
+   * Format: ↑ X  ↓ Y  ∑ Z
    *
    * @param usage - Token usage statistics
    */
   writeTokenUsage(usage: TokenUsage): void {
-    const message = `[Tokens: ${usage.inputTokens} input / ${usage.outputTokens} output / ${usage.totalTokens} total]`;
-    this.write(message);
+    process.stdout.write(`  ↑ ${usage.inputTokens}  ↓ ${usage.outputTokens}  ∑ ${usage.totalTokens}\n`);
+  }
+
+  /**
+   * Format the user prompt string as plain text.
+   *
+   * @param label - User label (e.g. "you")
+   * @returns Plain prompt string
+   */
+  formatUserPrompt(label: string): string {
+    return `${label} › `;
+  }
+
+  /**
+   * Format an agent response line as plain text.
+   *
+   * @param label - Agent label (e.g. "agent")
+   * @param response - Agent response text
+   * @returns Plain agent line string
+   */
+  formatAgentLine(label: string, response: string): string {
+    return `${label} › ${response}`;
   }
 
   /**
@@ -79,5 +99,24 @@ export class PlainTextOutput implements OutputAdapter {
    */
   stopLoading(): void {
     // No-op for plain text output
+  }
+
+  /**
+   * Update loading indicator text.
+   * For plain text output, this is a no-op (no spinner to update).
+   *
+   * @param _message - Ignored for plain text output
+   */
+  updateLoading(_message: string): void {
+    // no-op for plain text output
+  }
+
+  /**
+   * Write a streaming text chunk directly to stdout without a newline.
+   *
+   * @param chunk - Partial text token to write
+   */
+  writeChunk(chunk: string): void {
+    process.stdout.write(chunk);
   }
 }

@@ -5,10 +5,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SessionManager } from '../../src/session/session-manager.js';
+import type { RunOptions } from '../../src/session/session-manager.js';
 import { JsonlSessionStore } from '../../src/session/jsonl-store.js';
 import type { Session, SessionMetadata } from '../../src/types/sessions.js';
 import type { ModelProvider, CompletionResponse } from '../../src/types/providers.js';
 import type { UserMessage, AssistantMessage } from '../../src/types/messages.js';
+import type { AgentEvent } from '../../src/types/events.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { tmpdir } from 'os';
@@ -1585,6 +1587,659 @@ describe('SessionManager', () => {
 
       expect(spy).toHaveBeenCalledWith(sessionId);
       expect(spy).toHaveBeenCalledWith(null); // Cleanup
+    });
+
+    it('runWithExecutionLoop forwards caller onEvent alongside internal handler', async () => {
+      const emittedEvents: AgentEvent[] = [];
+
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(async (_input: string, opts?: { onEvent?: (e: AgentEvent) => void }) => {
+          // Simulate the execution loop emitting a tool_call_start event
+          opts?.onEvent?.({
+            type: 'tool_call_start',
+            toolCall: { id: 'tc1', name: 'read_file', input: {} },
+            timestamp: Date.now(),
+          });
+          return {
+            sessionId: 'test-session',
+            messages: [
+              { id: '1', role: 'user' as const, content: 'Hello', timestamp: Date.now() },
+              { id: '2', role: 'assistant' as const, content: 'Result', stopReason: 'end_turn' as const, timestamp: Date.now() },
+            ],
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            turns: 1,
+            finishReason: 'completed' as const,
+          };
+        }),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop
+      );
+
+      const sessionId = await managerWithLoop.createSession();
+      const runOptions: RunOptions = {
+        onEvent: (event) => { emittedEvents.push(event); },
+      };
+      await managerWithLoop.run(sessionId, 'Hello', runOptions);
+
+      // The caller-supplied onEvent should have received the tool_call_start event
+      expect(emittedEvents).toHaveLength(1);
+      expect(emittedEvents[0].type).toBe('tool_call_start');
+    });
+
+    it('streamRun yields text_delta and agent_end events from executionLoop.stream()', async () => {
+      const yieldedEvents: AgentEvent[] = [
+        { type: 'text_delta', delta: 'Hello', timestamp: Date.now() },
+        { type: 'agent_end', result: { sessionId: 'sid', messages: [], toolCalls: [], turns: 1, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, finishReason: 'completed' }, timestamp: Date.now() },
+      ];
+
+      async function* fakeStream() {
+        for (const event of yieldedEvents) yield event;
+      }
+
+      const mockLoop = {
+        config: { id: 'test', name: 'test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(),
+        stream: vi.fn(() => fakeStream()),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockLoop
+      );
+
+      const sessionId = await manager.createSession();
+      const collected: AgentEvent[] = [];
+      for await (const event of manager.streamRun(sessionId, 'Hi')) {
+        collected.push(event);
+      }
+
+      expect(collected.map((e) => e.type)).toEqual(['text_delta', 'agent_end']);
+      expect((collected[0] as { delta: string }).delta).toBe('Hello');
+    });
+
+    it('streamRun falls back to batch run() when no executionLoop is configured', async () => {
+      vi.mocked(mockProvider.complete).mockResolvedValue({
+        message: {
+          id: 'msg1',
+          role: 'assistant',
+          content: 'Fallback response',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      });
+
+      const sessionId = await sessionManager.createSession(); // no executionLoop
+      const collected: AgentEvent[] = [];
+      for await (const event of sessionManager.streamRun(sessionId, 'Hello')) {
+        collected.push(event);
+      }
+
+      // Should emit synthetic text_delta and agent_end
+      expect(collected.some((e) => e.type === 'text_delta')).toBe(true);
+      expect(collected.some((e) => e.type === 'agent_end')).toBe(true);
+      const delta = collected.find((e) => e.type === 'text_delta') as { delta: string };
+      expect(delta.delta).toBe('Fallback response');
+    });
+  });
+
+  describe('Conversation History (in-memory currentMessages)', () => {
+    /**
+     * Helper: build a minimal mock execution loop that captures what
+     * messages (conversationHistory) it receives on each call and
+     * returns a simple completed result.
+     */
+    function makeMockLoop(responses: { content: string }[] = [{ content: 'AI reply' }]) {
+      let callIdx = 0;
+      const capturedHistories: import('../../src/types/messages.js').ConversationMessage[][] = [];
+
+      const loop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(async (
+          _input: string,
+          opts?: { conversationHistory?: readonly import('../../src/types/messages.js').ConversationMessage[] }
+        ) => {
+          capturedHistories.push([...(opts?.conversationHistory ?? [])]);
+          const content = responses[callIdx++]?.content ?? 'AI reply';
+          return {
+            sessionId: 'test-session',
+            messages: [
+              { id: `u${callIdx}`, role: 'user' as const, content: _input, timestamp: Date.now() },
+              { id: `a${callIdx}`, role: 'assistant' as const, content, stopReason: 'end_turn' as const, timestamp: Date.now() },
+            ],
+            toolCalls: [],
+            usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+            turns: 1,
+            finishReason: 'completed' as const,
+          };
+        }),
+        stream: vi.fn(async function* (
+          input: string,
+          opts?: { conversationHistory?: readonly import('../../src/types/messages.js').ConversationMessage[] }
+        ) {
+          capturedHistories.push([...(opts?.conversationHistory ?? [])]);
+          const content = responses[callIdx++]?.content ?? 'AI reply';
+          yield { type: 'text_delta' as const, delta: content, timestamp: Date.now() };
+          yield {
+            type: 'agent_end' as const,
+            result: {
+              sessionId: 'test-session',
+              messages: [
+                { id: `u${callIdx}`, role: 'user' as const, content: input, timestamp: Date.now() },
+                { id: `a${callIdx}`, role: 'assistant' as const, content, stopReason: 'end_turn' as const, timestamp: Date.now() },
+              ],
+              toolCalls: [],
+              usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+              turns: 1,
+              finishReason: 'completed' as const,
+            },
+            timestamp: Date.now(),
+          };
+        }),
+        getTools: vi.fn(() => [] as import('../../src/types/tools.js').ToolDefinition[]),
+        getSession: vi.fn(),
+        getCapturedHistories: () => capturedHistories,
+      };
+
+      return loop;
+    }
+
+    it('createSession() resets currentMessages to []', async () => {
+      const loop = makeMockLoop([{ content: 'reply 1' }, { content: 'reply 2' }]);
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop
+      );
+
+      // First session: run to populate currentMessages
+      const session1 = await manager.createSession();
+      await manager.run(session1, 'Turn 1 of session 1');
+
+      // Create a completely new session — currentMessages should reset
+      const session2 = await manager.createSession();
+      await manager.run(session2, 'First turn of session 2');
+
+      const histories = loop.getCapturedHistories();
+      // First call for session1: history is [] (no prior turns)
+      expect(histories[0]).toHaveLength(0);
+      // First call for session2: history must also be [] (reset on createSession)
+      expect(histories[1]).toHaveLength(0);
+    });
+
+    it('resumeSession() populates currentMessages from stored session messages', async () => {
+      // Persist a session with two messages directly into the store
+      const store = new JsonlSessionStore(testDir);
+      const sessionId = 'pre-existing-session';
+      const existingSession: Session = {
+        id: sessionId,
+        agentId: 'test-agent',
+        createdAt: Date.now() - 10000,
+        updatedAt: Date.now() - 5000,
+        messages: [
+          { id: 'm1', role: 'user', content: 'Restored q', timestamp: Date.now() - 9000 },
+          { id: 'm2', role: 'assistant', content: 'Restored a', stopReason: 'end_turn', timestamp: Date.now() - 8000 },
+        ],
+        metadata: {
+          model: 'test-model',
+          provider: 'anthropic',
+          totalTokens: 20,
+          toolCallCount: 0,
+          turnCount: 1,
+          description: 'test',
+          tags: ['common'],
+        },
+      };
+      await store.save(existingSession);
+
+      const loop = makeMockLoop([{ content: 'New reply' }]);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop
+      );
+
+      // Resume the session to load messages into currentMessages
+      await manager.resumeSession(sessionId);
+
+      // Now run — the history passed to the loop should contain the two restored messages
+      await manager.run(sessionId, 'New question');
+
+      const histories = loop.getCapturedHistories();
+      expect(histories[0]).toHaveLength(2);
+      expect(histories[0][0]?.content).toBe('Restored q');
+      expect(histories[0][1]?.content).toBe('Restored a');
+    });
+
+    it('runWithExecutionLoop() passes currentMessages as conversationHistory', async () => {
+      const loop = makeMockLoop([{ content: 'First reply' }, { content: 'Second reply' }]);
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop
+      );
+
+      const sessionId = await manager.createSession();
+
+      // First turn — no prior history
+      await manager.run(sessionId, 'Turn 1');
+
+      // Second turn — history should contain the two messages from turn 1
+      await manager.run(sessionId, 'Turn 2');
+
+      const histories = loop.getCapturedHistories();
+      expect(histories[0]).toHaveLength(0); // First turn: no prior history
+      expect(histories[1]).toHaveLength(2); // Second turn: user + assistant from first turn
+      expect(histories[1][0]?.role).toBe('user');
+      expect(histories[1][0]?.content).toBe('Turn 1');
+      expect(histories[1][1]?.role).toBe('assistant');
+      expect(histories[1][1]?.content).toBe('First reply');
+    });
+
+    it('runWithExecutionLoop() only appends user + final assistant messages (no tool_use/tool_result)', async () => {
+      const loop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(async () => ({
+          sessionId: 'test-session',
+          messages: [
+            { id: 'u1', role: 'user' as const, content: 'Do tool stuff', timestamp: Date.now() },
+            { id: 'a1', role: 'assistant' as const, content: '', toolCalls: [{ id: 'tc1', name: 'shell', arguments: {} }], stopReason: 'tool_use' as const, timestamp: Date.now() },
+            { id: 'tr1', role: 'tool' as const, content: 'tool output', toolCallId: 'tc1', toolName: 'shell', isError: false, timestamp: Date.now() },
+            { id: 'a2', role: 'assistant' as const, content: 'Final answer', stopReason: 'end_turn' as const, timestamp: Date.now() },
+          ],
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+          turns: 2,
+          finishReason: 'completed' as const,
+        })),
+        stream: vi.fn(),
+        getTools: vi.fn(() => [] as import('../../src/types/tools.js').ToolDefinition[]),
+        getSession: vi.fn(),
+      };
+
+      const capturedHistoriesNextCall: import('../../src/types/messages.js').ConversationMessage[][] = [];
+      let secondCall = false;
+      (loop.run as ReturnType<typeof vi.fn>).mockImplementation(async (
+        _input: string,
+        opts?: { conversationHistory?: readonly import('../../src/types/messages.js').ConversationMessage[] }
+      ) => {
+        if (secondCall) {
+          capturedHistoriesNextCall.push([...(opts?.conversationHistory ?? [])]);
+          return {
+            sessionId: 'test-session',
+            messages: [
+              { id: 'u2', role: 'user' as const, content: _input, timestamp: Date.now() },
+              { id: 'a3', role: 'assistant' as const, content: 'Second reply', stopReason: 'end_turn' as const, timestamp: Date.now() },
+            ],
+            toolCalls: [],
+            usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+            turns: 1,
+            finishReason: 'completed' as const,
+          };
+        }
+        secondCall = true;
+        return {
+          sessionId: 'test-session',
+          messages: [
+            { id: 'u1', role: 'user' as const, content: _input, timestamp: Date.now() },
+            { id: 'a1', role: 'assistant' as const, content: '', toolCalls: [{ id: 'tc1', name: 'shell', arguments: {} }], stopReason: 'tool_use' as const, timestamp: Date.now() },
+            { id: 'tr1', role: 'tool' as const, content: 'tool output', toolCallId: 'tc1', toolName: 'shell', isError: false, timestamp: Date.now() },
+            { id: 'a2', role: 'assistant' as const, content: 'Final answer', stopReason: 'end_turn' as const, timestamp: Date.now() },
+          ],
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+          turns: 2,
+          finishReason: 'completed' as const,
+        };
+      });
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop
+      );
+
+      const sessionId = await manager.createSession();
+      await manager.run(sessionId, 'Do tool stuff');
+      await manager.run(sessionId, 'Follow up');
+
+      // Second call's history must only have user message + final assistant text — NOT tool_use or tool_result
+      expect(capturedHistoriesNextCall[0]).toHaveLength(2);
+      expect(capturedHistoriesNextCall[0][0]?.role).toBe('user');
+      expect(capturedHistoriesNextCall[0][1]?.role).toBe('assistant');
+      expect(capturedHistoriesNextCall[0][1]?.content).toBe('Final answer');
+      // Confirm no tool messages were persisted to history
+      const toolMessages = capturedHistoriesNextCall[0].filter((m) => m.role === 'tool');
+      expect(toolMessages).toHaveLength(0);
+    });
+
+    it('streamRun() passes currentMessages as conversationHistory', async () => {
+      const loop = makeMockLoop([{ content: 'Stream reply 1' }, { content: 'Stream reply 2' }]);
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop
+      );
+
+      const sessionId = await manager.createSession();
+
+      // First streamRun call — no prior history
+      for await (const _event of manager.streamRun(sessionId, 'Streamed turn 1')) {
+        // drain
+      }
+
+      // Second streamRun call — history should contain messages from first turn
+      for await (const _event of manager.streamRun(sessionId, 'Streamed turn 2')) {
+        // drain
+      }
+
+      const histories = loop.getCapturedHistories();
+      expect(histories[0]).toHaveLength(0); // First call: no prior history
+      expect(histories[1]).toHaveLength(2); // Second call: user + assistant from first turn
+      expect(histories[1][0]?.content).toBe('Streamed turn 1');
+      expect(histories[1][1]?.content).toBe('Stream reply 1');
+    });
+
+    it('streamRun() after completion only persists user + final assistant messages (no tool intermediates)', async () => {
+      const loop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(),
+        stream: vi.fn(),
+        getTools: vi.fn(() => [] as import('../../src/types/tools.js').ToolDefinition[]),
+        getSession: vi.fn(),
+      };
+
+      const capturedHistoriesNextCall: import('../../src/types/messages.js').ConversationMessage[][] = [];
+      let streamCallCount = 0;
+
+      (loop.stream as ReturnType<typeof vi.fn>).mockImplementation(async function* (
+        input: string,
+        opts?: { conversationHistory?: readonly import('../../src/types/messages.js').ConversationMessage[] }
+      ) {
+        streamCallCount++;
+        if (streamCallCount === 2) {
+          capturedHistoriesNextCall.push([...(opts?.conversationHistory ?? [])]);
+        }
+
+        const isFirstCall = streamCallCount === 1;
+        const userMsg = { id: `u${streamCallCount}`, role: 'user' as const, content: input, timestamp: Date.now() };
+        const toolAssistant = { id: `a1_${streamCallCount}`, role: 'assistant' as const, content: '', toolCalls: [{ id: 'tc1', name: 'shell', arguments: {} }], stopReason: 'tool_use' as const, timestamp: Date.now() };
+        const toolResult = { id: `tr_${streamCallCount}`, role: 'tool' as const, content: 'tool output', toolCallId: 'tc1', toolName: 'shell', isError: false, timestamp: Date.now() };
+        const finalAssistant = { id: `a2_${streamCallCount}`, role: 'assistant' as const, content: isFirstCall ? 'Streamed final' : 'Second final', stopReason: 'end_turn' as const, timestamp: Date.now() };
+
+        yield { type: 'text_delta' as const, delta: finalAssistant.content, timestamp: Date.now() };
+        yield {
+          type: 'agent_end' as const,
+          result: {
+            sessionId: 'test-session',
+            messages: isFirstCall
+              ? [userMsg, toolAssistant, toolResult, finalAssistant]
+              : [userMsg, finalAssistant],
+            toolCalls: [],
+            usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+            turns: isFirstCall ? 2 : 1,
+            finishReason: 'completed' as const,
+          },
+          timestamp: Date.now(),
+        };
+      });
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop
+      );
+
+      const sessionId = await manager.createSession();
+
+      for await (const _event of manager.streamRun(sessionId, 'Tool turn')) {
+        // drain first stream
+      }
+
+      for await (const _event of manager.streamRun(sessionId, 'Follow up')) {
+        // drain second stream
+      }
+
+      // Second call's history must only have user + final assistant — NOT tool messages
+      expect(capturedHistoriesNextCall[0]).toHaveLength(2);
+      expect(capturedHistoriesNextCall[0][0]?.role).toBe('user');
+      expect(capturedHistoriesNextCall[0][1]?.role).toBe('assistant');
+      expect(capturedHistoriesNextCall[0][1]?.content).toBe('Streamed final');
+      const toolMsgs = capturedHistoriesNextCall[0].filter((m) => m.role === 'tool');
+      expect(toolMsgs).toHaveLength(0);
+    });
+  });
+
+  // ============================================================
+  // compact() and estimatePromptTokens()
+  // ============================================================
+
+  describe('compact()', () => {
+    function makeMockLoopForCompact() {
+      return {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(),
+        stream: vi.fn().mockImplementation(async function* () {
+          yield {
+            type: 'agent_end' as const,
+            result: {
+              sessionId: 'test-session',
+              messages: [
+                { id: 'u1', role: 'user' as const, content: 'hi', timestamp: Date.now() },
+                { id: 'a1', role: 'assistant' as const, content: 'hello', stopReason: 'end_turn' as const, timestamp: Date.now() },
+              ],
+              toolCalls: [],
+              usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+              turns: 1,
+              finishReason: 'completed' as const,
+            },
+            timestamp: Date.now(),
+          };
+        }),
+        getTools: vi.fn(() => [] as import('../../src/types/tools.js').ToolDefinition[]),
+        getSession: vi.fn(),
+      };
+    }
+
+    it('returns a summary string', async () => {
+      const compactResponse: CompletionResponse = {
+        message: {
+          id: 'compact-1',
+          role: 'assistant',
+          content: '<summary>User was building a REST API.</summary>',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        model: 'claude-sonnet-4-20250514',
+      };
+      (mockProvider.complete as ReturnType<typeof vi.fn>).mockResolvedValue(compactResponse);
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, makeMockLoopForCompact(),
+      );
+
+      const sessionId = await manager.createSession();
+      const summary = await manager.compact(sessionId);
+
+      expect(typeof summary).toBe('string');
+      expect(summary).toBe('User was building a REST API.');
+    });
+
+    it('resets currentMessages after compact()', async () => {
+      const compactResponse: CompletionResponse = {
+        message: {
+          id: 'compact-2',
+          role: 'assistant',
+          content: '<summary>Summary text.</summary>',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        model: 'claude-sonnet-4-20250514',
+      };
+      (mockProvider.complete as ReturnType<typeof vi.fn>).mockResolvedValue(compactResponse);
+
+      const loop = makeMockLoopForCompact();
+      // Capture the conversationHistory passed on each stream call
+      const capturedHistories: import('../../src/types/messages.js').ConversationMessage[][] = [];
+      (loop.stream as ReturnType<typeof vi.fn>).mockImplementation(async function* (
+        _input: string,
+        opts?: { conversationHistory?: readonly import('../../src/types/messages.js').ConversationMessage[] }
+      ) {
+        capturedHistories.push([...(opts?.conversationHistory ?? [])]);
+        const userMsg = { id: 'u1', role: 'user' as const, content: _input, timestamp: Date.now() };
+        const assistantMsg = { id: 'a1', role: 'assistant' as const, content: 'reply', stopReason: 'end_turn' as const, timestamp: Date.now() };
+        yield {
+          type: 'agent_end' as const,
+          result: {
+            sessionId: 'test-session',
+            messages: [userMsg, assistantMsg],
+            toolCalls: [],
+            usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+            turns: 1,
+            finishReason: 'completed' as const,
+          },
+          timestamp: Date.now(),
+        };
+      });
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop,
+      );
+
+      const sessionId = await manager.createSession();
+
+      // Run one turn to populate currentMessages
+      for await (const _event of manager.streamRun(sessionId, 'First message')) { /* drain */ }
+
+      // After one turn, history should have 2 messages
+      expect(capturedHistories[0]).toHaveLength(0); // first call: no prior history
+      await manager.compact(sessionId);
+
+      // After compact, the next stream call should see empty history
+      for await (const _event of manager.streamRun(sessionId, 'After compact')) { /* drain */ }
+
+      // capturedHistories[1] is the post-compact call — should be empty
+      expect(capturedHistories[1]).toHaveLength(0);
+    });
+
+    it('throws SessionNotFoundError for unknown session', async () => {
+      const { SessionNotFoundError } = await import('../../src/errors/session.js');
+      await expect(sessionManager.compact('nonexistent-session-id')).rejects.toThrow(
+        SessionNotFoundError,
+      );
+    });
+
+    it('uses optional instructions in the prompt', async () => {
+      let capturedRequest: import('../../src/types/providers.js').CompletionRequest | undefined;
+      (mockProvider.complete as ReturnType<typeof vi.fn>).mockImplementation(
+        async (req: import('../../src/types/providers.js').CompletionRequest) => {
+          capturedRequest = req;
+          return {
+            message: {
+              id: 'compact-3',
+              role: 'assistant',
+              content: '<summary>Focused summary.</summary>',
+              stopReason: 'end_turn',
+              timestamp: Date.now(),
+            },
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            model: 'test-model',
+          };
+        }
+      );
+
+      const sessionId = await sessionManager.createSession();
+      await sessionManager.compact(sessionId, 'focus on the bug fixes');
+
+      // The instructions should appear somewhere in the request
+      const requestContent = capturedRequest?.messages[0]?.content ?? '';
+      expect(requestContent).toContain('focus on the bug fixes');
+    });
+
+    it('returns raw content when no summary tags present', async () => {
+      (mockProvider.complete as ReturnType<typeof vi.fn>).mockResolvedValue({
+        message: {
+          id: 'compact-4',
+          role: 'assistant',
+          content: 'No tags here, just raw summary text.',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+        model: 'test-model',
+      } satisfies CompletionResponse);
+
+      const sessionId = await sessionManager.createSession();
+      const summary = await sessionManager.compact(sessionId);
+      expect(summary).toBe('No tags here, just raw summary text.');
+    });
+  });
+
+  describe('estimatePromptTokens()', () => {
+    it('returns 0 when no messages are in history', async () => {
+      const sessionId = await sessionManager.createSession();
+      const count = sessionManager.estimatePromptTokens(sessionId);
+      expect(count).toBe(0);
+    });
+
+    it('returns a positive number after messages are accumulated', async () => {
+      const loop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(),
+        stream: vi.fn().mockImplementation(async function* (_input: string) {
+          const userMsg = { id: 'u1', role: 'user' as const, content: _input, timestamp: Date.now() };
+          const assistantMsg = { id: 'a1', role: 'assistant' as const, content: 'reply', stopReason: 'end_turn' as const, timestamp: Date.now() };
+          yield {
+            type: 'agent_end' as const,
+            result: {
+              sessionId: 'test-session',
+              messages: [userMsg, assistantMsg],
+              toolCalls: [],
+              usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+              turns: 1,
+              finishReason: 'completed' as const,
+            },
+            timestamp: Date.now(),
+          };
+        }),
+        getTools: vi.fn(() => [] as import('../../src/types/tools.js').ToolDefinition[]),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store, mockProvider, { model: 'test-model', agentId: 'test-agent' },
+        undefined, loop,
+      );
+
+      const sessionId = await manager.createSession();
+      for await (const _event of manager.streamRun(sessionId, 'Hello world')) { /* drain */ }
+
+      const count = manager.estimatePromptTokens(sessionId);
+      expect(count).toBeGreaterThan(0);
     });
   });
 });

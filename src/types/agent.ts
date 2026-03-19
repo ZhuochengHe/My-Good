@@ -44,6 +44,27 @@ export interface AgentConfig {
   readonly model: string;
   /** Selected provider ID */
   readonly provider: ProviderType;
+  /**
+   * Label shown in the chat prompt for the user.
+   * Defaults to "you" if not set.
+   */
+  readonly userLabel?: string;
+  /**
+   * Label shown before each agent response.
+   * Defaults to "agent" if not set.
+   */
+  readonly agentLabel?: string;
+  /**
+   * Enable typewriter effect during streaming responses.
+   * Characters are printed one-by-one at a fixed interval to simulate
+   * real-time typing. Defaults to true when not set.
+   */
+  readonly typewriterEffect?: boolean;
+  /**
+   * Interval in milliseconds between each character when typewriterEffect
+   * is enabled. Defaults to 18ms (~55 chars/s). Lower = faster typing.
+   */
+  readonly typewriterSpeedMs?: number;
 }
 
 /** Agent execution options */
@@ -52,6 +73,17 @@ export interface AgentRunOptions {
   readonly stream?: boolean;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: AgentEvent) => void;
+  /**
+   * Prior conversation messages to prepend before the new user input.
+   * Enables multi-turn memory within a session.
+   */
+  readonly conversationHistory?: readonly ConversationMessage[];
+  /**
+   * Summary of compacted prior conversation injected into the system prompt.
+   * When set, a "## Previous Conversation Summary" section is appended to
+   * the system prompt so the model retains awareness of prior context.
+   */
+  readonly compactSummary?: string;
 }
 
 /** Finish reason for agent execution */

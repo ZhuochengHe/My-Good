@@ -13,6 +13,37 @@ export interface TokenUsage {
 }
 
 /**
+ * Information used to render the chat session header.
+ *
+ * Example:
+ *   const info: ChatHeaderInfo = {
+ *     agentName: 'My Agent',
+ *     provider: 'kimi',
+ *     model: 'kimi-k2-0905-preview',
+ *     sessionId: 'a1b2c3d4',
+ *     userLabel: 'you',
+ *     agentLabel: 'agent',
+ *     memoryEntryCount: 12,
+ *   };
+ */
+export interface ChatHeaderInfo {
+  /** Display name of the agent */
+  readonly agentName: string;
+  /** Provider identifier (e.g. "anthropic", "openai") */
+  readonly provider: string;
+  /** Model identifier */
+  readonly model: string;
+  /** Session ID (typically shortened to first 8 chars at the call site) */
+  readonly sessionId: string;
+  /** Label shown in the user prompt (e.g. "you") */
+  readonly userLabel: string;
+  /** Label shown before each agent response (e.g. "agent") */
+  readonly agentLabel: string;
+  /** Optional count of memory entries; shown as indicator if > 0 */
+  readonly memoryEntryCount?: number;
+}
+
+/**
  * Output adapter interface.
  * Implementations can provide different output formats (plain text, colors, TUI).
  *
@@ -63,4 +94,48 @@ export interface OutputAdapter {
    * Stop loading indicator (optional).
    */
   stopLoading?(): void;
+
+  /**
+   * Updates the loading spinner text without stopping it (optional).
+   *
+   * @param message - New spinner message to display
+   */
+  updateLoading?(message: string): void;
+
+  /**
+   * Render a styled chat session header (optional).
+   * Implementations should display agent name, provider, model,
+   * session ID, and exit hint in a visually distinct box.
+   *
+   * @param info - Header data to render
+   */
+  writeHeader?(info: ChatHeaderInfo): void;
+
+  /**
+   * Format the user prompt string (optional).
+   * Returns a styled prompt prefix including the label and separator.
+   *
+   * @param label - User label (e.g. "you")
+   * @returns Formatted prompt string
+   */
+  formatUserPrompt?(label: string): string;
+
+  /**
+   * Format an agent response line (optional).
+   * Returns a styled string combining the agent label and response text.
+   *
+   * @param label - Agent label (e.g. "agent")
+   * @param response - Agent response text
+   * @returns Formatted agent line string
+   */
+  formatAgentLine?(label: string, response: string): string;
+
+  /**
+   * Write a streaming text chunk directly to output (optional).
+   * Called per token during streaming responses; no newline is added.
+   * When present, the chat command uses streaming mode instead of batch.
+   *
+   * @param chunk - Partial text token to write
+   */
+  writeChunk?(chunk: string): void;
 }

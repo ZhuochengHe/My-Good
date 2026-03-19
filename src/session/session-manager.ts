@@ -13,7 +13,7 @@ import type {
   ErrorLogRecord,
 } from '../types/sessions.js';
 import type { ModelProvider, CompletionRequest } from '../types/providers.js';
-import type { UserMessage, AssistantMessage } from '../types/messages.js';
+import type { UserMessage, AssistantMessage, ConversationMessage } from '../types/messages.js';
 import type {
   AgentEvent,
   EventSubscriber,
@@ -25,7 +25,10 @@ import type { Agent } from '../types/agent.js';
 import type { OnToolCallCallback } from '../agent/execution-loop.js';
 import { SessionNotFoundError } from '../errors/session.js';
 import { randomUUID } from 'crypto';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { JsonlSessionStore } from './jsonl-store.js';
+import { TokenCounter } from '../agent/token-counter.js';
 
 /** Options for creating a new session */
 export interface CreateSessionOptions {
@@ -41,6 +44,13 @@ export interface RunOptions {
   readonly temperature?: number;
   /** System prompt override */
   readonly systemPrompt?: string;
+  /**
+   * Optional callback to receive agent lifecycle events during execution.
+   * Receives tool_call_start, tool_call_end, and other events as they occur.
+   *
+   * @param event - Agent event emitted during execution
+   */
+  readonly onEvent?: (event: AgentEvent) => void;
 }
 
 /** Result from agent run */
@@ -125,6 +135,15 @@ export class SessionManager implements EventSubscriber {
   private turnStartTimes: Map<number, number> = new Map();
   private currentTurnNumber: number | null = null;
 
+  // In-memory conversation history for the active session
+  private currentMessages: ConversationMessage[] = [];
+
+  // Compact summary from the most recent compact() call, injected into next run
+  private compactSummary: string | null = null;
+
+  // Token counter for estimating prompt size
+  private readonly tokenCounter: TokenCounter = new TokenCounter();
+
   /**
    * Create a new SessionManager.
    *
@@ -170,6 +189,10 @@ export class SessionManager implements EventSubscriber {
       throw new Error(`Session ${sessionId} already exists`);
     }
 
+    // Reset in-memory conversation history for the new session
+    this.currentMessages = [];
+    this.compactSummary = null;
+
     const now = Date.now();
     const metadata: SessionMetadata = {
       model: this.config.model,
@@ -208,6 +231,9 @@ export class SessionManager implements EventSubscriber {
     if (session === null) {
       throw new SessionNotFoundError(sessionId);
     }
+    // Populate in-memory conversation history from the loaded session
+    this.currentMessages = [...session.messages];
+    this.compactSummary = null;
     return session;
   }
 
@@ -364,6 +390,85 @@ export class SessionManager implements EventSubscriber {
   }
 
   /**
+   * Stream agent execution, yielding AgentEvents as they are emitted.
+   *
+   * Uses the ExecutionLoop streaming path so text_delta events are yielded
+   * incrementally per token. Callers should consume text_delta events for
+   * real-time output and agent_end for final token usage.
+   *
+   * Falls back to the non-streaming run() path if no ExecutionLoop is configured
+   * by yielding a single synthetic text_delta and agent_end event.
+   *
+   * @param sessionId - Session ID to run
+   * @param input - User input message
+   * @yields AgentEvent — text_delta, tool_call_start, tool_call_end, agent_end, etc.
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async *streamRun(
+    sessionId: string,
+    input: string,
+  ): AsyncGenerator<AgentEvent> {
+    if (!this.executionLoop) {
+      // Fallback: run non-streaming and emit a single text_delta + agent_end
+      const result = await this.run(sessionId, input);
+      yield {
+        type: 'text_delta',
+        delta: result.response,
+      } satisfies AgentEvent;
+      yield {
+        type: 'agent_end',
+        result: {
+          sessionId,
+          messages: [],
+          toolCalls: [],
+          turns: 1,
+          usage: result.tokenUsage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          finishReason: 'completed',
+        },
+        timestamp: Date.now(),
+      } satisfies AgentEvent;
+      return;
+    }
+
+    this.setCurrentSessionId(sessionId);
+
+    for await (const event of this.executionLoop.stream(input, {
+      sessionId,
+      conversationHistory: this.currentMessages,
+      ...(this.compactSummary !== null && { compactSummary: this.compactSummary }),
+    })) {
+      void this.onEvent(event);
+
+      // When the execution loop completes, filter and persist messages
+      if (event.type === 'agent_end') {
+        const result = event.result;
+        const newUserMessage = result.messages.find((m) => m.role === 'user');
+        const lastAssistantMessage = result.messages
+          .filter((m) => m.role === 'assistant')
+          .pop();
+
+        const filteredMessages: ConversationMessage[] = [];
+        if (newUserMessage) {
+          filteredMessages.push(newUserMessage);
+        }
+        if (lastAssistantMessage) {
+          filteredMessages.push(lastAssistantMessage);
+        }
+
+        // Update in-memory history for the next turn
+        this.currentMessages = [...this.currentMessages, ...filteredMessages];
+
+        // Persist filtered messages to store (sequential — appendMessage uses atomic rename)
+        for (const message of filteredMessages) {
+          await this.store.appendMessage(sessionId, message);
+        }
+      }
+
+      yield event;
+    }
+  }
+
+  /**
    * Run with ExecutionLoop (new path).
    *
    * Uses the ExecutionLoop for full agent capabilities including tool execution.
@@ -378,23 +483,30 @@ export class SessionManager implements EventSubscriber {
   private async runWithExecutionLoop(
     sessionId: string,
     input: string,
-    _options?: RunOptions
+    options?: RunOptions
   ): Promise<RunResult> {
     if (!this.executionLoop) {
       throw new Error('ExecutionLoop not configured');
     }
 
-    const session = await this.resumeSession(sessionId);
+    // Load the session for metadata, but use currentMessages for conversation history
+    const session = await this.store.load(sessionId);
+    if (session === null) {
+      throw new SessionNotFoundError(sessionId);
+    }
 
     try {
       // Set current session for event tracking
       this.setCurrentSessionId(sessionId);
 
-      // Run execution loop with event tracking
+      // Run execution loop with conversation history and event tracking
       const result = await this.executionLoop.run(input, {
         sessionId,
+        conversationHistory: this.currentMessages,
+        ...(this.compactSummary !== null && { compactSummary: this.compactSummary }),
         onEvent: (event) => {
           void this.onEvent(event);
+          options?.onEvent?.(event);
         },
         ...(this.onToolCall && { onToolCall: this.onToolCall }),
       });
@@ -406,11 +518,22 @@ export class SessionManager implements EventSubscriber {
 
       const response = lastAssistantMessage?.content ?? '';
 
-      // Update session with all messages
-      for (const message of result.messages) {
-        if (message.role === 'user' || message.role === 'assistant' || message.role === 'tool') {
-          await this.store.appendMessage(sessionId, message);
-        }
+      // Filter to only user + final assistant text message (drop tool_use intermediates and tool_result)
+      const newUserMessage = result.messages.find((m) => m.role === 'user');
+      const filteredMessages: ConversationMessage[] = [];
+      if (newUserMessage) {
+        filteredMessages.push(newUserMessage);
+      }
+      if (lastAssistantMessage) {
+        filteredMessages.push(lastAssistantMessage);
+      }
+
+      // Update in-memory history for the next turn
+      this.currentMessages = [...this.currentMessages, ...filteredMessages];
+
+      // Persist filtered messages to store
+      for (const message of filteredMessages) {
+        await this.store.appendMessage(sessionId, message);
       }
 
       // Update metadata
@@ -485,6 +608,89 @@ export class SessionManager implements EventSubscriber {
       // Clear current session
       this.setCurrentSessionId(null);
     }
+  }
+
+  /**
+   * Compact conversation history into a summary.
+   *
+   * Sends the current conversation to the LLM with a summarization prompt,
+   * extracts the summary, resets in-memory history, and stores the summary
+   * for injection into the next system prompt. The raw JSONL history is
+   * preserved on disk.
+   *
+   * @param sessionId - Session ID to compact
+   * @param instructions - Optional user hint to guide summarization
+   * @returns Summary text
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async compact(sessionId: string, instructions?: string): Promise<string> {
+    // Verify session exists
+    const session = await this.store.load(sessionId);
+    if (session === null) {
+      throw new SessionNotFoundError(sessionId);
+    }
+
+    // Build compact summary prompt from file
+    let promptTemplate: string;
+    try {
+      const promptPath = fileURLToPath(
+        new URL('../../cli/prompts/compact-summary.md', import.meta.url)
+      );
+      promptTemplate = await readFile(promptPath, 'utf-8');
+    } catch {
+      promptTemplate =
+        'Summarize the conversation.${COMPACT_INSTRUCTIONS} Wrap output in <summary></summary> tags.';
+    }
+
+    // Inject optional instructions
+    const instructionsText = instructions ? `\nFocus on: ${instructions}\n` : '';
+    const prompt = promptTemplate.replace('${COMPACT_INSTRUCTIONS}', instructionsText);
+
+    // Build request with current history + compaction prompt
+    const historyText = this.currentMessages
+      .map((m) => `${m.role}: ${m.content}`)
+      .join('\n');
+    const fullPrompt = `${historyText}\n\n---\n\n${prompt}`;
+
+    const request: CompletionRequest = {
+      model: this.config.model,
+      messages: [
+        {
+          id: randomUUID(),
+          role: 'user',
+          content: fullPrompt,
+          timestamp: Date.now(),
+        },
+      ],
+      maxTokens: 2048,
+      temperature: 0.3,
+    };
+
+    const response = await this.provider.complete(request);
+    const content = response.message.content;
+
+    // Extract summary from tags
+    const match = /<summary>([\s\S]*?)<\/summary>/.exec(content);
+    const summary = match ? match[1]!.trim() : content.trim();
+
+    // Reset in-memory history but preserve on disk
+    this.currentMessages = [];
+    this.compactSummary = summary;
+
+    return summary;
+  }
+
+  /**
+   * Estimate current prompt token count for the active session.
+   *
+   * Uses TokenCounter to approximate the number of tokens that would be
+   * sent to the LLM on the next turn. Used by the passive compaction trigger.
+   *
+   * @param _sessionId - Session ID (unused currently, future-proofing)
+   * @returns Estimated token count
+   */
+  estimatePromptTokens(_sessionId: string): number {
+    return this.tokenCounter.countMessages(this.currentMessages);
   }
 
   /**
@@ -1010,7 +1216,7 @@ Example: coding, typescript, help`;
    * Tracks the start timestamp for duration calculation.
    */
   private handleTurnStart(event: TurnStartEvent): void {
-    this.turnStartTimes.set(event.turnNumber, event.timestamp);
+    this.turnStartTimes.set(event.turnNumber, Date.now());
     this.currentTurnNumber = event.turnNumber;
   }
 
