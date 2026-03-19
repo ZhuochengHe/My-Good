@@ -275,6 +275,20 @@ async function runInteractive(
  * @param agentLabel - Label to prefix before the streamed response
  * @param input - User input message to send
  */
+/** Flush the write buffer to output. */
+function flushBuffer(buf: string, output: OutputAdapter): void {
+  if (buf.length > 0) {
+    output.writeChunk!(buf);
+  }
+}
+
+/**
+ * Minimum number of characters to accumulate before flushing to stdout.
+ * Reduces system call frequency without introducing visible latency.
+ * Newlines always trigger an immediate flush regardless of this threshold.
+ */
+const CHUNK_FLUSH_THRESHOLD = 16;
+
 async function runStreaming(
   options: ChatOptions,
   sessionId: string,
@@ -284,6 +298,7 @@ async function runStreaming(
   const prefix = options.output.formatAgentLine?.(agentLabel, '') ?? `${agentLabel} › `;
   let prefixWritten = false;
   let inToolCall = false;
+  let buf = '';
 
   for await (const event of options.sessionManager.streamRun(sessionId, input)) {
     if (event.type === 'text_delta') {
@@ -297,8 +312,16 @@ async function runStreaming(
         options.output.writeChunk!(prefix);
         prefixWritten = true;
       }
-      options.output.writeChunk!(event.delta);
+      buf += event.delta;
+      // Flush on newline (preserve visual line breaks) or threshold reached
+      if (buf.includes('\n') || buf.length >= CHUNK_FLUSH_THRESHOLD) {
+        flushBuffer(buf, options.output);
+        buf = '';
+      }
     } else if (event.type === 'tool_call_start') {
+      // Flush before showing spinner so no text is lost
+      flushBuffer(buf, options.output);
+      buf = '';
       inToolCall = true;
       const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
       options.output.startLoading?.(`Using tool: ${toolName}`);
@@ -306,6 +329,9 @@ async function runStreaming(
       options.output.stopLoading?.();
       inToolCall = false;
     } else if (event.type === 'agent_end') {
+      // Flush remaining buffer before finishing
+      flushBuffer(buf, options.output);
+      buf = '';
       // Terminate the streamed response line
       if (prefixWritten) {
         options.output.write('');
@@ -317,6 +343,9 @@ async function runStreaming(
       }
     }
   }
+
+  // Flush any remaining buffered text (e.g. stream ended without agent_end)
+  flushBuffer(buf, options.output);
 
   // If no text was streamed (e.g. pure tool-call response), ensure newline
   if (!prefixWritten) {
