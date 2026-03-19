@@ -1067,7 +1067,7 @@ Example: coding, typescript, help`;
    * Tracks the start timestamp for duration calculation.
    */
   private handleTurnStart(event: TurnStartEvent): void {
-    this.turnStartTimes.set(event.turnNumber, event.timestamp);
+    this.turnStartTimes.set(event.turnNumber, Date.now());
     this.currentTurnNumber = event.turnNumber;
   }
 
