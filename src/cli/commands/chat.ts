@@ -7,7 +7,6 @@ import type { SessionManager } from '../../session/session-manager.js';
 import type { OutputAdapter } from '../output-adapter.js';
 import type { InputReader } from '../input-reader.js';
 import type { AppConfig } from '../../types/config.js';
-import type { ToolCallStartEvent, AgentEndEvent } from '../../types/events.js';
 import { handleSlashCommand } from '../slash-commands.js';
 
 /** Constant loading message shown while the agent is thinking. */
@@ -139,7 +138,7 @@ async function runSingleMessage(
     const result = await options.sessionManager.run(sessionId, options.message, {
       onEvent: (event) => {
         if (event.type === 'tool_call_start') {
-          const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+          const toolName = (event).toolCall?.name ?? 'tool';
           options.output.updateLoading?.(`Using tool: ${toolName}`);
         } else if (event.type === 'tool_call_end') {
           options.output.updateLoading?.(LOADING_MESSAGE);
@@ -230,7 +229,7 @@ async function runInteractive(
         const result = await options.sessionManager.run(sessionId, userInput, {
           onEvent: (event) => {
             if (event.type === 'tool_call_start') {
-              const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+              const toolName = (event).toolCall?.name ?? 'tool';
               options.output.updateLoading?.(`Using tool: ${toolName}`);
             } else if (event.type === 'tool_call_end') {
               options.output.updateLoading?.(LOADING_MESSAGE);
@@ -363,7 +362,7 @@ async function runStreaming(
       // Drain everything before spinner so no text is hidden
       flushNow();
       inToolCall = true;
-      const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
+      const toolName = (event).toolCall?.name ?? 'tool';
       options.output.startLoading?.(`Using tool: ${toolName}`);
     } else if (event.type === 'tool_call_end') {
       options.output.stopLoading?.();
@@ -378,7 +377,7 @@ async function runStreaming(
       if (prefixWritten) {
         options.output.write('');
       }
-      const usage = (event as AgentEndEvent).result.usage;
+      const usage = (event).result.usage;
       if (usage.totalTokens > 0) {
         options.output.writeTokenUsage(usage);
       }
