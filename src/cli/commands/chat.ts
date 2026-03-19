@@ -275,19 +275,37 @@ async function runInteractive(
  * @param agentLabel - Label to prefix before the streamed response
  * @param input - User input message to send
  */
-/** Flush the write buffer to output. */
-function flushBuffer(buf: string, output: OutputAdapter): void {
-  if (buf.length > 0) {
-    output.writeChunk!(buf);
-  }
-}
+/** Default typewriter interval in milliseconds (~55 chars/s). */
+const DEFAULT_TYPEWRITER_SPEED_MS = 18;
 
 /**
- * Minimum number of characters to accumulate before flushing to stdout.
- * Reduces system call frequency without introducing visible latency.
- * Newlines always trigger an immediate flush regardless of this threshold.
+ * Minimum characters to accumulate before flushing when typewriter is off.
+ * Newlines always flush immediately regardless of this threshold.
  */
 const CHUNK_FLUSH_THRESHOLD = 16;
+
+/**
+ * Drain a queue of characters to output one-by-one at the given interval.
+ * Resolves when the queue is empty.
+ */
+async function drainTypewriter(
+  queue: string[],
+  output: OutputAdapter,
+  intervalMs: number,
+): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setInterval(() => {
+      const char = queue.shift();
+      if (char !== undefined) {
+        output.writeChunk!(char);
+      }
+      if (queue.length === 0) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, intervalMs);
+  });
+}
 
 async function runStreaming(
   options: ChatOptions,
@@ -295,33 +313,55 @@ async function runStreaming(
   agentLabel: string,
   input: string,
 ): Promise<void> {
+  const useTypewriter = options.config?.agent.typewriterEffect !== false;
+  const typewriterMs = options.config?.agent.typewriterSpeedMs ?? DEFAULT_TYPEWRITER_SPEED_MS;
+
   const prefix = options.output.formatAgentLine?.(agentLabel, '') ?? `${agentLabel} › `;
   let prefixWritten = false;
   let inToolCall = false;
-  let buf = '';
+
+  // Shared queue consumed by the typewriter timer; also used as a plain
+  // flush buffer when typewriter is disabled.
+  const queue: string[] = [];
+
+  /** Flush the queue immediately (bypasses typewriter pacing). */
+  const flushNow = (): void => {
+    if (queue.length > 0) {
+      options.output.writeChunk!(queue.join(''));
+      queue.length = 0;
+    }
+  };
 
   for await (const event of options.sessionManager.streamRun(sessionId, input)) {
     if (event.type === 'text_delta') {
-      // If we were in a tool call, stop the spinner before resuming text output
       if (inToolCall) {
         options.output.stopLoading?.();
         inToolCall = false;
       }
-      // Print the agent label prefix before the first text chunk
       if (!prefixWritten) {
         options.output.writeChunk!(prefix);
         prefixWritten = true;
       }
-      buf += event.delta;
-      // Flush on newline (preserve visual line breaks) or threshold reached
-      if (buf.includes('\n') || buf.length >= CHUNK_FLUSH_THRESHOLD) {
-        flushBuffer(buf, options.output);
-        buf = '';
+
+      if (useTypewriter) {
+        // Enqueue characters individually; the interval loop drains them
+        for (const char of event.delta) {
+          queue.push(char);
+        }
+        // Kick off the drainer if not already running (detached — don't await)
+        void drainTypewriter(queue, options.output, typewriterMs);
+      } else {
+        // Buffered flush: accumulate then write in chunks
+        queue.push(event.delta);
+        const joined = queue.join('');
+        if (joined.includes('\n') || joined.length >= CHUNK_FLUSH_THRESHOLD) {
+          options.output.writeChunk!(joined);
+          queue.length = 0;
+        }
       }
     } else if (event.type === 'tool_call_start') {
-      // Flush before showing spinner so no text is lost
-      flushBuffer(buf, options.output);
-      buf = '';
+      // Drain everything before spinner so no text is hidden
+      flushNow();
       inToolCall = true;
       const toolName = (event as ToolCallStartEvent).toolCall?.name ?? 'tool';
       options.output.startLoading?.(`Using tool: ${toolName}`);
@@ -329,14 +369,15 @@ async function runStreaming(
       options.output.stopLoading?.();
       inToolCall = false;
     } else if (event.type === 'agent_end') {
-      // Flush remaining buffer before finishing
-      flushBuffer(buf, options.output);
-      buf = '';
-      // Terminate the streamed response line
+      // Wait for typewriter to finish draining before writing final newline
+      if (useTypewriter && queue.length > 0) {
+        await drainTypewriter(queue, options.output, typewriterMs);
+      } else {
+        flushNow();
+      }
       if (prefixWritten) {
         options.output.write('');
       }
-      // Display token usage
       const usage = (event as AgentEndEvent).result.usage;
       if (usage.totalTokens > 0) {
         options.output.writeTokenUsage(usage);
@@ -344,10 +385,13 @@ async function runStreaming(
     }
   }
 
-  // Flush any remaining buffered text (e.g. stream ended without agent_end)
-  flushBuffer(buf, options.output);
+  // Safety flush for any remaining buffered text
+  if (useTypewriter && queue.length > 0) {
+    await drainTypewriter(queue, options.output, typewriterMs);
+  } else {
+    flushNow();
+  }
 
-  // If no text was streamed (e.g. pure tool-call response), ensure newline
   if (!prefixWritten) {
     options.output.write('');
   }

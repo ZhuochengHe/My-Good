@@ -724,7 +724,7 @@ describe('chat command', () => {
       };
       (mockSessionManager as unknown as Record<string, unknown>)['streamRun'] = vi.fn(() =>
         makeStream([
-          { type: 'text_delta', delta: 'Hello', timestamp: Date.now() },
+          { type: 'text_delta', delta: 'Hello' },
           { type: 'agent_end', result: { usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 }, sessionId: 'stream-session', messages: [], toolCalls: [], turns: 1, finishReason: 'completed' }, timestamp: Date.now() },
         ])
       );
@@ -734,9 +734,11 @@ describe('chat command', () => {
         output: outputWithChunk,
         input: mockInput,
         message: 'Hi',
+        // Disable typewriter so chunks aren't split into individual chars
+        config: { ...TEST_CONFIG, agent: { ...TEST_CONFIG.agent, typewriterEffect: false } },
       });
 
-      expect(chunks).toContain('Hello');
+      expect(chunks.join('')).toContain('Hello');
       expect(mockOutput.writeTokenUsage).toHaveBeenCalledWith(
         expect.objectContaining({ totalTokens: 10 })
       );
@@ -755,7 +757,7 @@ describe('chat command', () => {
       };
       (mockSessionManager as unknown as Record<string, unknown>)['streamRun'] = vi.fn(() =>
         makeStream([
-          { type: 'text_delta', delta: 'pong', timestamp: Date.now() },
+          { type: 'text_delta', delta: 'pong' },
           { type: 'agent_end', result: { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, sessionId: 'stream-session', messages: [], toolCalls: [], turns: 1, finishReason: 'completed' }, timestamp: Date.now() },
         ])
       );
@@ -764,9 +766,11 @@ describe('chat command', () => {
         sessionManager: mockSessionManager,
         output: outputWithChunk,
         input: mockInput,
+        // Disable typewriter so chunks aren't split into individual chars
+        config: { ...TEST_CONFIG, agent: { ...TEST_CONFIG.agent, typewriterEffect: false } },
       });
 
-      expect(chunks).toContain('pong');
+      expect(chunks.join('')).toContain('pong');
       // run() should NOT be called in streaming path
       expect(mockSessionManager.run).not.toHaveBeenCalled();
     });
