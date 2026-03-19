@@ -25,7 +25,6 @@ export interface TurnStartEvent {
 export interface TextDeltaEvent {
   readonly type: 'text_delta';
   readonly delta: string;
-  readonly timestamp: number;
 }
 
 /** Tool call start event */

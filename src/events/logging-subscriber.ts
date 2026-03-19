@@ -75,7 +75,6 @@ export function createLoggingSubscriber(logger?: Logger): EventSubscriber {
         case 'text_delta':
           log.debug('Text delta', {
             deltaLength: event.delta.length,
-            eventTimestamp: event.timestamp,
           });
           break;
 

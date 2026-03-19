@@ -395,7 +395,6 @@ export class SessionManager implements EventSubscriber {
       yield {
         type: 'text_delta',
         delta: result.response,
-        timestamp: Date.now(),
       } satisfies AgentEvent;
       yield {
         type: 'agent_end',

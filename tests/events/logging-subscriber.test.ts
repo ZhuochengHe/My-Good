@@ -214,14 +214,12 @@ describe('LoggingSubscriber', () => {
       const event: TextDeltaEvent = {
         type: 'text_delta',
         delta: 'Hello world',
-        timestamp: 1234567890,
       };
 
       subscriber.onEvent(event);
 
       expect(logSpy.debug).toHaveBeenCalledWith('Text delta', {
         deltaLength: 11,
-        eventTimestamp: 1234567890,
       });
     });
   });

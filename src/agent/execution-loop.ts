@@ -457,7 +457,6 @@ export class ExecutionLoop implements Agent {
             yield {
               type: 'text_delta',
               delta: chunk.delta,
-              timestamp: Date.now(),
             };
           } else if (chunk.type === 'done' && chunk.usage) {
             responseUsage = chunk.usage;
