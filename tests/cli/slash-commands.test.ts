@@ -277,6 +277,52 @@ describe('handleSlashCommand', () => {
     });
   });
 
+  describe('/compact', () => {
+    beforeEach(() => {
+      (mockSessionManager as unknown as Record<string, unknown>)['compact'] = vi.fn().mockResolvedValue('User was building a REST API.');
+    });
+
+    it('calls sessionManager.compact with no instructions when no args given', async () => {
+      const result = await handleSlashCommand('/compact', context);
+      expect(result.handled).toBe(true);
+      expect(result.shouldExit).toBe(false);
+      expect((mockSessionManager as unknown as Record<string, unknown>)['compact']).toHaveBeenCalledWith(
+        context.sessionId,
+        undefined,
+      );
+    });
+
+    it('calls sessionManager.compact with joined args as instructions', async () => {
+      await handleSlashCommand('/compact remember the goal', context);
+      expect((mockSessionManager as unknown as Record<string, unknown>)['compact']).toHaveBeenCalledWith(
+        context.sessionId,
+        'remember the goal',
+      );
+    });
+
+    it('writes the summary on success', async () => {
+      await handleSlashCommand('/compact', context);
+      const writeCalls = mockOutput.write.mock.calls.map((c: unknown[]) => c[0] as string);
+      expect(writeCalls.some((s) => s.includes('User was building a REST API.'))).toBe(true);
+    });
+
+    it('writes a confirmation message on success', async () => {
+      await handleSlashCommand('/compact', context);
+      const writeCalls = mockOutput.write.mock.calls.map((c: unknown[]) => c[0] as string);
+      expect(writeCalls.some((s) => s.includes('compacted') || s.includes('Compacted') || s.includes('Context reset'))).toBe(true);
+    });
+
+    it('calls writeError when compact throws', async () => {
+      (mockSessionManager as unknown as Record<string, unknown>)['compact'] = vi.fn().mockRejectedValue(
+        new Error('Session not found'),
+      );
+      await handleSlashCommand('/compact', context);
+      expect(mockOutput.writeError).toHaveBeenCalledWith(
+        expect.stringContaining('Session not found'),
+      );
+    });
+  });
+
   describe('unknown command', () => {
     it('writes error for unknown command', async () => {
       const result = await handleSlashCommand('/foobar', context);

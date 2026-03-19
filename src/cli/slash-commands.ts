@@ -81,6 +81,10 @@ export async function handleSlashCommand(
       handleModel(context);
       return { handled: true, shouldExit: false };
 
+    case 'compact':
+      await handleCompact(args, context);
+      return { handled: true, shouldExit: false };
+
     default:
       context.output.writeError(
         `Unknown command: /${command}. Type /help for available commands.`,
@@ -101,6 +105,7 @@ function writeHelp(output: OutputAdapter): void {
   output.write('  /session           List recent sessions');
   output.write('  /session <id>      Show session details');
   output.write('  /model             Show current model');
+  output.write('  /compact [hint]    Summarize and reset conversation context');
   output.write('  /clear             Clear the terminal');
   output.write('  /exit, /quit       Exit the chat');
   output.write('');
@@ -108,6 +113,36 @@ function writeHelp(output: OutputAdapter): void {
   output.write('  exit, quit         Also exits the chat');
   output.write('  \\                  Continue input on next line');
   output.write('');
+}
+
+/**
+ * Handle the /compact [instructions] command.
+ * Summarizes conversation history and resets in-memory context.
+ *
+ * @param args - Optional instruction words after "compact"
+ * @param context - Slash command context
+ */
+async function handleCompact(
+  args: string[],
+  context: SlashCommandContext,
+): Promise<void> {
+  const instructions = args.length > 0 ? args.join(' ') : undefined;
+  context.output.write('');
+  context.output.write('Compacting conversation...');
+  try {
+    const summary = await context.sessionManager.compact(context.sessionId, instructions);
+    context.output.write('');
+    context.output.write('Conversation compacted. Summary:');
+    context.output.write('');
+    context.output.write(summary);
+    context.output.write('');
+    context.output.write('Context reset. You can continue the conversation.');
+    context.output.write('');
+  } catch (err) {
+    context.output.writeError(
+      `Failed to compact: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 /**

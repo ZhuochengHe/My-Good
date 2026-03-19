@@ -25,7 +25,10 @@ import type { Agent } from '../types/agent.js';
 import type { OnToolCallCallback } from '../agent/execution-loop.js';
 import { SessionNotFoundError } from '../errors/session.js';
 import { randomUUID } from 'crypto';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { JsonlSessionStore } from './jsonl-store.js';
+import { TokenCounter } from '../agent/token-counter.js';
 
 /** Options for creating a new session */
 export interface CreateSessionOptions {
@@ -135,6 +138,12 @@ export class SessionManager implements EventSubscriber {
   // In-memory conversation history for the active session
   private currentMessages: ConversationMessage[] = [];
 
+  // Compact summary from the most recent compact() call, injected into next run
+  private compactSummary: string | null = null;
+
+  // Token counter for estimating prompt size
+  private readonly tokenCounter: TokenCounter = new TokenCounter();
+
   /**
    * Create a new SessionManager.
    *
@@ -182,6 +191,7 @@ export class SessionManager implements EventSubscriber {
 
     // Reset in-memory conversation history for the new session
     this.currentMessages = [];
+    this.compactSummary = null;
 
     const now = Date.now();
     const metadata: SessionMetadata = {
@@ -223,6 +233,7 @@ export class SessionManager implements EventSubscriber {
     }
     // Populate in-memory conversation history from the loaded session
     this.currentMessages = [...session.messages];
+    this.compactSummary = null;
     return session;
   }
 
@@ -424,6 +435,7 @@ export class SessionManager implements EventSubscriber {
     for await (const event of this.executionLoop.stream(input, {
       sessionId,
       conversationHistory: this.currentMessages,
+      ...(this.compactSummary !== null && { compactSummary: this.compactSummary }),
     })) {
       void this.onEvent(event);
 
@@ -491,6 +503,7 @@ export class SessionManager implements EventSubscriber {
       const result = await this.executionLoop.run(input, {
         sessionId,
         conversationHistory: this.currentMessages,
+        ...(this.compactSummary !== null && { compactSummary: this.compactSummary }),
         onEvent: (event) => {
           void this.onEvent(event);
           options?.onEvent?.(event);
@@ -595,6 +608,89 @@ export class SessionManager implements EventSubscriber {
       // Clear current session
       this.setCurrentSessionId(null);
     }
+  }
+
+  /**
+   * Compact conversation history into a summary.
+   *
+   * Sends the current conversation to the LLM with a summarization prompt,
+   * extracts the summary, resets in-memory history, and stores the summary
+   * for injection into the next system prompt. The raw JSONL history is
+   * preserved on disk.
+   *
+   * @param sessionId - Session ID to compact
+   * @param instructions - Optional user hint to guide summarization
+   * @returns Summary text
+   * @throws {SessionNotFoundError} If session does not exist
+   */
+  async compact(sessionId: string, instructions?: string): Promise<string> {
+    // Verify session exists
+    const session = await this.store.load(sessionId);
+    if (session === null) {
+      throw new SessionNotFoundError(sessionId);
+    }
+
+    // Build compact summary prompt from file
+    let promptTemplate: string;
+    try {
+      const promptPath = fileURLToPath(
+        new URL('../../cli/prompts/compact-summary.md', import.meta.url)
+      );
+      promptTemplate = await readFile(promptPath, 'utf-8');
+    } catch {
+      promptTemplate =
+        'Summarize the conversation.${COMPACT_INSTRUCTIONS} Wrap output in <summary></summary> tags.';
+    }
+
+    // Inject optional instructions
+    const instructionsText = instructions ? `\nFocus on: ${instructions}\n` : '';
+    const prompt = promptTemplate.replace('${COMPACT_INSTRUCTIONS}', instructionsText);
+
+    // Build request with current history + compaction prompt
+    const historyText = this.currentMessages
+      .map((m) => `${m.role}: ${m.content}`)
+      .join('\n');
+    const fullPrompt = `${historyText}\n\n---\n\n${prompt}`;
+
+    const request: CompletionRequest = {
+      model: this.config.model,
+      messages: [
+        {
+          id: randomUUID(),
+          role: 'user',
+          content: fullPrompt,
+          timestamp: Date.now(),
+        },
+      ],
+      maxTokens: 2048,
+      temperature: 0.3,
+    };
+
+    const response = await this.provider.complete(request);
+    const content = response.message.content;
+
+    // Extract summary from tags
+    const match = /<summary>([\s\S]*?)<\/summary>/.exec(content);
+    const summary = match ? match[1]!.trim() : content.trim();
+
+    // Reset in-memory history but preserve on disk
+    this.currentMessages = [];
+    this.compactSummary = summary;
+
+    return summary;
+  }
+
+  /**
+   * Estimate current prompt token count for the active session.
+   *
+   * Uses TokenCounter to approximate the number of tokens that would be
+   * sent to the LLM on the next turn. Used by the passive compaction trigger.
+   *
+   * @param _sessionId - Session ID (unused currently, future-proofing)
+   * @returns Estimated token count
+   */
+  estimatePromptTokens(_sessionId: string): number {
+    return this.tokenCounter.countMessages(this.currentMessages);
   }
 
   /**

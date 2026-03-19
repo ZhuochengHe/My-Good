@@ -1416,4 +1416,72 @@ describe('ExecutionLoop', () => {
       expect(await loop.getSession('not-found')).toBeNull();
     });
   });
+
+  describe('compactSummary injection', () => {
+    it('injects ## Previous Conversation Summary into system prompt via run()', async () => {
+      // Capture the system prompt passed to provider.complete
+      let capturedSystemPrompt: string | undefined;
+      provider.complete = async (request) => {
+        capturedSystemPrompt = request.systemPrompt;
+        return createResponse('Done');
+      };
+
+      const compactSummary = 'User was building a REST API with Express.';
+      await agent.run('Continue', {
+        compactSummary,
+      });
+
+      expect(capturedSystemPrompt).toContain('## Previous Conversation Summary');
+      expect(capturedSystemPrompt).toContain(compactSummary);
+    });
+
+    it('places summary section before Current working directory', async () => {
+      let capturedSystemPrompt: string | undefined;
+      provider.complete = async (request) => {
+        capturedSystemPrompt = request.systemPrompt;
+        return createResponse('Done');
+      };
+
+      const compactSummary = 'Debugging a memory leak.';
+      await agent.run('Go on', { compactSummary });
+
+      const summaryIndex = capturedSystemPrompt!.indexOf('## Previous Conversation Summary');
+      const cwdIndex = capturedSystemPrompt!.indexOf('Current working directory');
+      expect(summaryIndex).toBeGreaterThan(-1);
+      expect(cwdIndex).toBeGreaterThan(summaryIndex);
+    });
+
+    it('does not include summary section when compactSummary is undefined', async () => {
+      let capturedSystemPrompt: string | undefined;
+      provider.complete = async (request) => {
+        capturedSystemPrompt = request.systemPrompt;
+        return createResponse('Done');
+      };
+
+      await agent.run('Hello');
+
+      expect(capturedSystemPrompt).not.toContain('## Previous Conversation Summary');
+    });
+
+    it('injects ## Previous Conversation Summary into system prompt via stream()', async () => {
+      let capturedSystemPrompt: string | undefined;
+      provider.stream = async function* (request) {
+        capturedSystemPrompt = request.systemPrompt;
+        yield { type: 'text_delta', delta: 'hi' };
+        yield {
+          type: 'done',
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        };
+      };
+
+      const compactSummary = 'Previous stream context summary.';
+      const events: AgentEvent[] = [];
+      for await (const event of agent.stream('Continue', { compactSummary })) {
+        events.push(event);
+      }
+
+      expect(capturedSystemPrompt).toContain('## Previous Conversation Summary');
+      expect(capturedSystemPrompt).toContain(compactSummary);
+    });
+  });
 });

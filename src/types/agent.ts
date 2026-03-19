@@ -78,6 +78,12 @@ export interface AgentRunOptions {
    * Enables multi-turn memory within a session.
    */
   readonly conversationHistory?: readonly ConversationMessage[];
+  /**
+   * Summary of compacted prior conversation injected into the system prompt.
+   * When set, a "## Previous Conversation Summary" section is appended to
+   * the system prompt so the model retains awareness of prior context.
+   */
+  readonly compactSummary?: string;
 }
 
 /** Finish reason for agent execution */
