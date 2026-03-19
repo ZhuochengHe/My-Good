@@ -16,7 +16,7 @@ import type { AgentConfig } from '../../src/types/agent.js';
 import type { AgentSettings } from '../../src/types/settings.js';
 import type { ModelProvider, CompletionResponse, StreamChunk } from '../../src/types/providers.js';
 import type { AgentEvent } from '../../src/types/events.js';
-import type { ToolCall } from '../../src/types/messages.js';
+import type { ToolCall, ConversationMessage } from '../../src/types/messages.js';
 import type { ToolResult } from '../../src/types/tools.js';
 import type { MemoryStore, MemoryEntry } from '../../src/types/memory.js';
 
@@ -1220,6 +1220,150 @@ describe('ExecutionLoop', () => {
 
       expect(capturedSystemPrompt).not.toContain('## Persistent Identity');
       expect(capturedSystemPrompt).not.toContain('## User Preferences & Skills');
+    });
+  });
+
+  describe('Conversation History', () => {
+    it('run() with conversationHistory prepends history before the new user message', async () => {
+      const history: ConversationMessage[] = [
+        { id: 'h1', role: 'user', content: 'Prior question', timestamp: Date.now() - 2000 },
+        { id: 'h2', role: 'assistant', content: 'Prior answer', stopReason: 'end_turn', timestamp: Date.now() - 1000 },
+      ];
+
+      let capturedMessages: ConversationMessage[] = [];
+      const mockProviderCapture = new MockProvider();
+      mockProviderCapture.complete = vi.fn(async (req) => {
+        capturedMessages = [...(req.messages as ConversationMessage[])];
+        return createResponse('New response', 'end_turn');
+      });
+
+      const agentWithCapture = new ExecutionLoop(config, settings, mockProviderCapture);
+
+      await agentWithCapture.run('New question', { conversationHistory: history });
+
+      // Should have: prior user, prior assistant, new user
+      expect(capturedMessages).toHaveLength(3);
+      expect(capturedMessages[0]?.content).toBe('Prior question');
+      expect(capturedMessages[0]?.role).toBe('user');
+      expect(capturedMessages[1]?.content).toBe('Prior answer');
+      expect(capturedMessages[1]?.role).toBe('assistant');
+      expect(capturedMessages[2]?.content).toBe('New question');
+      expect(capturedMessages[2]?.role).toBe('user');
+    });
+
+    it('run() result.messages includes the prepended history plus the new turn', async () => {
+      const history: ConversationMessage[] = [
+        { id: 'h1', role: 'user', content: 'Old user', timestamp: Date.now() - 2000 },
+        { id: 'h2', role: 'assistant', content: 'Old assistant', stopReason: 'end_turn', timestamp: Date.now() - 1000 },
+      ];
+
+      provider.responses = [createResponse('Current answer', 'end_turn')];
+
+      const result = await agent.run('Current question', { conversationHistory: history });
+
+      expect(result.messages).toHaveLength(4);
+      expect(result.messages[0]?.content).toBe('Old user');
+      expect(result.messages[1]?.content).toBe('Old assistant');
+      expect(result.messages[2]?.content).toBe('Current question');
+      expect(result.messages[3]?.content).toBe('Current answer');
+    });
+
+    it('run() without conversationHistory starts with empty history (backward compatible)', async () => {
+      provider.responses = [createResponse('Response', 'end_turn')];
+
+      const result = await agent.run('Hello');
+
+      // Only user + assistant
+      expect(result.messages).toHaveLength(2);
+      expect(result.messages[0]?.role).toBe('user');
+      expect(result.messages[1]?.role).toBe('assistant');
+    });
+
+    it('run() with empty conversationHistory array starts fresh', async () => {
+      provider.responses = [createResponse('Response', 'end_turn')];
+
+      const result = await agent.run('Hello', { conversationHistory: [] });
+
+      expect(result.messages).toHaveLength(2);
+    });
+
+    it('stream() with conversationHistory prepends history before the new user message', async () => {
+      const history: ConversationMessage[] = [
+        { id: 'h1', role: 'user', content: 'Streamed prior question', timestamp: Date.now() - 2000 },
+        { id: 'h2', role: 'assistant', content: 'Streamed prior answer', stopReason: 'end_turn', timestamp: Date.now() - 1000 },
+      ];
+
+      let capturedMessages: ConversationMessage[] = [];
+      const mockProviderCapture = new MockProvider();
+      mockProviderCapture.stream = async function* (req) {
+        capturedMessages = [...(req.messages as ConversationMessage[])];
+        yield { type: 'text_delta' as const, delta: 'Streamed response' };
+        yield { type: 'done' as const, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+      };
+
+      const agentWithCapture = new ExecutionLoop(config, settings, mockProviderCapture);
+
+      // Drain the stream
+      for await (const _event of agentWithCapture.stream('Streamed question', { conversationHistory: history })) {
+        // noop
+      }
+
+      // Should have: prior user, prior assistant, new user
+      expect(capturedMessages).toHaveLength(3);
+      expect(capturedMessages[0]?.content).toBe('Streamed prior question');
+      expect(capturedMessages[0]?.role).toBe('user');
+      expect(capturedMessages[1]?.content).toBe('Streamed prior answer');
+      expect(capturedMessages[1]?.role).toBe('assistant');
+      expect(capturedMessages[2]?.content).toBe('Streamed question');
+      expect(capturedMessages[2]?.role).toBe('user');
+    });
+
+    it('stream() agent_end result.messages includes history plus new turn', async () => {
+      const history: ConversationMessage[] = [
+        { id: 'h1', role: 'user', content: 'History msg', timestamp: Date.now() - 1000 },
+        { id: 'h2', role: 'assistant', content: 'History reply', stopReason: 'end_turn', timestamp: Date.now() - 500 },
+      ];
+
+      provider.streamChunks = [
+        [
+          { type: 'text_delta', delta: 'Stream answer' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 } },
+        ],
+      ];
+
+      let agentEndResult: import('../../src/types/agent.js').AgentRunResult | null = null;
+      for await (const event of agent.stream('Stream question', { conversationHistory: history })) {
+        if (event.type === 'agent_end') {
+          agentEndResult = event.result;
+        }
+      }
+
+      expect(agentEndResult).not.toBeNull();
+      expect(agentEndResult!.messages).toHaveLength(4);
+      expect(agentEndResult!.messages[0]?.content).toBe('History msg');
+      expect(agentEndResult!.messages[1]?.content).toBe('History reply');
+      expect(agentEndResult!.messages[2]?.content).toBe('Stream question');
+      expect(agentEndResult!.messages[3]?.content).toBe('Stream answer');
+    });
+
+    it('stream() without conversationHistory starts with empty history (backward compatible)', async () => {
+      provider.streamChunks = [
+        [
+          { type: 'text_delta', delta: 'Hello' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 } },
+        ],
+      ];
+
+      let agentEndResult: import('../../src/types/agent.js').AgentRunResult | null = null;
+      for await (const event of agent.stream('Hello')) {
+        if (event.type === 'agent_end') {
+          agentEndResult = event.result;
+        }
+      }
+
+      expect(agentEndResult!.messages).toHaveLength(2);
+      expect(agentEndResult!.messages[0]?.role).toBe('user');
+      expect(agentEndResult!.messages[1]?.role).toBe('assistant');
     });
   });
 

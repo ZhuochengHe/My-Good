@@ -13,7 +13,7 @@ import type {
   ErrorLogRecord,
 } from '../types/sessions.js';
 import type { ModelProvider, CompletionRequest } from '../types/providers.js';
-import type { UserMessage, AssistantMessage } from '../types/messages.js';
+import type { UserMessage, AssistantMessage, ConversationMessage } from '../types/messages.js';
 import type {
   AgentEvent,
   EventSubscriber,
@@ -132,6 +132,9 @@ export class SessionManager implements EventSubscriber {
   private turnStartTimes: Map<number, number> = new Map();
   private currentTurnNumber: number | null = null;
 
+  // In-memory conversation history for the active session
+  private currentMessages: ConversationMessage[] = [];
+
   /**
    * Create a new SessionManager.
    *
@@ -177,6 +180,9 @@ export class SessionManager implements EventSubscriber {
       throw new Error(`Session ${sessionId} already exists`);
     }
 
+    // Reset in-memory conversation history for the new session
+    this.currentMessages = [];
+
     const now = Date.now();
     const metadata: SessionMetadata = {
       model: this.config.model,
@@ -215,6 +221,8 @@ export class SessionManager implements EventSubscriber {
     if (session === null) {
       throw new SessionNotFoundError(sessionId);
     }
+    // Populate in-memory conversation history from the loaded session
+    this.currentMessages = [...session.messages];
     return session;
   }
 
@@ -413,8 +421,37 @@ export class SessionManager implements EventSubscriber {
 
     this.setCurrentSessionId(sessionId);
 
-    for await (const event of this.executionLoop.stream(input, { sessionId })) {
+    for await (const event of this.executionLoop.stream(input, {
+      sessionId,
+      conversationHistory: this.currentMessages,
+    })) {
       void this.onEvent(event);
+
+      // When the execution loop completes, filter and persist messages
+      if (event.type === 'agent_end') {
+        const result = event.result;
+        const newUserMessage = result.messages.find((m) => m.role === 'user');
+        const lastAssistantMessage = result.messages
+          .filter((m) => m.role === 'assistant')
+          .pop();
+
+        const filteredMessages: ConversationMessage[] = [];
+        if (newUserMessage) {
+          filteredMessages.push(newUserMessage);
+        }
+        if (lastAssistantMessage) {
+          filteredMessages.push(lastAssistantMessage);
+        }
+
+        // Update in-memory history for the next turn
+        this.currentMessages = [...this.currentMessages, ...filteredMessages];
+
+        // Persist filtered messages to store (sequential — appendMessage uses atomic rename)
+        for (const message of filteredMessages) {
+          await this.store.appendMessage(sessionId, message);
+        }
+      }
+
       yield event;
     }
   }
@@ -440,15 +477,20 @@ export class SessionManager implements EventSubscriber {
       throw new Error('ExecutionLoop not configured');
     }
 
-    const session = await this.resumeSession(sessionId);
+    // Load the session for metadata, but use currentMessages for conversation history
+    const session = await this.store.load(sessionId);
+    if (session === null) {
+      throw new SessionNotFoundError(sessionId);
+    }
 
     try {
       // Set current session for event tracking
       this.setCurrentSessionId(sessionId);
 
-      // Run execution loop with event tracking, composing internal handler with caller-supplied handler
+      // Run execution loop with conversation history and event tracking
       const result = await this.executionLoop.run(input, {
         sessionId,
+        conversationHistory: this.currentMessages,
         onEvent: (event) => {
           void this.onEvent(event);
           options?.onEvent?.(event);
@@ -463,11 +505,22 @@ export class SessionManager implements EventSubscriber {
 
       const response = lastAssistantMessage?.content ?? '';
 
-      // Update session with all messages
-      for (const message of result.messages) {
-        if (message.role === 'user' || message.role === 'assistant' || message.role === 'tool') {
-          await this.store.appendMessage(sessionId, message);
-        }
+      // Filter to only user + final assistant text message (drop tool_use intermediates and tool_result)
+      const newUserMessage = result.messages.find((m) => m.role === 'user');
+      const filteredMessages: ConversationMessage[] = [];
+      if (newUserMessage) {
+        filteredMessages.push(newUserMessage);
+      }
+      if (lastAssistantMessage) {
+        filteredMessages.push(lastAssistantMessage);
+      }
+
+      // Update in-memory history for the next turn
+      this.currentMessages = [...this.currentMessages, ...filteredMessages];
+
+      // Persist filtered messages to store
+      for (const message of filteredMessages) {
+        await this.store.appendMessage(sessionId, message);
       }
 
       // Update metadata

@@ -103,8 +103,8 @@ export class ExecutionLoop implements Agent {
     const onEvent = options?.onEvent;
     const onToolCall = options?.onToolCall;
 
-    // Initialize state
-    const messages: ConversationMessage[] = [];
+    // Initialize state — seed messages from conversation history when provided
+    const messages: ConversationMessage[] = [...(options?.conversationHistory ?? [])];
     const toolCalls: ToolResult[] = [];
     let totalUsage: TokenUsage = {
       inputTokens: 0,
@@ -360,8 +360,8 @@ export class ExecutionLoop implements Agent {
     const sessionId = options?.sessionId ?? randomUUID();
     const signal = options?.signal;
 
-    // Initialize state
-    const messages: ConversationMessage[] = [];
+    // Initialize state — seed messages from conversation history when provided
+    const messages: ConversationMessage[] = [...(options?.conversationHistory ?? [])];
     const toolCalls: ToolResult[] = [];
     let totalUsage: TokenUsage = {
       inputTokens: 0,

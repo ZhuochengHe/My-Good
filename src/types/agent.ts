@@ -73,6 +73,11 @@ export interface AgentRunOptions {
   readonly stream?: boolean;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: AgentEvent) => void;
+  /**
+   * Prior conversation messages to prepend before the new user input.
+   * Enables multi-turn memory within a session.
+   */
+  readonly conversationHistory?: readonly ConversationMessage[];
 }
 
 /** Finish reason for agent execution */
