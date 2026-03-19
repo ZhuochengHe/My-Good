@@ -103,8 +103,8 @@ export class ExecutionLoop implements Agent {
     const onEvent = options?.onEvent;
     const onToolCall = options?.onToolCall;
 
-    // Initialize state
-    const messages: ConversationMessage[] = [];
+    // Initialize state — seed messages from conversation history when provided
+    const messages: ConversationMessage[] = [...(options?.conversationHistory ?? [])];
     const toolCalls: ToolResult[] = [];
     let totalUsage: TokenUsage = {
       inputTokens: 0,
@@ -150,7 +150,7 @@ export class ExecutionLoop implements Agent {
       messages.push(userMessage);
 
       // Build system prompt with memory injection before the loop
-      const systemPrompt = await this.buildSystemPrompt();
+      const systemPrompt = await this.buildSystemPrompt(options?.compactSummary);
 
       // Main execution loop
       while (turnNumber < this.settings.behavior.maxTurns) {
@@ -360,8 +360,8 @@ export class ExecutionLoop implements Agent {
     const sessionId = options?.sessionId ?? randomUUID();
     const signal = options?.signal;
 
-    // Initialize state
-    const messages: ConversationMessage[] = [];
+    // Initialize state — seed messages from conversation history when provided
+    const messages: ConversationMessage[] = [...(options?.conversationHistory ?? [])];
     const toolCalls: ToolResult[] = [];
     let totalUsage: TokenUsage = {
       inputTokens: 0,
@@ -410,7 +410,7 @@ export class ExecutionLoop implements Agent {
       messages.push(userMessage);
 
       // Build system prompt with memory injection before the loop
-      const systemPrompt = await this.buildSystemPrompt();
+      const systemPrompt = await this.buildSystemPrompt(options?.compactSummary);
 
       // Main execution loop
       while (turnNumber < this.settings.behavior.maxTurns) {
@@ -557,8 +557,15 @@ export class ExecutionLoop implements Agent {
    * Build the system prompt, injecting layer-1 and layer-2 memory entries when
    * a MemoryStore is present. Layer-3 entries are NOT injected here; they are
    * retrieved on-demand via the search_memory tool.
+   *
+   * When compactSummary is provided, a "## Previous Conversation Summary"
+   * section is appended after the memory sections and before the working
+   * directory so the model retains awareness of prior compacted context.
+   *
+   * @param compactSummary - Optional summary of compacted prior conversation
+   * @returns Assembled system prompt string
    */
-  private async buildSystemPrompt(): Promise<string> {
+  private async buildSystemPrompt(compactSummary?: string): Promise<string> {
     const layer1 = this.memoryStore ? await this.memoryStore.loadLayer1() : [];
     const layer2 = this.memoryStore
       ? await this.memoryStore.search({ layer: 2 })
@@ -574,10 +581,15 @@ export class ExecutionLoop implements Agent {
         ? `\n\n## User Preferences & Skills\n${layer2.map((m) => `- ${m.content}`).join('\n')}`
         : '';
 
+    const summarySection = compactSummary
+      ? `\n\n## Previous Conversation Summary\n${compactSummary}`
+      : '';
+
     return (
       `${this.settings.behavior.systemPrompt}` +
       identitySection +
       preferencesSection +
+      summarySection +
       `\n\nCurrent working directory: ${this.workingDirectory}`
     );
   }

@@ -73,6 +73,17 @@ export interface AgentRunOptions {
   readonly stream?: boolean;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: AgentEvent) => void;
+  /**
+   * Prior conversation messages to prepend before the new user input.
+   * Enables multi-turn memory within a session.
+   */
+  readonly conversationHistory?: readonly ConversationMessage[];
+  /**
+   * Summary of compacted prior conversation injected into the system prompt.
+   * When set, a "## Previous Conversation Summary" section is appended to
+   * the system prompt so the model retains awareness of prior context.
+   */
+  readonly compactSummary?: string;
 }
 
 /** Finish reason for agent execution */

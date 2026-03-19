@@ -12,6 +12,9 @@ import { handleSlashCommand } from '../slash-commands.js';
 /** Constant loading message shown while the agent is thinking. */
 const LOADING_MESSAGE = 'Thinking...';
 
+/** Token threshold at which passive compaction trigger activates (~50% of 200k default). */
+const CONTEXT_WINDOW_COMPACT_THRESHOLD = 100000;
+
 /** Default label shown in the user prompt. */
 const DEFAULT_USER_LABEL = 'you';
 
@@ -251,6 +254,12 @@ async function runInteractive(
       }
 
       options.output.write('');
+
+      // Passive context compaction trigger
+      const estimatedTokens = options.sessionManager.estimatePromptTokens(sessionId);
+      if (estimatedTokens >= CONTEXT_WINDOW_COMPACT_THRESHOLD) {
+        await handleContextTrigger(options, sessionId);
+      }
     } catch (error) {
       options.output.writeError(
         `Error: ${error instanceof Error ? error.message : String(error)}`
@@ -260,6 +269,49 @@ async function runInteractive(
 
   // Clean up
   options.input.close();
+}
+
+/**
+ * Prompt user when context is getting long.
+ * Offers compact, new session, or continue options.
+ *
+ * @param options - Chat command options
+ * @param sessionId - Active session ID
+ */
+async function handleContextTrigger(
+  options: ChatOptions,
+  sessionId: string,
+): Promise<void> {
+  options.output.write('');
+  options.output.write('Warning: Context is getting long. What would you like to do?');
+  options.output.write('  [1] Compact conversation');
+  options.output.write('  [2] Start new session');
+  options.output.write('  [3] Continue anyway');
+  options.output.write('');
+  const choice = await options.input.prompt('Enter choice (1/2/3): ');
+  const trimmed = choice.trim();
+  if (trimmed === '1') {
+    const hint = await options.input.prompt('Optional focus hint (or Enter to skip): ');
+    const instructions = hint.trim() || undefined;
+    try {
+      const summary = await options.sessionManager.compact(sessionId, instructions);
+      options.output.write('');
+      options.output.write('Conversation compacted.');
+      options.output.write(summary);
+      options.output.write('');
+    } catch (err) {
+      options.output.writeError(
+        `Compact failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  } else if (trimmed === '2') {
+    // Signal to start a new session: just write a note; full implementation
+    // would switch sessionId but that requires restructuring runInteractive
+    options.output.write('');
+    options.output.write('Please restart the chat to start a new session.');
+    options.output.write('');
+  }
+  // Choice 3 or anything else: continue without action
 }
 
 /**
