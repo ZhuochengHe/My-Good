@@ -100,7 +100,6 @@ describe('LoggingSubscriber', () => {
           name: 'read_file',
           arguments: { path: '/test/file.txt' },
         },
-        timestamp: 1234567890,
       };
 
       subscriber.onEvent(event);
@@ -109,7 +108,6 @@ describe('LoggingSubscriber', () => {
         toolName: 'read_file',
         toolCallId: 'tc_001',
         arguments: { path: '/test/file.txt' },
-        eventTimestamp: 1234567890,
       });
     });
   });
@@ -126,7 +124,6 @@ describe('LoggingSubscriber', () => {
           output: 'file contents',
           durationMs: 125,
         },
-        timestamp: 1234567890,
       };
 
       subscriber.onEvent(event);
@@ -136,7 +133,6 @@ describe('LoggingSubscriber', () => {
         toolCallId: 'tc_001',
         success: true,
         durationMs: 125,
-        eventTimestamp: 1234567890,
       });
     });
 
@@ -155,7 +151,6 @@ describe('LoggingSubscriber', () => {
           },
           durationMs: 5000,
         },
-        timestamp: 1234567890,
       };
 
       subscriber.onEvent(event);
@@ -165,7 +160,6 @@ describe('LoggingSubscriber', () => {
         toolCallId: 'tc_002',
         success: false,
         durationMs: 5000,
-        eventTimestamp: 1234567890,
       });
     });
   });
@@ -176,14 +170,12 @@ describe('LoggingSubscriber', () => {
       const event: TurnStartEvent = {
         type: 'turn_start',
         turnNumber: 3,
-        timestamp: 1234567890,
       };
 
       subscriber.onEvent(event);
 
       expect(logSpy.debug).toHaveBeenCalledWith('Turn started', {
         turnNumber: 3,
-        eventTimestamp: 1234567890,
       });
     });
   });
@@ -214,14 +206,12 @@ describe('LoggingSubscriber', () => {
       const event: TextDeltaEvent = {
         type: 'text_delta',
         delta: 'Hello world',
-        timestamp: 1234567890,
       };
 
       subscriber.onEvent(event);
 
       expect(logSpy.debug).toHaveBeenCalledWith('Text delta', {
         deltaLength: 11,
-        eventTimestamp: 1234567890,
       });
     });
   });
@@ -288,7 +278,6 @@ describe('LoggingSubscriber', () => {
           output: 'result',
           durationMs: 100,
         },
-        timestamp: 1234567890,
       };
 
       expect(() => subscriber.onEvent(event)).not.toThrow();
@@ -304,7 +293,6 @@ describe('LoggingSubscriber', () => {
           name: 'no_args_tool',
           arguments: {},
         },
-        timestamp: 1234567890,
       };
 
       expect(() => subscriber.onEvent(event)).not.toThrow();
@@ -312,7 +300,6 @@ describe('LoggingSubscriber', () => {
         toolName: 'no_args_tool',
         toolCallId: 'tc_001',
         arguments: {},
-        eventTimestamp: 1234567890,
       });
     });
   });

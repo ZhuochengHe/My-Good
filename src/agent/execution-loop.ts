@@ -167,7 +167,6 @@ export class ExecutionLoop implements Agent {
           {
             type: 'turn_start',
             turnNumber,
-            timestamp: Date.now(),
           },
           onEvent
         );
@@ -256,7 +255,6 @@ export class ExecutionLoop implements Agent {
               {
                 type: 'tool_call_start',
                 toolCall,
-                timestamp: Date.now(),
               },
               onEvent
             );
@@ -276,7 +274,6 @@ export class ExecutionLoop implements Agent {
               {
                 type: 'tool_call_end',
                 result,
-                timestamp: Date.now(),
               },
               onEvent
             );
@@ -429,7 +426,6 @@ export class ExecutionLoop implements Agent {
         yield {
           type: 'turn_start',
           turnNumber,
-          timestamp: Date.now(),
         };
 
         // Build request
@@ -457,7 +453,6 @@ export class ExecutionLoop implements Agent {
             yield {
               type: 'text_delta',
               delta: chunk.delta,
-              timestamp: Date.now(),
             };
           } else if (chunk.type === 'done' && chunk.usage) {
             responseUsage = chunk.usage;

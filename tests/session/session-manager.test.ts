@@ -5,10 +5,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SessionManager } from '../../src/session/session-manager.js';
+import type { RunOptions } from '../../src/session/session-manager.js';
 import { JsonlSessionStore } from '../../src/session/jsonl-store.js';
 import type { Session, SessionMetadata } from '../../src/types/sessions.js';
 import type { ModelProvider, CompletionResponse } from '../../src/types/providers.js';
 import type { UserMessage, AssistantMessage } from '../../src/types/messages.js';
+import type { AgentEvent } from '../../src/types/events.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { tmpdir } from 'os';
@@ -1585,6 +1587,117 @@ describe('SessionManager', () => {
 
       expect(spy).toHaveBeenCalledWith(sessionId);
       expect(spy).toHaveBeenCalledWith(null); // Cleanup
+    });
+
+    it('runWithExecutionLoop forwards caller onEvent alongside internal handler', async () => {
+      const emittedEvents: AgentEvent[] = [];
+
+      const mockExecutionLoop = {
+        config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' },
+        run: vi.fn(async (_input: string, opts?: { onEvent?: (e: AgentEvent) => void }) => {
+          // Simulate the execution loop emitting a tool_call_start event
+          opts?.onEvent?.({
+            type: 'tool_call_start',
+            toolCall: { id: 'tc1', name: 'read_file', input: {} },
+            timestamp: Date.now(),
+          });
+          return {
+            sessionId: 'test-session',
+            messages: [
+              { id: '1', role: 'user' as const, content: 'Hello', timestamp: Date.now() },
+              { id: '2', role: 'assistant' as const, content: 'Result', stopReason: 'end_turn' as const, timestamp: Date.now() },
+            ],
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+            turns: 1,
+            finishReason: 'completed' as const,
+          };
+        }),
+        stream: vi.fn(),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const managerWithLoop = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockExecutionLoop
+      );
+
+      const sessionId = await managerWithLoop.createSession();
+      const runOptions: RunOptions = {
+        onEvent: (event) => { emittedEvents.push(event); },
+      };
+      await managerWithLoop.run(sessionId, 'Hello', runOptions);
+
+      // The caller-supplied onEvent should have received the tool_call_start event
+      expect(emittedEvents).toHaveLength(1);
+      expect(emittedEvents[0].type).toBe('tool_call_start');
+    });
+
+    it('streamRun yields text_delta and agent_end events from executionLoop.stream()', async () => {
+      const yieldedEvents: AgentEvent[] = [
+        { type: 'text_delta', delta: 'Hello', timestamp: Date.now() },
+        { type: 'agent_end', result: { sessionId: 'sid', messages: [], toolCalls: [], turns: 1, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, finishReason: 'completed' }, timestamp: Date.now() },
+      ];
+
+      async function* fakeStream() {
+        for (const event of yieldedEvents) yield event;
+      }
+
+      const mockLoop = {
+        config: { id: 'test', name: 'test', model: 'test-model', provider: 'anthropic' as const },
+        run: vi.fn(),
+        stream: vi.fn(() => fakeStream()),
+        getTools: vi.fn(() => []),
+        getSession: vi.fn(),
+      };
+
+      const store = new JsonlSessionStore(testDir);
+      const manager = new SessionManager(
+        store,
+        mockProvider,
+        { model: 'test-model', agentId: 'test-agent' },
+        undefined,
+        mockLoop
+      );
+
+      const sessionId = await manager.createSession();
+      const collected: AgentEvent[] = [];
+      for await (const event of manager.streamRun(sessionId, 'Hi')) {
+        collected.push(event);
+      }
+
+      expect(collected.map((e) => e.type)).toEqual(['text_delta', 'agent_end']);
+      expect((collected[0] as { delta: string }).delta).toBe('Hello');
+    });
+
+    it('streamRun falls back to batch run() when no executionLoop is configured', async () => {
+      vi.mocked(mockProvider.complete).mockResolvedValue({
+        message: {
+          id: 'msg1',
+          role: 'assistant',
+          content: 'Fallback response',
+          stopReason: 'end_turn',
+          timestamp: Date.now(),
+        },
+        usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+      });
+
+      const sessionId = await sessionManager.createSession(); // no executionLoop
+      const collected: AgentEvent[] = [];
+      for await (const event of sessionManager.streamRun(sessionId, 'Hello')) {
+        collected.push(event);
+      }
+
+      // Should emit synthetic text_delta and agent_end
+      expect(collected.some((e) => e.type === 'text_delta')).toBe(true);
+      expect(collected.some((e) => e.type === 'agent_end')).toBe(true);
+      const delta = collected.find((e) => e.type === 'text_delta') as { delta: string };
+      expect(delta.delta).toBe('Fallback response');
     });
   });
 });

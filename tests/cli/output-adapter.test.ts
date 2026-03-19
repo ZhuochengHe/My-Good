@@ -114,7 +114,7 @@ describe('PlainTextOutput', () => {
       });
 
       expect(stdoutSpy).toHaveBeenCalledWith(
-        '[Tokens: 150 input / 75 output / 225 total]\n'
+        '  ↑ 150  ↓ 75  ∑ 225\n'
       );
     });
 
@@ -126,7 +126,7 @@ describe('PlainTextOutput', () => {
       });
 
       expect(stdoutSpy).toHaveBeenCalledWith(
-        '[Tokens: 0 input / 0 output / 0 total]\n'
+        '  ↑ 0  ↓ 0  ∑ 0\n'
       );
     });
 
@@ -138,7 +138,7 @@ describe('PlainTextOutput', () => {
       });
 
       expect(stdoutSpy).toHaveBeenCalledWith(
-        '[Tokens: 12345 input / 67890 output / 80235 total]\n'
+        '  ↑ 12345  ↓ 67890  ∑ 80235\n'
       );
     });
   });
