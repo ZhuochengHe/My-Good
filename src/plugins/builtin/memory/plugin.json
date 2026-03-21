@@ -1,0 +1,87 @@
+{
+  "id": "memory",
+  "name": "Memory",
+  "version": "1.0.0",
+  "description": "Persistent agent memory — save, search, and delete memory entries across sessions.",
+  "author": "my-agent",
+  "tools": [
+    {
+      "name": "save_memory",
+      "description": "Save a new memory entry to the persistent memory store. Use layer 1 for permanent identity facts, layer 2 for user preferences and skills, layer 3 for time-sensitive project context (requires ttl_days).",
+      "handler": "handlers.js",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "number",
+            "description": "Memory layer: 1 (identity, permanent), 2 (preferences/skills), 3 (episodic, requires ttl_days)",
+            "enum": [1, 2, 3]
+          },
+          "content": {
+            "type": "string",
+            "description": "The factual text to remember. Be concise and specific."
+          },
+          "tags": {
+            "type": "array",
+            "description": "Keyword tags for search and categorization (e.g. [\"typescript\", \"preference\"])",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ttl_days": {
+            "type": "number",
+            "description": "Time-to-live in days. Required for layer 3. Typical values: 7 (sprint), 30 (project), 90 (quarter)."
+          }
+        },
+        "required": ["layer", "content", "tags"]
+      }
+    },
+    {
+      "name": "search_memory",
+      "description": "Search persistent memory entries. Use at the start of a new topic to check for existing relevant context. Returns entries sorted by most recently updated.",
+      "handler": "handlers.js",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Case-insensitive substring match against entry content."
+          },
+          "tags": {
+            "type": "array",
+            "description": "Return entries that have ANY of these tags.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "layer": {
+            "type": "number",
+            "description": "Filter to a specific layer (1, 2, or 3). Omit to search all layers.",
+            "enum": [1, 2, 3]
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of results to return (default: 20).",
+            "default": 20
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "delete_memory",
+      "description": "Delete a memory entry by its ID. Use when a memory is outdated or incorrect.",
+      "handler": "handlers.js",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "UUID of the memory entry to delete."
+          }
+        },
+        "required": ["id"]
+      }
+    }
+  ]
+}

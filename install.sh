@@ -17,11 +17,53 @@ chmod +x "$SCRIPT_DIR/bin/my-agent"
 echo ""
 echo "✓ my-agent installed → $BIN_TARGET"
 
-# Check that ~/.local/bin is on PATH in the shells the user has configured
-SHELLS_MISSING_PATH=()
-for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-  if [[ -f "$rc" ]] && ! grep -q '\.local/bin' "$rc"; then
-    SHELLS_MISSING_PATH+=("$rc")
+# Install built-in plugins to ~/.my-agent/plugins/
+BUILTIN_SRC="$SCRIPT_DIR/src/plugins/builtin"
+BUILTIN_DIST="$SCRIPT_DIR/dist/plugins/builtin"
+PLUGINS_TARGET="$HOME/.my-agent/plugins"
+
+if [[ -d "$BUILTIN_DIST" ]]; then
+  mkdir -p "$PLUGINS_TARGET"
+  for plugin_dist in "$BUILTIN_DIST"/*/; do
+    plugin_name="$(basename "$plugin_dist")"
+    target_dir="$PLUGINS_TARGET/$plugin_name"
+    mkdir -p "$target_dir"
+    # Copy compiled JS files from dist
+    cp "$plugin_dist"*.js "$target_dir/" 2>/dev/null || true
+    # Copy plugin.json from src (tsc does not copy JSON files)
+    if [[ -f "$BUILTIN_SRC/$plugin_name/plugin.json" ]]; then
+      cp "$BUILTIN_SRC/$plugin_name/plugin.json" "$target_dir/plugin.json"
+    fi
+    echo "✓ plugin installed: $plugin_name → $target_dir"
+  done
+fi
+
+# Detect the current shell and its rc file
+CURRENT_SHELL="$(basename "${SHELL:-}")"
+case "$CURRENT_SHELL" in
+  zsh)  SHELL_RC="$HOME/.zshrc" ;;
+  bash) SHELL_RC="${HOME}/.bash_profile"
+        [[ -f "$HOME/.bashrc" ]] && SHELL_RC="$HOME/.bashrc" ;;
+  fish) SHELL_RC="$HOME/.config/fish/config.fish" ;;
+  *)    SHELL_RC="" ;;
+esac
+
+# Check that ~/.local/bin is on PATH in the active shell's rc file
+if [[ -n "$SHELL_RC" && -f "$SHELL_RC" ]]; then
+  if grep -q '\.local/bin' "$SHELL_RC"; then
+    echo "✓ ~/.local/bin is already in PATH ($SHELL_RC)"
+  else
+    echo ""
+    echo "⚠  ~/.local/bin is not in PATH ($SHELL_RC)"
+    read -r -p "   Add it now? [y/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      echo '' >> "$SHELL_RC"
+      echo '# Added by my-agent install' >> "$SHELL_RC"
+      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+      echo "✓ Added to $SHELL_RC — run: source $SHELL_RC"
+    else
+      echo "   Skipped. Add manually: export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
   fi
 done
 
