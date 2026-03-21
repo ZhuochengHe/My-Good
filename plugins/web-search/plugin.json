@@ -22,7 +22,7 @@
         },
         "required": ["query"]
       },
-      "handler": "search"
+      "handler": "handlers.js"
     },
     {
       "name": "fetch_url",
@@ -43,7 +43,7 @@
         },
         "required": ["url"]
       },
-      "handler": "fetchUrl",
+      "handler": "handlers.js",
       "timeout": 15000
     }
   ]

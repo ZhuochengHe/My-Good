@@ -177,3 +177,6 @@ export async function execCommand(args, context) {
     };
   }
 }
+
+// PluginManager looks up handlers by tool name; export aliases for both names
+export { execCommand as shell_exec };

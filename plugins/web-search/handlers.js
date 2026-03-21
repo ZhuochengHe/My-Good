@@ -11,7 +11,7 @@
  * @param {import('../../src/types/tools.js').ToolContext} context - Tool context.
  * @returns {Promise<import('../../src/types/tools.js').ToolHandlerResult>} Handler result.
  */
-export async function search(args, context) {
+export async function web_search(args, context) {
   try {
     // Validate required parameters
     if (!args.query || typeof args.query !== 'string') {
@@ -48,7 +48,7 @@ export async function search(args, context) {
  * @param {import('../../src/types/tools.js').ToolContext} context - Tool context.
  * @returns {Promise<import('../../src/types/tools.js').ToolHandlerResult>} Handler result.
  */
-export async function fetchUrl(args, context) {
+export async function fetch_url(args, context) {
   try {
     // Validate required parameters
     if (!args.url || typeof args.url !== 'string') {
@@ -205,3 +205,6 @@ function htmlToMarkdown(html) {
 
   return md;
 }
+
+// PluginManager looks up handlers by tool name; export aliases for both names
+export { web_search as search, fetch_url as fetchUrl };

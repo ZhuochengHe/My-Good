@@ -371,6 +371,12 @@ async function runStreaming(
   let prefixWritten = false;
   let inToolCall = false;
 
+  // Buffer text_delta chunks until we know whether a tool call follows.
+  // If a tool_call_start arrives, the buffer is discarded (pre-tool thinking
+  // is not shown). If agent_end arrives without a tool call, the buffer is
+  // flushed to output.
+  let pendingText = '';
+
   // Shared queue consumed by the typewriter timer; also used as a plain
   // flush buffer when typewriter is disabled.
   const queue: string[] = [];
@@ -383,35 +389,39 @@ async function runStreaming(
     }
   };
 
+  /** Enqueue text for output (typewriter or buffered). */
+  const enqueueText = (text: string): void => {
+    if (!prefixWritten) {
+      options.output.writeChunk!(prefix);
+      prefixWritten = true;
+    }
+    if (useTypewriter) {
+      for (const char of text) {
+        queue.push(char);
+      }
+      void drainTypewriter(queue, options.output, typewriterMs);
+    } else {
+      queue.push(text);
+      const joined = queue.join('');
+      if (joined.includes('\n') || joined.length >= CHUNK_FLUSH_THRESHOLD) {
+        options.output.writeChunk!(joined);
+        queue.length = 0;
+      }
+    }
+  };
+
   for await (const event of options.sessionManager.streamRun(sessionId, input)) {
     if (event.type === 'text_delta') {
       if (inToolCall) {
-        options.output.stopLoading?.();
-        inToolCall = false;
-      }
-      if (!prefixWritten) {
-        options.output.writeChunk!(prefix);
-        prefixWritten = true;
-      }
-
-      if (useTypewriter) {
-        // Enqueue characters individually; the interval loop drains them
-        for (const char of event.delta) {
-          queue.push(char);
-        }
-        // Kick off the drainer if not already running (detached — don't await)
-        void drainTypewriter(queue, options.output, typewriterMs);
+        // Post-tool text: output directly (tool call already happened)
+        enqueueText(event.delta);
       } else {
-        // Buffered flush: accumulate then write in chunks
-        queue.push(event.delta);
-        const joined = queue.join('');
-        if (joined.includes('\n') || joined.length >= CHUNK_FLUSH_THRESHOLD) {
-          options.output.writeChunk!(joined);
-          queue.length = 0;
-        }
+        // Pre-tool thinking: buffer silently; discarded if tool call follows
+        pendingText += event.delta;
       }
     } else if (event.type === 'tool_call_start') {
-      // Drain everything before spinner so no text is hidden
+      // Discard any buffered pre-tool thinking text
+      pendingText = '';
       flushNow();
       inToolCall = true;
       const toolName = (event).toolCall?.name ?? 'tool';
@@ -420,6 +430,11 @@ async function runStreaming(
       options.output.stopLoading?.();
       inToolCall = false;
     } else if (event.type === 'agent_end') {
+      // No tool call occurred — flush buffered thinking text as the response
+      if (pendingText) {
+        enqueueText(pendingText);
+        pendingText = '';
+      }
       // Wait for typewriter to finish draining before writing final newline
       if (useTypewriter && queue.length > 0) {
         await drainTypewriter(queue, options.output, typewriterMs);
@@ -437,6 +452,9 @@ async function runStreaming(
   }
 
   // Safety flush for any remaining buffered text
+  if (pendingText) {
+    enqueueText(pendingText);
+  }
   if (useTypewriter && queue.length > 0) {
     await drainTypewriter(queue, options.output, typewriterMs);
   } else {

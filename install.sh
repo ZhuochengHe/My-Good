@@ -17,6 +17,21 @@ chmod +x "$SCRIPT_DIR/bin/my-agent"
 echo ""
 echo "✓ my-agent installed → $BIN_TARGET"
 
+# Install built-in plugins to ~/.my-agent/plugins/
+PLUGINS_SRC="$SCRIPT_DIR/plugins"
+PLUGINS_TARGET="$HOME/.my-agent/plugins"
+
+if [[ -d "$PLUGINS_SRC" ]]; then
+  mkdir -p "$PLUGINS_TARGET"
+  for plugin_src in "$PLUGINS_SRC"/*/; do
+    plugin_name="$(basename "$plugin_src")"
+    target_dir="$PLUGINS_TARGET/$plugin_name"
+    mkdir -p "$target_dir"
+    cp "$plugin_src"* "$target_dir/"
+    echo "✓ plugin installed: $plugin_name → $target_dir"
+  done
+fi
+
 # Detect the current shell and its rc file
 CURRENT_SHELL="$(basename "${SHELL:-}")"
 case "$CURRENT_SHELL" in

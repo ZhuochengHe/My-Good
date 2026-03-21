@@ -231,8 +231,30 @@ export async function main(argv: string[]): Promise<void> {
     .action(async (cmdOptions: { session?: string; message?: string }) => {
       const opts = program.opts();
       const configPath = opts['config'];
+
+      // Create output before bootstrap so the dangerous-tool confirmation
+      // callback can stop the spinner before prompting the user.
+      const tuiOutput = new ColoredOutput();
+
       const { sessionManager, output, config, warnings, memoryEntryCount } = await bootstrap({
         configPath,
+        output: tuiOutput,
+        onDangerousToolCall: async (toolName, args) => {
+          // Stop spinner so readline prompt is visible and stdin is free.
+          tuiOutput.stopLoading?.();
+          const { createInterface } = await import('node:readline');
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          return new Promise((resolve) => {
+            const preview = JSON.stringify(args, null, 2).slice(0, 200);
+            rl.question(
+              `\n⚠  Tool "${toolName}" requires confirmation:\n${preview}\n\nProceed? [y/N] `,
+              (answer) => {
+                rl.close();
+                resolve(answer.trim().toLowerCase() === 'y');
+              }
+            );
+          });
+        },
       });
 
       // Display warnings

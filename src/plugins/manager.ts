@@ -277,6 +277,30 @@ export class PluginManager implements IPluginManager {
   }
 
   /**
+   * Check whether a tool is marked as dangerous in its plugin manifest.
+   *
+   * Only considers tools from enabled plugins. Returns `false` when the tool
+   * is not found or when the manifest does not specify the `dangerous` field.
+   *
+   * @param name - Tool name
+   * @returns True if the tool has `dangerous: true` in its manifest
+   */
+  isToolDangerous(name: string): boolean {
+    for (const state of this.plugins.values()) {
+      if (!state.enabled) {
+        continue;
+      }
+
+      const toolManifest = state.manifest.tools.find((t) => t.name === name);
+      if (toolManifest !== undefined) {
+        return toolManifest.dangerous === true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Enable a plugin.
    *
    * @param id - Plugin ID

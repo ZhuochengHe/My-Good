@@ -721,6 +721,177 @@ describe('ExecutionLoop', () => {
 
       expect(lastEvent?.type).toBe('agent_end');
     });
+
+    it('pure text stream: agent_end contains assistant content', async () => {
+      provider.streamChunks = [
+        [
+          { type: 'text_delta', delta: 'Hello' },
+          { type: 'text_delta', delta: ' world' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+      ];
+
+      const streamEvents: AgentEvent[] = [];
+      for await (const event of agent.stream('Test')) {
+        streamEvents.push(event);
+      }
+
+      const agentEnd = streamEvents.find((e) => e.type === 'agent_end');
+      expect(agentEnd?.type).toBe('agent_end');
+      if (agentEnd?.type === 'agent_end') {
+        const assistantMsg = agentEnd.result.messages.find((m) => m.role === 'assistant');
+        expect(assistantMsg?.content).toBe('Hello world');
+        expect(agentEnd.result.finishReason).toBe('completed');
+      }
+    });
+
+    it('single tool call stream: handler is invoked and second turn text is returned', async () => {
+      const toolCall: ToolCall = {
+        id: 'call_stream_1',
+        name: 'search',
+        arguments: { query: 'test' },
+      };
+
+      provider.streamChunks = [
+        // Turn 1: provider emits a tool_call chunk then done
+        [
+          {
+            type: 'tool_call',
+            toolCall: { id: toolCall.id, name: toolCall.name, arguments: toolCall.arguments },
+          },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+        // Turn 2: provider emits text then done
+        [
+          { type: 'text_delta', delta: 'Search results processed' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+      ];
+
+      const onToolCall = vi.fn(async (call: ToolCall): Promise<ToolResult> => ({
+        callId: call.id,
+        name: call.name,
+        success: true,
+        output: 'result data',
+        durationMs: 10,
+      }));
+
+      const streamEvents: AgentEvent[] = [];
+      for await (const event of agent.stream('Search for test', { onToolCall })) {
+        streamEvents.push(event);
+      }
+
+      expect(onToolCall).toHaveBeenCalledTimes(1);
+      expect(onToolCall).toHaveBeenCalledWith(toolCall, expect.objectContaining({ sessionId: expect.any(String) }));
+
+      const agentEnd = streamEvents.find((e) => e.type === 'agent_end');
+      expect(agentEnd?.type).toBe('agent_end');
+      if (agentEnd?.type === 'agent_end') {
+        expect(agentEnd.result.finishReason).toBe('completed');
+        const assistantMsg = agentEnd.result.messages.filter((m) => m.role === 'assistant').pop();
+        expect(assistantMsg?.content).toBe('Search results processed');
+      }
+    });
+
+    it('multiple tool calls in one turn: all handlers are executed', async () => {
+      const toolCall1: ToolCall = { id: 'tc_1', name: 'tool_a', arguments: { a: 1 } };
+      const toolCall2: ToolCall = { id: 'tc_2', name: 'tool_b', arguments: { b: 2 } };
+
+      provider.streamChunks = [
+        [
+          { type: 'tool_call', toolCall: { id: toolCall1.id, name: toolCall1.name, arguments: toolCall1.arguments } },
+          { type: 'tool_call', toolCall: { id: toolCall2.id, name: toolCall2.name, arguments: toolCall2.arguments } },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+        [
+          { type: 'text_delta', delta: 'Both tools ran' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+      ];
+
+      const onToolCall = vi.fn(async (call: ToolCall): Promise<ToolResult> => ({
+        callId: call.id,
+        name: call.name,
+        success: true,
+        output: `output_${call.name}`,
+        durationMs: 5,
+      }));
+
+      const streamEvents: AgentEvent[] = [];
+      for await (const event of agent.stream('Run both tools', { onToolCall })) {
+        streamEvents.push(event);
+      }
+
+      expect(onToolCall).toHaveBeenCalledTimes(2);
+
+      const agentEnd = streamEvents.find((e) => e.type === 'agent_end');
+      if (agentEnd?.type === 'agent_end') {
+        expect(agentEnd.result.toolCalls).toHaveLength(2);
+        expect(agentEnd.result.finishReason).toBe('completed');
+      }
+    });
+
+    it('no onToolCall handler when tool_call chunk arrives: returns error finishReason', async () => {
+      provider.streamChunks = [
+        [
+          { type: 'tool_call', toolCall: { id: 'tc_err', name: 'some_tool', arguments: {} } },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+      ];
+
+      const streamEvents: AgentEvent[] = [];
+      for await (const event of agent.stream('Do tool stuff')) {
+        streamEvents.push(event);
+      }
+
+      const agentEnd = streamEvents.find((e) => e.type === 'agent_end');
+      expect(agentEnd?.type).toBe('agent_end');
+      if (agentEnd?.type === 'agent_end') {
+        expect(agentEnd.result.finishReason).toBe('error');
+        expect(agentEnd.result.error?.code).toBe('TOOL_ERROR');
+      }
+    });
+
+    it('tool call then abort: next turn sees cancelled signal', async () => {
+      const abortController = new AbortController();
+
+      provider.streamChunks = [
+        [
+          { type: 'tool_call', toolCall: { id: 'tc_abort', name: 'slow_tool', arguments: {} } },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+        // This second chunk set should never be consumed because abort fires first
+        [
+          { type: 'text_delta', delta: 'Should not appear' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        ],
+      ];
+
+      const onToolCall = vi.fn(async (call: ToolCall): Promise<ToolResult> => {
+        abortController.abort();
+        return {
+          callId: call.id,
+          name: call.name,
+          success: true,
+          output: 'done',
+          durationMs: 5,
+        };
+      });
+
+      const streamEvents: AgentEvent[] = [];
+      for await (const event of agent.stream('Run then cancel', {
+        onToolCall,
+        signal: abortController.signal,
+      })) {
+        streamEvents.push(event);
+      }
+
+      const agentEnd = streamEvents.find((e) => e.type === 'agent_end');
+      expect(agentEnd?.type).toBe('agent_end');
+      if (agentEnd?.type === 'agent_end') {
+        expect(agentEnd.result.finishReason).toBe('cancelled');
+      }
+    });
   });
 
   describe('Configuration', () => {

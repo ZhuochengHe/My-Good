@@ -435,30 +435,20 @@ export class SessionManager implements EventSubscriber {
     for await (const event of this.executionLoop.stream(input, {
       sessionId,
       conversationHistory: this.currentMessages,
+      ...(this.onToolCall !== null && { onToolCall: this.onToolCall }),
       ...(this.compactSummary !== null && { compactSummary: this.compactSummary }),
     })) {
       void this.onEvent(event);
 
-      // When the execution loop completes, filter and persist messages
       if (event.type === 'agent_end') {
         const result = event.result;
+        // Filter: only persist user + final assistant message (drop tool intermediates)
         const newUserMessage = result.messages.find((m) => m.role === 'user');
-        const lastAssistantMessage = result.messages
-          .filter((m) => m.role === 'assistant')
-          .pop();
-
+        const lastAssistantMessage = result.messages.filter((m) => m.role === 'assistant').pop();
         const filteredMessages: ConversationMessage[] = [];
-        if (newUserMessage) {
-          filteredMessages.push(newUserMessage);
-        }
-        if (lastAssistantMessage) {
-          filteredMessages.push(lastAssistantMessage);
-        }
-
-        // Update in-memory history for the next turn
+        if (newUserMessage) filteredMessages.push(newUserMessage);
+        if (lastAssistantMessage) filteredMessages.push(lastAssistantMessage);
         this.currentMessages = [...this.currentMessages, ...filteredMessages];
-
-        // Persist filtered messages to store (sequential — appendMessage uses atomic rename)
         for (const message of filteredMessages) {
           await this.store.appendMessage(sessionId, message);
         }

@@ -1638,20 +1638,27 @@ describe('SessionManager', () => {
       expect(emittedEvents[0].type).toBe('tool_call_start');
     });
 
-    it('streamRun yields text_delta and agent_end events from executionLoop.stream()', async () => {
-      const yieldedEvents: AgentEvent[] = [
-        { type: 'text_delta', delta: 'Hello', timestamp: Date.now() },
-        { type: 'agent_end', result: { sessionId: 'sid', messages: [], toolCalls: [], turns: 1, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, finishReason: 'completed' }, timestamp: Date.now() },
-      ];
-
-      async function* fakeStream() {
-        for (const event of yieldedEvents) yield event;
-      }
+    it('streamRun yields events from executionLoop.stream()', async () => {
+      const fakeResult = {
+        sessionId: 'sid',
+        messages: [
+          { id: 'u1', role: 'user' as const, content: 'Hi', timestamp: Date.now() },
+          { id: 'a1', role: 'assistant' as const, content: 'Hello', stopReason: 'end_turn' as const, timestamp: Date.now() },
+        ],
+        toolCalls: [],
+        turns: 1,
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: 'completed' as const,
+      };
 
       const mockLoop = {
         config: { id: 'test', name: 'test', model: 'test-model', provider: 'anthropic' as const },
         run: vi.fn(),
-        stream: vi.fn(() => fakeStream()),
+        stream: vi.fn(async function* (_input: string, opts?: { sessionId?: string }) {
+          yield { type: 'agent_start' as const, sessionId: opts?.sessionId ?? 'sid', timestamp: Date.now() };
+          yield { type: 'text_delta' as const, delta: 'Hello' };
+          yield { type: 'agent_end' as const, result: fakeResult, timestamp: Date.now() };
+        }),
         getTools: vi.fn(() => []),
         getSession: vi.fn(),
       };
@@ -1671,8 +1678,9 @@ describe('SessionManager', () => {
         collected.push(event);
       }
 
-      expect(collected.map((e) => e.type)).toEqual(['text_delta', 'agent_end']);
-      expect((collected[0] as { delta: string }).delta).toBe('Hello');
+      expect(collected.map((e) => e.type)).toEqual(['agent_start', 'text_delta', 'agent_end']);
+      expect((collected[1] as { delta: string }).delta).toBe('Hello');
+      expect(mockLoop.stream).toHaveBeenCalledWith('Hi', expect.objectContaining({ sessionId }));
     });
 
     it('streamRun falls back to batch run() when no executionLoop is configured', async () => {
@@ -1984,14 +1992,15 @@ describe('SessionManager', () => {
         const toolResult = { id: `tr_${streamCallCount}`, role: 'tool' as const, content: 'tool output', toolCallId: 'tc1', toolName: 'shell', isError: false, timestamp: Date.now() };
         const finalAssistant = { id: `a2_${streamCallCount}`, role: 'assistant' as const, content: isFirstCall ? 'Streamed final' : 'Second final', stopReason: 'end_turn' as const, timestamp: Date.now() };
 
-        yield { type: 'text_delta' as const, delta: finalAssistant.content, timestamp: Date.now() };
+        const messages = isFirstCall
+          ? [userMsg, toolAssistant, toolResult, finalAssistant]
+          : [userMsg, finalAssistant];
+
         yield {
           type: 'agent_end' as const,
           result: {
             sessionId: 'test-session',
-            messages: isFirstCall
-              ? [userMsg, toolAssistant, toolResult, finalAssistant]
-              : [userMsg, finalAssistant],
+            messages,
             toolCalls: [],
             usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
             turns: isFirstCall ? 2 : 1,
@@ -2035,24 +2044,18 @@ describe('SessionManager', () => {
     function makeMockLoopForCompact() {
       return {
         config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' as const },
-        run: vi.fn(),
-        stream: vi.fn().mockImplementation(async function* () {
-          yield {
-            type: 'agent_end' as const,
-            result: {
-              sessionId: 'test-session',
-              messages: [
-                { id: 'u1', role: 'user' as const, content: 'hi', timestamp: Date.now() },
-                { id: 'a1', role: 'assistant' as const, content: 'hello', stopReason: 'end_turn' as const, timestamp: Date.now() },
-              ],
-              toolCalls: [],
-              usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
-              turns: 1,
-              finishReason: 'completed' as const,
-            },
-            timestamp: Date.now(),
-          };
+        run: vi.fn().mockResolvedValue({
+          sessionId: 'test-session',
+          messages: [
+            { id: 'u1', role: 'user' as const, content: 'hi', timestamp: Date.now() },
+            { id: 'a1', role: 'assistant' as const, content: 'hello', stopReason: 'end_turn' as const, timestamp: Date.now() },
+          ],
+          toolCalls: [],
+          usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+          turns: 1,
+          finishReason: 'completed' as const,
         }),
+        stream: vi.fn(),
         getTools: vi.fn(() => [] as import('../../src/types/tools.js').ToolDefinition[]),
         getSession: vi.fn(),
       };
@@ -2209,7 +2212,7 @@ describe('SessionManager', () => {
       const loop = {
         config: { id: 'test', name: 'Test', model: 'test-model', provider: 'anthropic' as const },
         run: vi.fn(),
-        stream: vi.fn().mockImplementation(async function* (_input: string) {
+        stream: vi.fn(async function* (_input: string) {
           const userMsg = { id: 'u1', role: 'user' as const, content: _input, timestamp: Date.now() };
           const assistantMsg = { id: 'a1', role: 'assistant' as const, content: 'reply', stopReason: 'end_turn' as const, timestamp: Date.now() };
           yield {
