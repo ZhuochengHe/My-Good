@@ -17,6 +17,27 @@ chmod +x "$SCRIPT_DIR/bin/my-agent"
 echo ""
 echo "✓ my-agent installed → $BIN_TARGET"
 
+# Install built-in plugins to ~/.my-agent/plugins/
+BUILTIN_SRC="$SCRIPT_DIR/src/plugins/builtin"
+BUILTIN_DIST="$SCRIPT_DIR/dist/plugins/builtin"
+PLUGINS_TARGET="$HOME/.my-agent/plugins"
+
+if [[ -d "$BUILTIN_DIST" ]]; then
+  mkdir -p "$PLUGINS_TARGET"
+  for plugin_dist in "$BUILTIN_DIST"/*/; do
+    plugin_name="$(basename "$plugin_dist")"
+    target_dir="$PLUGINS_TARGET/$plugin_name"
+    mkdir -p "$target_dir"
+    # Copy compiled JS files from dist
+    cp "$plugin_dist"*.js "$target_dir/" 2>/dev/null || true
+    # Copy plugin.json from src (tsc does not copy JSON files)
+    if [[ -f "$BUILTIN_SRC/$plugin_name/plugin.json" ]]; then
+      cp "$BUILTIN_SRC/$plugin_name/plugin.json" "$target_dir/plugin.json"
+    fi
+    echo "✓ plugin installed: $plugin_name → $target_dir"
+  done
+fi
+
 # Detect the current shell and its rc file
 CURRENT_SHELL="$(basename "${SHELL:-}")"
 case "$CURRENT_SHELL" in

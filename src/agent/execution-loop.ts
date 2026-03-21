@@ -590,7 +590,8 @@ export class ExecutionLoop implements Agent {
       identitySection +
       preferencesSection +
       summarySection +
-      `\n\nCurrent working directory: ${this.workingDirectory}`
+      `\n\nCurrent working directory: ${this.workingDirectory}` +
+      `\n\nCurrent date and time: ${new Date().toLocaleString()}`
     );
   }
 
