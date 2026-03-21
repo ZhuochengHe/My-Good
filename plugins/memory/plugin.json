@@ -61,7 +61,8 @@
             "type": "number",
             "description": "Maximum number of results to return"
           }
-        }
+        },
+        "required": []
       },
       "handler": "handlers.js"
     },
@@ -121,7 +122,8 @@
             "type": "number",
             "description": "Layer to list (1, 2, or 3). Lists all layers if omitted."
           }
-        }
+        },
+        "required": []
       },
       "handler": "handlers.js"
     }

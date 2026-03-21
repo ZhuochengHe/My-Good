@@ -3,7 +3,9 @@
  * Handles configuration loading, auto-creation, and dependency wiring.
  */
 
-import { mkdir, access, writeFile } from 'node:fs/promises';
+import { mkdir, access, writeFile, readFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, isAbsolute } from 'node:path';
 import { stringify } from 'yaml';
@@ -139,7 +141,24 @@ export async function bootstrap(
   const memoryStore = new JsonMemoryStore(memoryDir);
 
   // Step 9 (formerly 8): Create ToolExecutor with memoryStore and register plugin tools
-  const toolExecutor = new ToolExecutor(memoryStore);
+  // Use caller-supplied confirmation callback when provided (e.g. TUI-aware version),
+  // otherwise fall back to a plain readline prompt.
+  const defaultConfirm: DangerousToolConfirm = async (toolName, args) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise((resolve) => {
+      const preview = JSON.stringify(args, null, 2).slice(0, 200);
+      rl.question(
+        `\n⚠  Tool "${toolName}" requires confirmation:\n${preview}\n\nProceed? [y/N] `,
+        (answer) => {
+          rl.close();
+          resolve(answer.trim().toLowerCase() === 'y');
+        }
+      );
+    });
+  };
+  const confirmFn = options.onDangerousToolCall ?? defaultConfirm;
+
+  const toolExecutor = new ToolExecutor(memoryStore, confirmFn);
   const toolDefinitions = pluginManager.getToolDefinitions();
 
   for (const toolDef of toolDefinitions) {
@@ -184,8 +203,8 @@ export async function bootstrap(
     toolCallBridge
   );
 
-  // Step 13 (formerly 12): Create output adapter
-  const output = new ColoredOutput();
+  // Step 13 (formerly 12): Create output adapter (use caller-supplied instance if provided)
+  const output: OutputAdapter = options.output ?? new ColoredOutput();
 
   return {
     config,

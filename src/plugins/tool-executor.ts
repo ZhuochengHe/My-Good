@@ -106,16 +106,24 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export class ToolExecutor {
   private readonly tools: Map<string, ToolEntry>;
   private readonly memoryStore?: MemoryStore;
+  private readonly onDangerousToolCall?: DangerousToolConfirm;
 
   /**
    * Creates a new ToolExecutor.
    *
    * @param memoryStore - Optional memory store forwarded to handler contexts
+   * @param onDangerousToolCall - Optional callback invoked before executing
+   *   tools marked as dangerous. When provided, the callback must return `true`
+   *   to allow execution or `false` to deny it with a PERMISSION_DENIED result.
+   *   When omitted, dangerous tools execute without any confirmation.
    */
-  constructor(memoryStore?: MemoryStore) {
+  constructor(memoryStore?: MemoryStore, onDangerousToolCall?: DangerousToolConfirm) {
     this.tools = new Map();
     if (memoryStore !== undefined) {
       this.memoryStore = memoryStore;
+    }
+    if (onDangerousToolCall !== undefined) {
+      this.onDangerousToolCall = onDangerousToolCall;
     }
   }
 
@@ -205,6 +213,20 @@ export class ToolExecutor {
       toolCall.arguments,
       entry.definition.parameters.properties
     );
+
+    // Check dangerous tool confirmation
+    if (entry.dangerous && this.onDangerousToolCall !== undefined) {
+      const allowed = await this.onDangerousToolCall(toolCall.name, argsWithDefaults);
+      if (!allowed) {
+        const duration = Math.max(1, Date.now() - startTime);
+        return this.buildErrorResult(
+          toolCall,
+          duration,
+          'PERMISSION_DENIED',
+          '用户拒绝执行危险操作'
+        );
+      }
+    }
 
     // Build handler context, merging in the executor's memoryStore when set.
     // The conditional spread is required by exactOptionalPropertyTypes.

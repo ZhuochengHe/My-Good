@@ -18,22 +18,16 @@ echo ""
 echo "✓ my-agent installed → $BIN_TARGET"
 
 # Install built-in plugins to ~/.my-agent/plugins/
-BUILTIN_SRC="$SCRIPT_DIR/src/plugins/builtin"
-BUILTIN_DIST="$SCRIPT_DIR/dist/plugins/builtin"
+PLUGINS_SRC="$SCRIPT_DIR/plugins"
 PLUGINS_TARGET="$HOME/.my-agent/plugins"
 
-if [[ -d "$BUILTIN_DIST" ]]; then
+if [[ -d "$PLUGINS_SRC" ]]; then
   mkdir -p "$PLUGINS_TARGET"
-  for plugin_dist in "$BUILTIN_DIST"/*/; do
-    plugin_name="$(basename "$plugin_dist")"
+  for plugin_src in "$PLUGINS_SRC"/*/; do
+    plugin_name="$(basename "$plugin_src")"
     target_dir="$PLUGINS_TARGET/$plugin_name"
     mkdir -p "$target_dir"
-    # Copy compiled JS files from dist
-    cp "$plugin_dist"*.js "$target_dir/" 2>/dev/null || true
-    # Copy plugin.json from src (tsc does not copy JSON files)
-    if [[ -f "$BUILTIN_SRC/$plugin_name/plugin.json" ]]; then
-      cp "$BUILTIN_SRC/$plugin_name/plugin.json" "$target_dir/plugin.json"
-    fi
+    cp "$plugin_src"* "$target_dir/"
     echo "✓ plugin installed: $plugin_name → $target_dir"
   done
 fi
