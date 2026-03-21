@@ -1,0 +1,29 @@
+{
+  "id": "dangerous-plugin",
+  "name": "Dangerous Plugin",
+  "version": "1.0.0",
+  "description": "A plugin with a dangerous tool for testing",
+  "tools": [
+    {
+      "name": "dangerous_op",
+      "description": "A dangerous operation",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "handler": "handlers.js",
+      "dangerous": true
+    },
+    {
+      "name": "safe_op",
+      "description": "A safe operation",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "handler": "handlers.js"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
  */
 
 import { mkdir, access, writeFile, readFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, isAbsolute } from 'node:path';
@@ -16,6 +17,7 @@ import { JsonlSessionStore } from '../session/jsonl-store.js';
 import { SessionManager } from '../session/session-manager.js';
 import { PluginManager } from '../plugins/manager.js';
 import { ToolExecutor } from '../plugins/tool-executor.js';
+import type { DangerousToolConfirm } from '../plugins/tool-executor.js';
 import { ExecutionLoop } from '../agent/execution-loop.js';
 import { createToolCallBridge } from '../agent/tool-call-bridge.js';
 import { AnthropicProvider } from '../providers/anthropic.js';
@@ -32,6 +34,17 @@ import { JsonMemoryStore } from '../memory/index.js';
 export interface BootstrapOptions {
   /** Path to config file */
   readonly configPath: string;
+  /**
+   * Override the dangerous-tool confirmation callback.
+   * When provided, this replaces the default readline prompt.
+   * Use this to integrate with the TUI (e.g. stop spinner before prompting).
+   */
+  readonly onDangerousToolCall?: DangerousToolConfirm;
+  /**
+   * Pre-created output adapter to use instead of creating a new one.
+   * Allows callers to share the same adapter instance with the confirmation callback.
+   */
+  readonly output?: OutputAdapter;
 }
 
 /**
@@ -128,13 +141,31 @@ export async function bootstrap(
   const memoryStore = new JsonMemoryStore(memoryDir);
 
   // Step 9 (formerly 8): Create ToolExecutor with memoryStore and register plugin tools
-  const toolExecutor = new ToolExecutor(memoryStore);
+  // Use caller-supplied confirmation callback when provided (e.g. TUI-aware version),
+  // otherwise fall back to a plain readline prompt.
+  const defaultConfirm: DangerousToolConfirm = async (toolName, args) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise((resolve) => {
+      const preview = JSON.stringify(args, null, 2).slice(0, 200);
+      rl.question(
+        `\n⚠  Tool "${toolName}" requires confirmation:\n${preview}\n\nProceed? [y/N] `,
+        (answer) => {
+          rl.close();
+          resolve(answer.trim().toLowerCase() === 'y');
+        }
+      );
+    });
+  };
+  const confirmFn = options.onDangerousToolCall ?? defaultConfirm;
+
+  const toolExecutor = new ToolExecutor(memoryStore, confirmFn);
   const toolDefinitions = pluginManager.getToolDefinitions();
 
   for (const toolDef of toolDefinitions) {
     const handler = pluginManager.getToolHandler(toolDef.name);
     if (handler) {
-      toolExecutor.registerTool(toolDef, handler);
+      const dangerous = pluginManager.isToolDangerous(toolDef.name);
+      toolExecutor.registerTool(toolDef, handler, dangerous);
     }
   }
 
@@ -172,8 +203,8 @@ export async function bootstrap(
     toolCallBridge
   );
 
-  // Step 13 (formerly 12): Create output adapter
-  const output = new ColoredOutput();
+  // Step 13 (formerly 12): Create output adapter (use caller-supplied instance if provided)
+  const output: OutputAdapter = options.output ?? new ColoredOutput();
 
   // Step 14: Query total memory entry count across all layers for header display
   let memoryEntryCount = 0;

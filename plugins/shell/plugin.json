@@ -26,7 +26,7 @@
         },
         "required": ["command"]
       },
-      "handler": "execCommand",
+      "handler": "handlers.js",
       "dangerous": true,
       "timeout": 30000
     }

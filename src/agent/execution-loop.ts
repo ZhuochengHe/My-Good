@@ -444,8 +444,7 @@ export class ExecutionLoop implements Agent {
           outputTokens: 0,
           totalTokens: 0,
         };
-        // Tool call streaming to be implemented in future
-        // const streamedToolCalls: ToolCall[] = [];
+        const pendingToolCalls: ToolCall[] = [];
 
         for await (const chunk of this.provider.stream(request)) {
           if (chunk.type === 'text_delta' && chunk.delta) {
@@ -454,6 +453,15 @@ export class ExecutionLoop implements Agent {
               type: 'text_delta',
               delta: chunk.delta,
             };
+          } else if (chunk.type === 'tool_call' && chunk.toolCall) {
+            const tc = chunk.toolCall;
+            if (tc.id && tc.name && tc.arguments !== undefined) {
+              pendingToolCalls.push({
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+              });
+            }
           } else if (chunk.type === 'done' && chunk.usage) {
             responseUsage = chunk.usage;
           } else if (chunk.type === 'error') {
@@ -468,28 +476,102 @@ export class ExecutionLoop implements Agent {
           totalTokens: totalUsage.totalTokens + responseUsage.totalTokens,
         };
 
-        // Add assistant message
-        const assistantMessage: ConversationMessage = {
-          id: randomUUID(),
-          role: 'assistant',
-          content,
-          stopReason: 'end_turn', // Simplified for streaming
-          timestamp: Date.now(),
-        };
-        messages.push(assistantMessage);
+        if (pendingToolCalls.length > 0) {
+          // Treat as tool_use turn
 
-        // Yield turn_end
-        yield {
-          type: 'turn_end',
-          turnNumber,
-          usage: responseUsage,
-          timestamp: Date.now(),
-        };
+          // Add assistant message with tool calls
+          const assistantMessage: ConversationMessage = {
+            id: randomUUID(),
+            role: 'assistant',
+            content,
+            toolCalls: pendingToolCalls,
+            stopReason: 'tool_use',
+            timestamp: Date.now(),
+          };
+          messages.push(assistantMessage);
 
-        // For streaming, we'll simplify and assume end_turn for now
-        // Real implementation would handle tool calls in streams
-        finishReason = 'completed';
-        break;
+          // Yield turn_end
+          yield {
+            type: 'turn_end',
+            turnNumber,
+            usage: responseUsage,
+            timestamp: Date.now(),
+          };
+
+          // Check if onToolCall is provided
+          const onToolCall = options?.onToolCall;
+          if (!onToolCall) {
+            finishReason = 'error';
+            error = {
+              code: 'TOOL_ERROR',
+              message: 'Tool calls requested but no onToolCall handler provided',
+              recoverable: false,
+            };
+            break;
+          }
+
+          // Execute each tool call
+          for (const toolCallItem of pendingToolCalls) {
+            // Yield tool_call_start
+            yield {
+              type: 'tool_call_start',
+              toolCall: toolCallItem,
+            };
+
+            const context: ToolCallContext = {
+              sessionId,
+              workingDirectory: this.workingDirectory,
+              ...(signal && { signal }),
+            };
+
+            const result = await onToolCall(toolCallItem, context);
+            toolCalls.push(result);
+
+            // Yield tool_call_end
+            yield {
+              type: 'tool_call_end',
+              result,
+            };
+
+            // Add tool result message
+            const toolResultMessage: ConversationMessage = {
+              id: randomUUID(),
+              role: 'tool',
+              content: result.output,
+              toolCallId: result.callId,
+              toolName: result.name,
+              isError: !result.success,
+              timestamp: Date.now(),
+            };
+            messages.push(toolResultMessage);
+          }
+
+          // Continue loop for next turn
+          continue;
+        } else {
+          // No tool calls: end_turn
+
+          // Add assistant message
+          const assistantMessage: ConversationMessage = {
+            id: randomUUID(),
+            role: 'assistant',
+            content,
+            stopReason: 'end_turn',
+            timestamp: Date.now(),
+          };
+          messages.push(assistantMessage);
+
+          // Yield turn_end
+          yield {
+            type: 'turn_end',
+            turnNumber,
+            usage: responseUsage,
+            timestamp: Date.now(),
+          };
+
+          finishReason = 'completed';
+          break;
+        }
       }
 
       // Check if we hit max turns

@@ -300,6 +300,49 @@ describe('PluginManager', () => {
     });
   });
 
+  describe('isToolDangerous', () => {
+    it('returns true for a tool with dangerous: true in manifest', async () => {
+      const pluginPath = path.join(fixturesDir, 'dangerous-plugin');
+      await manager.loadPlugin(pluginPath);
+
+      expect(manager.isToolDangerous('dangerous_op')).toBe(true);
+    });
+
+    it('returns false for a tool without dangerous field', async () => {
+      const pluginPath = path.join(fixturesDir, 'dangerous-plugin');
+      await manager.loadPlugin(pluginPath);
+
+      expect(manager.isToolDangerous('safe_op')).toBe(false);
+    });
+
+    it('returns false for a tool from an unrelated plugin that has no dangerous field', async () => {
+      const pluginPath = path.join(fixturesDir, 'valid-plugin');
+      await manager.loadPlugin(pluginPath);
+
+      expect(manager.isToolDangerous('test_tool')).toBe(false);
+    });
+
+    it('returns false for a non-existent tool name', async () => {
+      const pluginPath = path.join(fixturesDir, 'valid-plugin');
+      await manager.loadPlugin(pluginPath);
+
+      expect(manager.isToolDangerous('no_such_tool')).toBe(false);
+    });
+
+    it('returns false when no plugins are loaded', () => {
+      expect(manager.isToolDangerous('dangerous_op')).toBe(false);
+    });
+
+    it('returns false for a dangerous tool from a disabled plugin', async () => {
+      const pluginPath = path.join(fixturesDir, 'dangerous-plugin');
+      await manager.loadPlugin(pluginPath);
+
+      manager.disablePlugin('dangerous-plugin');
+
+      expect(manager.isToolDangerous('dangerous_op')).toBe(false);
+    });
+  });
+
   describe('duplicate plugins', () => {
     it('throws error when loading plugin with duplicate ID', async () => {
       const pluginPath = path.join(fixturesDir, 'valid-plugin');

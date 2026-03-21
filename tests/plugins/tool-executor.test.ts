@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ToolExecutor } from '../../src/plugins/tool-executor.js';
+import type { DangerousToolConfirm } from '../../src/plugins/tool-executor.js';
 import type {
   ToolDefinition,
   ToolHandler,
@@ -810,6 +811,120 @@ describe('ToolExecutor', () => {
       // Allow small tolerance for timer resolution differences across Node versions
       expect(result.durationMs).toBeGreaterThanOrEqual(95);
       expect(result.durationMs).toBeLessThan(200); // Should not be way off
+    });
+  });
+
+  describe('dangerous tool gating', () => {
+    const dangerousDef: ToolDefinition = {
+      name: 'dangerous_tool',
+      description: 'A dangerous tool',
+      parameters: { type: 'object', properties: {}, required: [] },
+    };
+
+    const toolCall: ToolCall = {
+      id: 'call-dangerous',
+      name: 'dangerous_tool',
+      arguments: {},
+    };
+
+    it('executes dangerous tool without callback registered', async () => {
+      // No onDangerousToolCall supplied — dangerous tool runs freely
+      const handlerSpy = vi.fn(async () => ({ output: 'executed' }));
+      executor.registerTool(dangerousDef, handlerSpy, true);
+
+      const result = await executor.executeTool(toolCall, mockContext);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('executed');
+      expect(handlerSpy).toHaveBeenCalledOnce();
+    });
+
+    it('executes dangerous tool when callback returns true', async () => {
+      const confirmCallback: DangerousToolConfirm = vi.fn(async () => true);
+      const executorWithCallback = new ToolExecutor(undefined, confirmCallback);
+
+      const handlerSpy = vi.fn(async () => ({ output: 'allowed' }));
+      executorWithCallback.registerTool(dangerousDef, handlerSpy, true);
+
+      const result = await executorWithCallback.executeTool(toolCall, mockContext);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('allowed');
+      expect(confirmCallback).toHaveBeenCalledOnce();
+      expect(confirmCallback).toHaveBeenCalledWith('dangerous_tool', {});
+      expect(handlerSpy).toHaveBeenCalledOnce();
+    });
+
+    it('denies dangerous tool when callback returns false', async () => {
+      const confirmCallback: DangerousToolConfirm = vi.fn(async () => false);
+      const executorWithCallback = new ToolExecutor(undefined, confirmCallback);
+
+      const handlerSpy = vi.fn(async () => ({ output: 'should not run' }));
+      executorWithCallback.registerTool(dangerousDef, handlerSpy, true);
+
+      const result = await executorWithCallback.executeTool(toolCall, mockContext);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('PERMISSION_DENIED');
+      expect(result.error?.message).toContain('用户拒绝执行危险操作');
+      expect(handlerSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke callback for non-dangerous tools', async () => {
+      const confirmCallback: DangerousToolConfirm = vi.fn(async () => false);
+      const executorWithCallback = new ToolExecutor(undefined, confirmCallback);
+
+      const safeDef: ToolDefinition = {
+        name: 'safe_tool',
+        description: 'A safe tool',
+        parameters: { type: 'object', properties: {}, required: [] },
+      };
+      const handlerSpy = vi.fn(async () => ({ output: 'safe' }));
+      // dangerous not passed (defaults to false)
+      executorWithCallback.registerTool(safeDef, handlerSpy);
+
+      const safeCall: ToolCall = {
+        id: 'call-safe',
+        name: 'safe_tool',
+        arguments: {},
+      };
+
+      const result = await executorWithCallback.executeTool(safeCall, mockContext);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toBe('safe');
+      expect(confirmCallback).not.toHaveBeenCalled();
+      expect(handlerSpy).toHaveBeenCalledOnce();
+    });
+
+    it('passes args with defaults applied to the confirmation callback', async () => {
+      const capturedArgs: Record<string, unknown>[] = [];
+      const confirmCallback: DangerousToolConfirm = vi.fn(async (_name, args) => {
+        capturedArgs.push(args);
+        return true;
+      });
+      const executorWithCallback = new ToolExecutor(undefined, confirmCallback);
+
+      const defWithDefault: ToolDefinition = {
+        name: 'defaulted_dangerous',
+        description: 'Dangerous with defaults',
+        parameters: {
+          type: 'object',
+          properties: { count: { type: 'number', default: 5 } },
+          required: [],
+        },
+      };
+      executorWithCallback.registerTool(defWithDefault, async () => ({ output: 'ok' }), true);
+
+      const callWithoutDefault: ToolCall = {
+        id: 'call-defaulted',
+        name: 'defaulted_dangerous',
+        arguments: {},
+      };
+
+      await executorWithCallback.executeTool(callWithoutDefault, mockContext);
+
+      expect(capturedArgs[0]).toEqual({ count: 5 });
     });
   });
 
