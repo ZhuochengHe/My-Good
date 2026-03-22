@@ -1,7 +1,7 @@
 # Architecture Reference
 
 **Stack:** TypeScript (strict, ESM) · Node.js >=18 · Vitest · Commander.js · chalk · ora · Ink (React TUI)
-**Test coverage:** 1451+ tests across 54 files, >=80% coverage
+**Test coverage:** 1453+ tests across 54 files, >=80% coverage
 
 ---
 
@@ -43,7 +43,7 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
 |---|---|
 | `plugins/file-ops/` | `read_file`, `write_file`, `list_directory` |
 | `plugins/shell/` | `shell_exec` (linux/darwin) |
-| `plugins/web-search/` | `web_search`, `fetch_url` |
+| `plugins/web-search/` | `web_search` (DuckDuckGo, no API key), `fetch_url` |
 
 ---
 
@@ -82,10 +82,10 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
 | `src/cli/input-reader.ts` | InputReader interface definition |
 | `src/cli/stdin-input-reader.ts` | Stdin implementation of InputReader |
 | `src/cli/slash-commands.ts` | In-REPL slash command handler (used by non-TTY path) |
-| `src/ui/shared/chat-state.ts` | `ChatState`, `ChatAction`, `chatReducer` pure reducer |
-| `src/ui/shared/stream-processor.ts` | `agentEventToAction` — maps AgentEvent → ChatAction |
-| `src/ui/ink/InkChatRunner.ts` | Ink TUI entry point — `render(<App/>)`, awaits exit |
-| `src/ui/ink/components/App.tsx` | Root Ink component — owns state, routes phases, slash commands |
+| `src/ui/shared/chat-state.ts` | `ChatState`, `ChatAction`, `chatReducer` pure reducer; `RenderedMessage` union (user/agent/tool) |
+| `src/ui/shared/stream-processor.ts` | `agentEventToAction` — maps AgentEvent → ChatAction (tool_end carries output+success) |
+| `src/ui/ink/InkChatRunner.ts` | Ink TUI entry point — `render(<App/>)`, awaits exit, wires `onConfirmReady` |
+| `src/ui/ink/components/App.tsx` | Root Ink component — owns state, routes phases, slash commands, dangerous-tool confirm bridge |
 | `src/ui/ink/hooks/useStreamingSession.ts` | Streams agent runs into chatReducer |
 | `src/ui/ink/hooks/useTypewriter.ts` | Character-by-character text reveal hook |
 | `providers.json` | Provider registry manifest |
@@ -109,11 +109,12 @@ src/ui/ink/             ← Node.js + Ink only
     useStreamingSession  SessionManager.streamRun + chatReducer via useReducer
     useTypewriter        character queue drain at configurable interval
   components/
-    App.tsx             root; routes phase → sub-components; slash commands
+    App.tsx             root; routes phase → sub-components; slash commands; dangerous-tool confirm bridge
     ChatHeader          Unicode box: agent/provider/model/session/memory
-    MessageList         committed RenderedMessage[] transcript
+    MessageList         committed RenderedMessage[] transcript; keyboard focus for tool records
     StreamingMessage    live pendingText with typewriter (hidden during tool_call)
-    ToolCallBlock       Ink spinner + tool name
+    ToolCallBlock       Ink spinner + tool name (active tool only)
+    ToolCallRecord      collapsible tool call history entry (↑↓/jk to focus, Enter/Space to expand)
     InputLine           ink-text-input with backslash continuation
     TokenUsageLine      dim ↑X ↓Y ∑Z footer
     ConfirmPrompt       inline [y/N] for dangerous tools (no readline)
@@ -133,13 +134,42 @@ process.stdout.isTTY && !--message
 ```
 idle → (user_message) → idle
 idle → (text_delta)   → streaming_text
-streaming_text → (tool_start) → tool_call   [pendingText discarded]
-tool_call → (tool_end) → streaming_text
+streaming_text → (tool_start) → tool_call   [pendingText discarded, activeToolArgs saved]
+tool_call → (await_confirmation) → tool_call   [awaitingConfirmation set; ConfirmPrompt shown]
+tool_call → (confirm_tool) → tool_call         [awaitingConfirmation cleared]
+tool_call → (tool_end) → streaming_text        [tool RenderedMessage committed to messages]
 streaming_text → (agent_end) → complete     [pendingText flushed to messages]
 any → (error) → error
 any → (reset_turn) → idle
 any → (context_warning) → (contextWarning flag toggled)
 ```
+
+### Dangerous Tool Confirmation Flow (TTY)
+
+```
+bootstrap passes onDangerousToolCall to ToolExecutor
+  ↓
+App.onConfirmReady registers a Promise-based handler
+  ↓
+tool-executor calls handler → Promise created, resolver stored in pendingConfirmRef
+  ↓
+dispatch(await_confirmation) → ConfirmPrompt renders
+  ↓
+user presses y/n → handleConfirm resolves Promise + dispatches confirm_tool
+  ↓
+tool-executor proceeds or returns PERMISSION_DENIED
+```
+
+### RenderedMessage Union
+
+```typescript
+type RenderedMessage =
+  | { role: 'user';  text: string; tokenUsage?: TokenUsage }
+  | { role: 'agent'; text: string; tokenUsage?: TokenUsage }
+  | { role: 'tool';  toolName: string; args: unknown; output: string; success: boolean };
+```
+
+Tool records are committed to `messages` on `tool_end` and rendered as collapsible `ToolCallRecord` entries in `MessageList`.
 
 ---
 
