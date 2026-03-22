@@ -71,7 +71,7 @@ export function useTypewriter(options?: UseTypewriterOptions): UseTypewriterResu
       }
     }, intervalMs);
 
-    return () => clearInterval(timer);
+    return (): void => clearInterval(timer);
   }, [isDraining, intervalMs]);
 
   const enqueue = (text: string): void => {

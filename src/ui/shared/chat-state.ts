@@ -49,8 +49,8 @@ export interface ChatState {
   readonly pendingText: string;
   /** Name of the tool currently executing, or null. */
   readonly activeToolName: string | null;
-  /** Arguments of the tool currently executing, or null. */
-  readonly activeToolArgs: unknown | null;
+  /** Arguments of the tool currently executing, or null when idle. */
+  readonly activeToolArgs: unknown;
   /** Token usage from the most recently completed agent turn. */
   readonly lastTokenUsage: TokenUsage | null;
   /** Human-readable error description, or null when healthy. */

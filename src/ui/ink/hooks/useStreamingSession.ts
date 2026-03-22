@@ -78,7 +78,7 @@ export function useStreamingSession(
 
       dispatch({ type: 'user_message', text: input });
 
-      void (async () => {
+      void (async (): Promise<void> => {
         try {
           for await (const event of sessionManager.streamRun(sessionId, input)) {
             const action = agentEventToAction(event);
