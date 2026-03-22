@@ -1,7 +1,7 @@
 # Architecture Reference
 
-**Stack:** TypeScript (strict, ESM) · Node.js >=18 · Vitest · Commander.js · chalk · ora
-**Test coverage:** 1275+ tests across 68 files, >=80% coverage
+**Stack:** TypeScript (strict, ESM) · Node.js >=18 · Vitest · Commander.js · chalk · ora · Ink (React TUI)
+**Test coverage:** 1453+ tests across 54 files, >=80% coverage
 
 ---
 
@@ -33,6 +33,8 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
 | `src/security/` | Credential detector |
 | `src/session/` | JsonlSessionStore (atomic), SessionManager, group store |
 | `src/types/` | Core interfaces (agent, config, events, memory, messages, plugins, providers, sessions, settings, tools) |
+| `src/ui/shared/` | **Web-safe** pure logic: `chatReducer`, `agentEventToAction` — zero Node.js deps |
+| `src/ui/ink/` | Ink (React) TUI: components, hooks, `InkChatRunner` entry point |
 | `src/utils/` | Logger |
 
 **Default plugins (outside `src/`):**
@@ -41,7 +43,7 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
 |---|---|
 | `plugins/file-ops/` | `read_file`, `write_file`, `list_directory` |
 | `plugins/shell/` | `shell_exec` (linux/darwin) |
-| `plugins/web-search/` | `web_search`, `fetch_url` |
+| `plugins/web-search/` | `web_search` (DuckDuckGo, no API key), `fetch_url` |
 
 ---
 
@@ -73,14 +75,101 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
 | `src/errors/memory.ts` | Memory error hierarchy (MEMORY_001–006) |
 | `src/security/credential-detector.ts` | Detects credentials in tool output before returning to model |
 | `src/cli/bootstrap.ts` | Dependency wiring — config → session → plugins → memory → loop |
-| `src/cli/commands/chat.ts` | Interactive REPL and single-message mode |
-| `src/cli/colored-output.ts` | Chalk + ora output adapter (active) |
+| `src/cli/commands/chat.ts` | Interactive REPL and single-message mode (non-TTY fallback) |
+| `src/cli/colored-output.ts` | Chalk + ora output adapter (non-TTY path + all non-chat commands) |
 | `src/cli/plain-text-output.ts` | Plain text output adapter (reference/testing) |
 | `src/cli/output-adapter.ts` | OutputAdapter interface definition |
 | `src/cli/input-reader.ts` | InputReader interface definition |
 | `src/cli/stdin-input-reader.ts` | Stdin implementation of InputReader |
-| `src/cli/slash-commands.ts` | In-REPL slash command handler |
+| `src/cli/slash-commands.ts` | In-REPL slash command handler (used by non-TTY path) |
+| `src/ui/shared/chat-state.ts` | `ChatState`, `ChatAction`, `chatReducer` pure reducer; `RenderedMessage` union (user/agent/tool) |
+| `src/ui/shared/stream-processor.ts` | `agentEventToAction` — maps AgentEvent → ChatAction (tool_end carries output+success) |
+| `src/ui/ink/InkChatRunner.ts` | Ink TUI entry point — `render(<App/>)`, awaits exit, wires `onConfirmReady` |
+| `src/ui/ink/components/App.tsx` | Root Ink component — owns state, routes phases, slash commands, dangerous-tool confirm bridge |
+| `src/ui/ink/hooks/useStreamingSession.ts` | Streams agent runs into chatReducer |
+| `src/ui/ink/hooks/useTypewriter.ts` | Character-by-character text reveal hook |
 | `providers.json` | Provider registry manifest |
+
+---
+
+## Ink TUI Architecture
+
+Interactive TTY chat uses Ink (React terminal renderer). The design decouples state from rendering for web reuse.
+
+### Layer Boundary
+
+```
+src/ui/shared/          ← zero Node.js deps — importable from web
+  chat-state.ts         ChatState, ChatAction, chatReducer (pure function)
+  stream-processor.ts   agentEventToAction() — AgentEvent → ChatAction
+
+src/ui/ink/             ← Node.js + Ink only
+  InkChatRunner.ts      render(<App/>) entry point; awaits unmount
+  hooks/
+    useStreamingSession  SessionManager.streamRun + chatReducer via useReducer
+    useTypewriter        character queue drain at configurable interval
+  components/
+    App.tsx             root; routes phase → sub-components; slash commands; dangerous-tool confirm bridge
+    ChatHeader          Unicode box: agent/provider/model/session/memory
+    MessageList         committed RenderedMessage[] transcript; keyboard focus for tool records
+    StreamingMessage    live pendingText with typewriter (hidden during tool_call)
+    ToolCallBlock       Ink spinner + tool name (active tool only)
+    ToolCallRecord      collapsible tool call history entry (↑↓/jk to focus, Enter/Space to expand)
+    InputLine           ink-text-input with backslash continuation
+    TokenUsageLine      dim ↑X ↓Y ∑Z footer
+    ConfirmPrompt       inline [y/N] for dangerous tools (no readline)
+```
+
+### CLI Routing (`src/cli/index.ts` chat action)
+
+```
+process.stdout.isTTY && !--message
+  → runInkChat()          Ink TUI path
+  else
+  → chat() + ColoredOutput  legacy path (non-TTY, --message, pipes)
+```
+
+### ChatState Phase Transitions
+
+```
+idle → (user_message) → idle
+idle → (text_delta)   → streaming_text
+streaming_text → (tool_start) → tool_call   [pendingText discarded, activeToolArgs saved]
+tool_call → (await_confirmation) → tool_call   [awaitingConfirmation set; ConfirmPrompt shown]
+tool_call → (confirm_tool) → tool_call         [awaitingConfirmation cleared]
+tool_call → (tool_end) → streaming_text        [tool RenderedMessage committed to messages]
+streaming_text → (agent_end) → complete     [pendingText flushed to messages]
+any → (error) → error
+any → (reset_turn) → idle
+any → (context_warning) → (contextWarning flag toggled)
+```
+
+### Dangerous Tool Confirmation Flow (TTY)
+
+```
+bootstrap passes onDangerousToolCall to ToolExecutor
+  ↓
+App.onConfirmReady registers a Promise-based handler
+  ↓
+tool-executor calls handler → Promise created, resolver stored in pendingConfirmRef
+  ↓
+dispatch(await_confirmation) → ConfirmPrompt renders
+  ↓
+user presses y/n → handleConfirm resolves Promise + dispatches confirm_tool
+  ↓
+tool-executor proceeds or returns PERMISSION_DENIED
+```
+
+### RenderedMessage Union
+
+```typescript
+type RenderedMessage =
+  | { role: 'user';  text: string; tokenUsage?: TokenUsage }
+  | { role: 'agent'; text: string; tokenUsage?: TokenUsage }
+  | { role: 'tool';  toolName: string; args: unknown; output: string; success: boolean };
+```
+
+Tool records are committed to `messages` on `tool_end` and rendered as collapsible `ToolCallRecord` entries in `MessageList`.
 
 ---
 
@@ -309,6 +398,7 @@ To add a new OpenAI-compatible provider: add an entry to `providers.json` — no
 | Session storage | Append-only JSONL — human-readable, corruption-resistant |
 | Event persistence | `turn_metadata` + `error_log` records in session JSONL |
 | Memory storage | Per-entry JSON files, atomic writes (tmp + rename), mode 0o600 |
-| Output adapter | `OutputAdapter` interface — swap `PlainTextOutput` ↔ `ColoredOutput` |
+| Output adapter | `OutputAdapter` interface — used by non-TTY / non-chat paths; TTY chat uses Ink TUI |
+| Ink TUI | React component tree (Ink) — `chatReducer` pure state machine, web-reusable shared layer |
 | Config | `~/.my-agent/config.yaml` (credentials) + `settings.yaml` (behavior) |
 | Immutability | `readonly` on all message/session/memory types |

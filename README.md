@@ -9,7 +9,10 @@ Built from scratch in TypeScript with a custom agent loop. No frameworks, full c
 - Executes multi-step tasks autonomously using tool calling
 - Works with Claude (Anthropic), GPT (OpenAI), and Kimi (Moonshot AI)
 - Persists conversation history across restarts
-- Streams responses in real time
+- Streams responses in real time with typewriter effect
+- Collapsible tool call history — see what the agent did, expand for full args and output
+- Dangerous tool confirmation prompt built into the TUI (no readline conflicts)
+- Web search via DuckDuckGo — no API key needed
 - Extensible via plugins — drop in a `plugin.json` and it just works
 
 ## Install
@@ -60,7 +63,7 @@ my-agent model update                   # fetch latest models from provider APIs
 ## Development
 
 ```bash
-npm test              # 1200+ tests across 68 files
+npm test              # 1453+ tests across 54 files
 npm run test:coverage
 npm run build
 npm run lint
