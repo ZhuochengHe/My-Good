@@ -63,7 +63,7 @@ describe('agentEventToAction', () => {
         },
       };
       const action = agentEventToAction(event);
-      expect(action).toEqual({ type: 'tool_end' });
+      expect(action).toEqual({ type: 'tool_end', output: 'file list', success: true });
     });
   });
 

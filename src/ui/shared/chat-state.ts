@@ -21,13 +21,20 @@ export type ChatPhase =
 
 /**
  * A single fully-rendered chat message shown in the transcript.
- * Role 'user' for human input, 'agent' for assistant responses.
+ * - 'user': human input
+ * - 'agent': assistant text response
+ * - 'tool': a completed tool call with its output
  */
-export interface RenderedMessage {
-  readonly role: 'user' | 'agent';
-  readonly text: string;
-  readonly tokenUsage?: TokenUsage;
-}
+export type RenderedMessage =
+  | { readonly role: 'user'; readonly text: string; readonly tokenUsage?: TokenUsage }
+  | { readonly role: 'agent'; readonly text: string; readonly tokenUsage?: TokenUsage }
+  | {
+      readonly role: 'tool';
+      readonly toolName: string;
+      readonly args: unknown;
+      readonly output: string;
+      readonly success: boolean;
+    };
 
 /**
  * Immutable snapshot of all chat UI state for one session.
@@ -42,6 +49,8 @@ export interface ChatState {
   readonly pendingText: string;
   /** Name of the tool currently executing, or null. */
   readonly activeToolName: string | null;
+  /** Arguments of the tool currently executing, or null. */
+  readonly activeToolArgs: unknown | null;
   /** Token usage from the most recently completed agent turn. */
   readonly lastTokenUsage: TokenUsage | null;
   /** Human-readable error description, or null when healthy. */
@@ -61,7 +70,7 @@ export interface ChatState {
 export type ChatAction =
   | { type: 'text_delta'; delta: string }
   | { type: 'tool_start'; toolName: string; args: unknown }
-  | { type: 'tool_end' }
+  | { type: 'tool_end'; output: string; success: boolean }
   | { type: 'agent_end'; usage: TokenUsage }
   | { type: 'user_message'; text: string }
   | { type: 'await_confirmation'; toolName: string; args: unknown }
@@ -79,6 +88,7 @@ export const INITIAL_CHAT_STATE: ChatState = {
   messages: [],
   pendingText: '',
   activeToolName: null,
+  activeToolArgs: null,
   lastTokenUsage: null,
   errorMessage: null,
   contextWarning: false,
@@ -111,6 +121,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         phase: 'tool_call',
         pendingText: '',
         activeToolName: action.toolName,
+        activeToolArgs: action.args,
       };
 
     case 'await_confirmation':
@@ -119,13 +130,23 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         awaitingConfirmation: { toolName: action.toolName, args: action.args },
       };
 
-    case 'tool_end':
+    case 'tool_end': {
+      const toolMessage: RenderedMessage = {
+        role: 'tool',
+        toolName: state.activeToolName ?? 'unknown',
+        args: state.activeToolArgs,
+        output: action.output,
+        success: action.success,
+      };
       return {
         ...state,
         phase: 'streaming_text',
         activeToolName: null,
+        activeToolArgs: null,
         awaitingConfirmation: null,
+        messages: [...state.messages, toolMessage],
       };
+    }
 
     case 'agent_end': {
       const flushedMessages: readonly RenderedMessage[] =
@@ -179,6 +200,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         phase: 'idle',
         pendingText: '',
         activeToolName: null,
+        activeToolArgs: null,
         awaitingConfirmation: null,
         contextWarning: false,
       };

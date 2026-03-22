@@ -41,7 +41,11 @@ export function agentEventToAction(event: AgentEvent): ChatAction | null {
       };
 
     case 'tool_call_end':
-      return { type: 'tool_end' };
+      return {
+        type: 'tool_end',
+        output: event.result.output,
+        success: event.result.success,
+      };
 
     case 'agent_end':
       return { type: 'agent_end', usage: event.result.usage };
