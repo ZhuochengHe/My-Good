@@ -37,10 +37,15 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
+    "@types/react": "^19.2.14",
     "chalk": "^5.6.2",
     "commander": "^12.1.0",
+    "ink": "^6.8.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
     "openai": "^4.70.0",
     "ora": "^8.2.0",
+    "react": "^19.2.4",
     "yaml": "^2.4.0",
     "zod": "^3.23.0"
   },

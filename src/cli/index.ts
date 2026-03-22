@@ -19,6 +19,7 @@ import {
 } from './commands/session.js';
 import { pluginList, pluginInfo } from './commands/plugin.js';
 import { chat } from './commands/chat.js';
+import { runInkChat } from '../ui/ink/InkChatRunner.js';
 import { runSetup } from './commands/setup.js';
 import { settingsShow, settingsGet, settingsSet, settingsReset } from './commands/settings.js';
 import { updateModels } from './commands/model.js';
@@ -232,8 +233,24 @@ export async function main(argv: string[]): Promise<void> {
       const opts = program.opts();
       const configPath = opts['config'];
 
-      // Create output before bootstrap so the dangerous-tool confirmation
-      // callback can stop the spinner before prompting the user.
+      const isTTY = Boolean(process.stdout.isTTY);
+
+      // Interactive TTY mode — use Ink TUI (no readline, no ColoredOutput)
+      if (isTTY && !cmdOptions.message) {
+        const { sessionManager, config, warnings, memoryEntryCount } = await bootstrap({
+          configPath,
+        });
+        await runInkChat({
+          sessionManager,
+          config,
+          ...(memoryEntryCount !== undefined && { memoryEntryCount }),
+          ...(warnings.length > 0 && { warnings }),
+          ...(cmdOptions.session && { sessionId: cmdOptions.session }),
+        });
+        return;
+      }
+
+      // Non-TTY / single-message fallback — use existing ColoredOutput path
       const tuiOutput = new ColoredOutput();
 
       const { sessionManager, output, config, warnings, memoryEntryCount } = await bootstrap({
