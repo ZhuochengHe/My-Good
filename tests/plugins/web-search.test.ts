@@ -38,15 +38,33 @@ describe('web-search plugin', () => {
     fetchUrl = handlers.fetchUrl;
   });
 
+  /** Minimal DuckDuckGo HTML with N result blocks. */
+  function makeDDGHtml(titles: string[]): string {
+    const results = titles
+      .map(
+        (t, i) =>
+          `<h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample${i}.com">${t}</a></h2>` +
+          `<a class="result__snippet">Snippet for ${t}</a>`
+      )
+      .join('\n');
+    return `<html><body>${results}</body></html>`;
+  }
+
   describe('search handler', () => {
-    it('returns stub message about configuration', async () => {
+    it('returns search results for a valid query', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => makeDDGHtml(['Result One', 'Result Two', 'Result Three']),
+      });
+
       const result: ToolHandlerResult = await search(
-        { query: 'test query', limit: 5 },
+        { query: 'test query', limit: 3 },
         mockContext
       );
 
-      expect(result.output).toContain('configuration');
-      expect(result.output).toContain('API');
+      expect(result.output).toContain('test query');
+      expect(result.output).toContain('Result One');
     });
 
     it('handles missing query parameter', async () => {
@@ -60,32 +78,52 @@ describe('web-search plugin', () => {
     });
 
     it('respects limit parameter', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => makeDDGHtml(['A', 'B', 'C', 'D', 'E']),
+      });
+
       const result: ToolHandlerResult = await search(
-        { query: 'test', limit: 3 },
+        { query: 'test', limit: 2 },
         mockContext
       );
 
-      expect(result.output).toContain('limit');
+      // Only 2 results should appear
+      expect(result.output).toContain('1.');
+      expect(result.output).toContain('2.');
+      expect(result.output).not.toContain('3.');
     });
 
     it('uses default limit of 5 when not specified', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => makeDDGHtml(['A', 'B', 'C', 'D', 'E', 'F']),
+      });
+
       const result: ToolHandlerResult = await search(
         { query: 'test' },
         mockContext
       );
 
-      expect(result.output).toBeTruthy();
-      expect(result.output).toContain('5');
+      expect(result.output).toContain('5.');
+      expect(result.output).not.toContain('6.');
     });
 
-    it('returns JSON-formatted response', async () => {
+    it('returns no-results message when HTML has no matches', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => '<html><body>No results</body></html>',
+      });
+
       const result: ToolHandlerResult = await search(
         { query: 'test query', limit: 2 },
         mockContext
       );
 
-      // Should be parseable JSON or contain JSON-like structure
-      expect(result.output).toBeTruthy();
+      expect(result.output).toContain('No results');
     });
 
     it('handles invalid query type gracefully', async () => {

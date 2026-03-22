@@ -115,12 +115,30 @@ describe('chatReducer – tool_start', () => {
     expect(state.phase).toBe('tool_call');
   });
 
-  it('sets awaitingConfirmation with toolName and args', () => {
+  it('does not set awaitingConfirmation (tool_start is not a confirmation gate)', () => {
     const args = { cmd: 'rm -rf /' };
     const state = applyActions([
       { type: 'tool_start', toolName: 'bash', args },
     ]);
+    expect(state.awaitingConfirmation).toBeNull();
+  });
+});
+
+describe('chatReducer – await_confirmation', () => {
+  it('sets awaitingConfirmation with toolName and args', () => {
+    const args = { cmd: 'rm -rf /' };
+    const state = applyActions([
+      { type: 'await_confirmation', toolName: 'bash', args },
+    ]);
     expect(state.awaitingConfirmation).toEqual({ toolName: 'bash', args });
+  });
+
+  it('does not change phase', () => {
+    const state = applyActions([
+      { type: 'tool_start', toolName: 'bash', args: {} },
+      { type: 'await_confirmation', toolName: 'bash', args: {} },
+    ]);
+    expect(state.phase).toBe('tool_call');
   });
 });
 

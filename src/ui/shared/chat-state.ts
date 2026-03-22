@@ -64,6 +64,7 @@ export type ChatAction =
   | { type: 'tool_end' }
   | { type: 'agent_end'; usage: TokenUsage }
   | { type: 'user_message'; text: string }
+  | { type: 'await_confirmation'; toolName: string; args: unknown }
   | { type: 'confirm_tool'; approved: boolean }
   | { type: 'error'; message: string }
   | { type: 'reset_turn' }
@@ -110,6 +111,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         phase: 'tool_call',
         pendingText: '',
         activeToolName: action.toolName,
+      };
+
+    case 'await_confirmation':
+      return {
+        ...state,
         awaitingConfirmation: { toolName: action.toolName, args: action.args },
       };
 

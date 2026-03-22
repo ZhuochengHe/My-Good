@@ -9,6 +9,7 @@ import React from 'react';
 import { render } from 'ink';
 import type { SessionManager } from '../../session/session-manager.js';
 import type { AppConfig } from '../../types/config.js';
+import type { DangerousToolConfirm } from '../../plugins/tool-executor.js';
 import { App } from './components/App.js';
 
 /**
@@ -25,6 +26,11 @@ export interface InkChatOptions {
   readonly sessionId?: string;
   /** Warnings to display at startup. */
   readonly warnings?: readonly string[];
+  /**
+   * Callback that will be invoked by bootstrap when a dangerous tool needs
+   * confirmation. The App wires this to the ConfirmPrompt via onConfirmReady.
+   */
+  readonly onConfirmReady?: (handler: DangerousToolConfirm) => void;
 }
 
 /**
@@ -47,12 +53,15 @@ export async function runInkChat(options: InkChatOptions): Promise<void> {
     sessionId = await sessionManager.createSession();
   }
 
+  const { onConfirmReady } = options;
+
   const appProps = {
     sessionManager,
     sessionId,
     config,
     ...(memoryEntryCount !== undefined && { memoryEntryCount }),
     ...(warnings !== undefined && { warnings }),
+    ...(onConfirmReady !== undefined && { onConfirmReady }),
   };
 
   const { waitUntilExit } = render(React.createElement(App, appProps));

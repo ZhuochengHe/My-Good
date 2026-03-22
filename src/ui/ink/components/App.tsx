@@ -6,10 +6,11 @@
  * dispatches slash commands using an Ink-native handler.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp } from 'ink';
 import type { SessionManager } from '../../../session/session-manager.js';
 import type { AppConfig } from '../../../types/config.js';
+import type { DangerousToolConfirm } from '../../../plugins/tool-executor.js';
 import { useStreamingSession } from '../hooks/useStreamingSession.js';
 import { ChatHeader } from './ChatHeader.js';
 import { MessageList } from './MessageList.js';
@@ -49,6 +50,11 @@ export interface AppProps {
   readonly memoryEntryCount?: number;
   /** Warnings to show on startup. */
   readonly warnings?: readonly string[];
+  /**
+   * Called once on mount with a DangerousToolConfirm handler.
+   * Bootstrap uses this to wire the TUI confirmation flow into tool-executor.
+   */
+  readonly onConfirmReady?: (handler: DangerousToolConfirm) => void;
 }
 
 /** Monotonic counter for system message IDs. */
@@ -64,7 +70,7 @@ let nextSysMsgId = 0;
  * @param props - App configuration.
  */
 export function App(props: AppProps): React.ReactElement {
-  const { sessionManager, sessionId, config, memoryEntryCount, warnings } = props;
+  const { sessionManager, sessionId, config, memoryEntryCount, warnings, onConfirmReady } = props;
 
   const { exit } = useApp();
 
@@ -82,6 +88,30 @@ export function App(props: AppProps): React.ReactElement {
 
   // System messages: info/error lines injected by slash commands
   const [sysMessages, setSysMessages] = useState<SystemMessage[]>([]);
+
+  /**
+   * Holds the resolve function of the currently pending dangerous-tool
+   * confirmation Promise. null when no confirmation is in flight.
+   */
+  const pendingConfirmRef = useRef<((approved: boolean) => void) | null>(null);
+
+  /**
+   * Register the DangerousToolConfirm handler with the caller (bootstrap).
+   * Called once on mount; the handler suspends execution until the user
+   * responds via ConfirmPrompt.
+   */
+  useEffect(() => {
+    if (!onConfirmReady) return;
+
+    const handler: DangerousToolConfirm = (toolName, args) =>
+      new Promise<boolean>((resolve) => {
+        pendingConfirmRef.current = resolve;
+        dispatch({ type: 'await_confirmation', toolName, args });
+      });
+
+    onConfirmReady(handler);
+    // onConfirmReady and dispatch are stable; no cleanup needed
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addSys = useCallback((text: string, isError = false): void => {
     setSysMessages((prev) => [...prev, { id: nextSysMsgId++, text, isError }]);
@@ -188,6 +218,12 @@ export function App(props: AppProps): React.ReactElement {
   const handleConfirm = useCallback(
     (approved: boolean) => {
       dispatch({ type: 'confirm_tool', approved });
+      // Resolve the suspended onDangerousToolCall Promise so tool-executor proceeds
+      const resolve = pendingConfirmRef.current;
+      if (resolve !== null) {
+        pendingConfirmRef.current = null;
+        resolve(approved);
+      }
     },
     [dispatch]
   );

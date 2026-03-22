@@ -5,7 +5,7 @@
  */
 
 /**
- * Searches the web (stub implementation for MVP).
+ * Searches the web using DuckDuckGo HTML endpoint (no API key required).
  *
  * @param {Record<string, unknown>} args - Tool arguments.
  * @param {import('../../src/types/tools.js').ToolContext} context - Tool context.
@@ -13,32 +13,116 @@
  */
 export async function web_search(args, context) {
   try {
-    // Validate required parameters
     if (!args.query || typeof args.query !== 'string') {
-      return {
-        output: 'Error: Missing or invalid required parameter "query"',
-      };
+      return { output: 'Error: Missing or invalid required parameter "query"' };
     }
 
     const limit = typeof args.limit === 'number' ? args.limit : 5;
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(args.query)}`;
 
-    // MVP: Return helpful stub message
-    const message = {
-      status: 'stub',
-      message: 'Web search requires API configuration (DuckDuckGo, Brave, etc.)',
-      query: args.query,
-      limit: limit,
-      suggestion: 'This feature is currently not configured. Please set up a search API provider.',
-    };
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+      },
+      signal: context.signal,
+    });
 
-    return {
-      output: JSON.stringify(message, null, 2),
-    };
+    if (!response.ok) {
+      return { output: `Error: HTTP ${response.status} - ${response.statusText}` };
+    }
+
+    const html = await response.text();
+    const results = parseDuckDuckGoResults(html, limit);
+
+    if (results.length === 0) {
+      return { output: `No results found for: ${args.query}` };
+    }
+
+    const output = results
+      .map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet}`)
+      .join('\n\n');
+
+    return { output: `Search results for "${args.query}":\n\n${output}` };
   } catch (error) {
-    return {
-      output: `Error executing search: ${error.message}`,
-    };
+    return { output: `Error executing search: ${error.message}` };
   }
+}
+
+/**
+ * Parses DuckDuckGo HTML search results.
+ *
+ * @param {string} html - Raw HTML from DuckDuckGo.
+ * @param {number} limit - Max number of results.
+ * @returns {{ title: string, url: string, snippet: string }[]} Parsed results.
+ */
+function parseDuckDuckGoResults(html, limit) {
+  const results = [];
+
+  const titlePattern = /class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const snippetPattern = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+
+  const titles = [];
+  let m;
+  while ((m = titlePattern.exec(html)) !== null) {
+    titles.push({ rawUrl: m[1], title: stripTags(m[2]).trim() });
+  }
+
+  const snippets = [];
+  while ((m = snippetPattern.exec(html)) !== null) {
+    snippets.push(stripTags(m[1]).trim());
+  }
+
+  const count = Math.min(titles.length, limit);
+  for (let i = 0; i < count; i++) {
+    const { rawUrl, title } = titles[i];
+    const url = extractRealUrl(rawUrl);
+    const snippet = snippets[i] ?? '';
+    if (title && url) {
+      results.push({ title, url, snippet });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Extracts real URL from DuckDuckGo redirect URL.
+ *
+ * @param {string} rawUrl - Possibly a DDG redirect URL.
+ * @returns {string} The real destination URL.
+ */
+function extractRealUrl(rawUrl) {
+  // DDG redirect format: //duckduckgo.com/l/?uddg=https%3A%2F%2F...
+  const uddgMatch = rawUrl.match(/[?&]uddg=([^&]+)/);
+  if (uddgMatch) {
+    return decodeURIComponent(uddgMatch[1]);
+  }
+  // Some results use /l/?kh=-1&uddg=...
+  if (rawUrl.startsWith('//')) {
+    return `https:${rawUrl}`;
+  }
+  return rawUrl;
+}
+
+/**
+ * Strips HTML tags from a string.
+ *
+ * @param {string} html - HTML string.
+ * @returns {string} Plain text.
+ */
+function stripTags(html) {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
