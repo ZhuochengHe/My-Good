@@ -332,3 +332,26 @@ describe('chatReducer – reset_turn', () => {
     expect(state.messages).toHaveLength(2);
   });
 });
+
+describe('chatReducer — context_warning action', () => {
+  it('sets contextWarning to true when active is true', () => {
+    const state = chatReducer(INITIAL_CHAT_STATE, { type: 'context_warning', active: true });
+    expect(state.contextWarning).toBe(true);
+  });
+
+  it('sets contextWarning to false when active is false', () => {
+    const state = chatReducer(
+      { ...INITIAL_CHAT_STATE, contextWarning: true },
+      { type: 'context_warning', active: false },
+    );
+    expect(state.contextWarning).toBe(false);
+  });
+
+  it('reset_turn clears contextWarning', () => {
+    const state = applyActions([
+      { type: 'context_warning', active: true },
+      { type: 'reset_turn' },
+    ]);
+    expect(state.contextWarning).toBe(false);
+  });
+});

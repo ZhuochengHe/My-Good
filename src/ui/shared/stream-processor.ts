@@ -4,6 +4,10 @@
  *
  * This module is the bridge between the agent event stream and the pure
  * UI state layer. It has no side effects and no Node.js dependencies.
+ *
+ * WEB-SAFE BOUNDARY: this file must never import Node.js built-ins or
+ * any package that depends on them. It is designed to be importable
+ * from web frontends as well as the Ink TUI.
  */
 
 import type { AgentEvent } from '../../types/events.js';

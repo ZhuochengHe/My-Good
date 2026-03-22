@@ -2,10 +2,11 @@
  * Root Ink component for the chat TUI.
  *
  * Owns all render state via useStreamingSession. Routes the current
- * ChatPhase to sub-components and handles the confirmation overlay.
+ * ChatPhase to sub-components, handles the confirmation overlay, and
+ * dispatches slash commands using an Ink-native handler.
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Box, Text, useApp } from 'ink';
 import type { SessionManager } from '../../../session/session-manager.js';
 import type { AppConfig } from '../../../types/config.js';
@@ -26,6 +27,15 @@ const DEFAULT_AGENT_LABEL = 'agent';
 const DEFAULT_TYPEWRITER_MS = 30;
 
 /**
+ * A system-level notification line shown in the message feed.
+ */
+interface SystemMessage {
+  readonly id: number;
+  readonly text: string;
+  readonly isError: boolean;
+}
+
+/**
  * Props for App.
  */
 export interface AppProps {
@@ -41,12 +51,15 @@ export interface AppProps {
   readonly warnings?: readonly string[];
 }
 
+/** Monotonic counter for system message IDs. */
+let nextSysMsgId = 0;
+
 /**
  * Root chat application component.
  *
  * Integrates useStreamingSession, routes phases to sub-components,
- * and renders the ConfirmPrompt overlay when a dangerous tool awaits
- * confirmation.
+ * handles dangerous-tool ConfirmPrompt overlay, and processes slash
+ * commands with Ink-native state (no OutputAdapter dependency).
  *
  * @param props - App configuration.
  */
@@ -62,26 +75,114 @@ export function App(props: AppProps): React.ReactElement {
       ? 0
       : (config?.agent.typewriterSpeedMs ?? DEFAULT_TYPEWRITER_MS);
 
-  const { state, isStreaming, submit, dispatch } = useStreamingSession({
+  const { state, isStreaming, submit, dispatch, compact } = useStreamingSession({
     sessionManager,
     sessionId,
   });
+
+  // System messages: info/error lines injected by slash commands
+  const [sysMessages, setSysMessages] = useState<SystemMessage[]>([]);
+
+  const addSys = useCallback((text: string, isError = false): void => {
+    setSysMessages((prev) => [...prev, { id: nextSysMsgId++, text, isError }]);
+  }, []);
+
+  // ------------------------------------------------------------------
+  // Slash command handler (Ink-native, no OutputAdapter)
+  // ------------------------------------------------------------------
+  const handleSlashCommand = useCallback(
+    (raw: string): void => {
+      const trimmed = raw.trim();
+      const parts = trimmed.slice(1).split(/\s+/);
+      const command = parts[0]?.toLowerCase() ?? '';
+      const args = parts.slice(1);
+
+      switch (command) {
+        case 'exit':
+        case 'quit':
+          exit();
+          break;
+
+        case 'help':
+        case '?':
+          addSys('Commands: /help  /session [id]  /model  /compact [hint]  /clear  /exit');
+          break;
+
+        case 'clear':
+          setSysMessages([]);
+          break;
+
+        case 'model': {
+          const provider = config?.agent.provider ?? 'unknown';
+          const model = config?.agent.model ?? 'unknown';
+          addSys(`Provider: ${provider}  ·  Model: ${model}`);
+          break;
+        }
+
+        case 'session': {
+          if (args.length > 0) {
+            void (async () => {
+              try {
+                const all = await sessionManager.searchSessions({} as Parameters<typeof sessionManager.searchSessions>[0]);
+                const match = all.find(
+                  (s) => s.id === args[0] || s.id.startsWith(args[0]!)
+                );
+                if (!match) {
+                  addSys(`Session not found: ${args[0]}`, true);
+                  return;
+                }
+                const date = new Date(match.createdAt).toLocaleString();
+                const desc = match.description ?? '(no description)';
+                addSys(`${match.id.slice(0, 8)}  ${date}  ${desc}  msgs: ${match.messageCount}`);
+              } catch {
+                addSys('Failed to load session.', true);
+              }
+            })();
+          } else {
+            void (async () => {
+              try {
+                const sessions = await sessionManager.searchSessions({} as Parameters<typeof sessionManager.searchSessions>[0]);
+                if (sessions.length === 0) {
+                  addSys('No sessions found.');
+                  return;
+                }
+                const recent = sessions.slice(-5).reverse();
+                for (const s of recent) {
+                  const date = new Date(s.createdAt).toLocaleDateString();
+                  const desc = s.description ?? '(no description)';
+                  addSys(`${s.id.slice(0, 8)}  ${date}  ${desc}`);
+                }
+              } catch {
+                addSys('Failed to list sessions.', true);
+              }
+            })();
+          }
+          break;
+        }
+
+        case 'compact': {
+          const instructions = args.length > 0 ? args.join(' ') : undefined;
+          addSys('Compacting conversation...');
+          void (async () => {
+            const summary = await compact(instructions);
+            addSys(`Compacted. ${summary.slice(0, 120)}`);
+          })();
+          break;
+        }
+
+        default:
+          addSys(`Unknown command: /${command}. Type /help for available commands.`, true);
+          break;
+      }
+    },
+    [exit, addSys, config, sessionManager, compact]
+  );
 
   const handleSubmit = useCallback(
     (input: string) => {
       submit(input);
     },
     [submit]
-  );
-
-  const handleSlashCommand = useCallback(
-    (command: string) => {
-      if (command === '/exit' || command === '/quit') {
-        exit();
-      }
-      // Other slash commands can be handled here in PR 2
-    },
-    [exit]
   );
 
   const handleConfirm = useCallback(
@@ -119,6 +220,15 @@ export function App(props: AppProps): React.ReactElement {
         agentLabel={agentLabel}
       />
 
+      {/* System messages from slash commands */}
+      {sysMessages.map((msg) => (
+        <Box key={msg.id} marginBottom={1}>
+          <Text color={msg.isError ? 'red' : 'cyan'} dimColor={!msg.isError}>
+            {msg.text}
+          </Text>
+        </Box>
+      ))}
+
       {state.phase === 'tool_call' && state.activeToolName !== null && (
         <ToolCallBlock toolName={state.activeToolName} />
       )}
@@ -137,6 +247,14 @@ export function App(props: AppProps): React.ReactElement {
       {state.errorMessage !== null && (
         <Box marginBottom={1}>
           <Text color="red">Error: {state.errorMessage}</Text>
+        </Box>
+      )}
+
+      {state.contextWarning && (
+        <Box marginBottom={1}>
+          <Text color="yellow">
+            ⚠ Context is getting long. Use /compact [hint] to summarize.
+          </Text>
         </Box>
       )}
 

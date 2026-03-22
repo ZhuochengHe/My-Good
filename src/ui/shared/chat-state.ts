@@ -3,7 +3,10 @@
  *
  * Contains the ChatState interface, ChatAction discriminated union,
  * INITIAL_CHAT_STATE constant, and the chatReducer pure function.
- * No Node.js dependencies — safe to import in any renderer.
+ *
+ * WEB-SAFE BOUNDARY: this file must never import Node.js built-ins or
+ * any package that depends on them. It is designed to be importable
+ * from web frontends as well as the Ink TUI.
  */
 
 import type { TokenUsage } from '../../types/providers.js';
@@ -63,7 +66,8 @@ export type ChatAction =
   | { type: 'user_message'; text: string }
   | { type: 'confirm_tool'; approved: boolean }
   | { type: 'error'; message: string }
-  | { type: 'reset_turn' };
+  | { type: 'reset_turn' }
+  | { type: 'context_warning'; active: boolean };
 
 /**
  * The initial state when a chat session first opens.
@@ -170,6 +174,13 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         pendingText: '',
         activeToolName: null,
         awaitingConfirmation: null,
+        contextWarning: false,
+      };
+
+    case 'context_warning':
+      return {
+        ...state,
+        contextWarning: action.active,
       };
   }
 }
