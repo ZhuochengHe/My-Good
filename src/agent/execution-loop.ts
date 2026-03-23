@@ -48,6 +48,8 @@ export interface OnToolCallCallback {
  */
 export interface ExtendedRunOptions extends AgentRunOptions {
   readonly onToolCall?: OnToolCallCallback;
+  /** Optional summary of a compacted prior conversation to inject into the system prompt. */
+  readonly compactSummary?: string;
 }
 
 /**
@@ -150,7 +152,7 @@ export class ExecutionLoop implements Agent {
       messages.push(userMessage);
 
       // Build system prompt with memory injection before the loop
-      const systemPrompt = await this.buildSystemPrompt();
+      const systemPrompt = await this.buildSystemPrompt(options?.compactSummary);
 
       // Main execution loop
       while (turnNumber < this.settings.behavior.maxTurns) {
@@ -410,7 +412,7 @@ export class ExecutionLoop implements Agent {
       messages.push(userMessage);
 
       // Build system prompt with memory injection before the loop
-      const systemPrompt = await this.buildSystemPrompt();
+      const systemPrompt = await this.buildSystemPrompt(options?.compactSummary);
 
       // Main execution loop
       while (turnNumber < this.settings.behavior.maxTurns) {
@@ -640,7 +642,7 @@ export class ExecutionLoop implements Agent {
    * a MemoryStore is present. Layer-3 entries are NOT injected here; they are
    * retrieved on-demand via the search_memory tool.
    */
-  private async buildSystemPrompt(): Promise<string> {
+  private async buildSystemPrompt(compactSummary?: string): Promise<string> {
     const layer1 = this.memoryStore ? await this.memoryStore.loadLayer1() : [];
     const layer2 = this.memoryStore
       ? await this.memoryStore.search({ layer: 2 })
@@ -656,10 +658,16 @@ export class ExecutionLoop implements Agent {
         ? `\n\n## User Preferences & Skills\n${layer2.map((m) => `- ${m.content}`).join('\n')}`
         : '';
 
+    const summarySection =
+      compactSummary !== undefined && compactSummary.length > 0
+        ? `\n\n## Previous Conversation Summary\n${compactSummary}`
+        : '';
+
     return (
       `${this.settings.behavior.systemPrompt}` +
       identitySection +
       preferencesSection +
+      summarySection +
       `\n\nCurrent working directory: ${this.workingDirectory}` +
       `\n\nCurrent date and time: ${new Date().toLocaleString()}`
     );

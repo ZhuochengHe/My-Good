@@ -37,6 +37,7 @@ describe('chat command', () => {
       writeError: vi.fn(),
       writeSuccess: vi.fn(),
       writeTokenUsage: vi.fn(),
+      writeHeader: vi.fn(),
       startLoading: vi.fn(),
       stopLoading: vi.fn(),
     };

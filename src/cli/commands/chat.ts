@@ -132,22 +132,10 @@ async function runSingleMessage(
 
   options.output.write('');
 
-  // Run agent with message
-  options.output.startLoading?.('Thinking...');
-  const result = await options.sessionManager.run(sessionId, options.message);
-  options.output.stopLoading?.();
-
-  // Display result
-  if (result.success) {
-    options.output.write(result.response);
-    options.output.write('');
-
-    // Display token usage
-    if (result.tokenUsage) {
-      options.output.writeTokenUsage(result.tokenUsage);
-    }
+  if (options.output.writeChunk) {
+    await runStreaming(options, sessionId, agentLabel, options.message);
   } else {
-    // Batch path: spinner while waiting, then print full response
+    // Run agent with message, tracking tool call activity via onEvent
     options.output.startLoading?.(LOADING_MESSAGE);
     const result = await options.sessionManager.run(sessionId, options.message, {
       onEvent: (event) => {
@@ -161,6 +149,7 @@ async function runSingleMessage(
     });
     options.output.stopLoading?.();
 
+    // Display result
     if (result.success) {
       const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
       options.output.write(agentLine);
@@ -233,11 +222,6 @@ async function runInteractive(
       if (userInput.trim() === '') {
         continue;
       }
-
-      // Run agent
-      options.output.startLoading?.('Thinking...');
-      await options.sessionManager.run(sessionId, userInput);
-      options.output.stopLoading?.();
 
       // Display result
       options.output.write('');
