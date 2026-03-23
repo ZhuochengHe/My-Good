@@ -206,15 +206,9 @@ export async function bootstrap(
   // Step 13 (formerly 12): Create output adapter (use caller-supplied instance if provided)
   const output: OutputAdapter = options.output ?? new ColoredOutput();
 
-  // Step 14: Query total memory entry count across all layers for header display
-  let memoryEntryCount = 0;
-  try {
-    const entries = await memoryStore.search({});
-    memoryEntryCount = entries.length;
-  } catch {
-    // Non-fatal: continue without memory count if storage is unavailable
-    memoryEntryCount = 0;
-  }
+  // Count all non-expired memory entries across all layers for display
+  const allMemoryEntries = await memoryStore.search({});
+  const memoryEntryCount = allMemoryEntries.length;
 
   return {
     config,

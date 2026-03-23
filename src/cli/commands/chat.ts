@@ -133,10 +133,9 @@ async function runSingleMessage(
   options.output.write('');
 
   if (options.output.writeChunk) {
-    // Streaming path: print agent label prefix, then stream chunks inline
     await runStreaming(options, sessionId, agentLabel, options.message);
   } else {
-    // Batch path: spinner while waiting, then print full response
+    // Run agent with message, tracking tool call activity via onEvent
     options.output.startLoading?.(LOADING_MESSAGE);
     const result = await options.sessionManager.run(sessionId, options.message, {
       onEvent: (event) => {
@@ -150,6 +149,7 @@ async function runSingleMessage(
     });
     options.output.stopLoading?.();
 
+    // Display result
     if (result.success) {
       const agentLine = options.output.formatAgentLine?.(agentLabel, result.response) ?? `${agentLabel} › ${result.response}`;
       options.output.write(agentLine);
@@ -223,7 +223,7 @@ async function runInteractive(
         continue;
       }
 
-      // Run agent — streaming when supported, batch otherwise
+      // Display result
       options.output.write('');
       if (options.output.writeChunk) {
         await runStreaming(options, sessionId, agentLabel, userInput);

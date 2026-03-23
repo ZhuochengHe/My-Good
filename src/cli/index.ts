@@ -19,7 +19,6 @@ import {
 } from './commands/session.js';
 import { pluginList, pluginInfo } from './commands/plugin.js';
 import { chat } from './commands/chat.js';
-import { runInkChat } from '../ui/ink/InkChatRunner.js';
 import { runSetup } from './commands/setup.js';
 import { settingsShow, settingsGet, settingsSet, settingsReset } from './commands/settings.js';
 import { updateModels } from './commands/model.js';
@@ -233,42 +232,8 @@ export async function main(argv: string[]): Promise<void> {
       const opts = program.opts();
       const configPath = opts['config'];
 
-      const isTTY = Boolean(process.stdout.isTTY);
-
-      // Interactive TTY mode — use Ink TUI (no readline, no ColoredOutput)
-      if (isTTY && !cmdOptions.message) {
-        // The TUI confirmation flow works via a shared handler ref:
-        // 1. bootstrap receives onDangerousToolCall and wires it into tool-executor.
-        // 2. App.onConfirmReady registers a handler that suspends tool execution
-        //    and dispatches await_confirmation so ConfirmPrompt renders.
-        // 3. When the user responds, handleConfirm resolves the Promise.
-        let registeredConfirmHandler: ((toolName: string, args: Record<string, unknown>) => Promise<boolean>) | null = null;
-
-        const { sessionManager, config, warnings, memoryEntryCount } = await bootstrap({
-          configPath,
-          onDangerousToolCall: (toolName, args) => {
-            if (registeredConfirmHandler) {
-              return registeredConfirmHandler(toolName, args);
-            }
-            // Fallback: deny if App has not mounted yet (should not happen in practice)
-            return Promise.resolve(false);
-          },
-        });
-
-        await runInkChat({
-          sessionManager,
-          config,
-          ...(memoryEntryCount !== undefined && { memoryEntryCount }),
-          ...(warnings.length > 0 && { warnings }),
-          ...(cmdOptions.session && { sessionId: cmdOptions.session }),
-          onConfirmReady: (handler) => {
-            registeredConfirmHandler = handler;
-          },
-        });
-        return;
-      }
-
-      // Non-TTY / single-message fallback — use existing ColoredOutput path
+      // Create output before bootstrap so the dangerous-tool confirmation
+      // callback can stop the spinner before prompting the user.
       const tuiOutput = new ColoredOutput();
 
       const { sessionManager, output, config, warnings, memoryEntryCount } = await bootstrap({

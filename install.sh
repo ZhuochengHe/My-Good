@@ -59,10 +59,14 @@ if [[ -n "$SHELL_RC" && -f "$SHELL_RC" ]]; then
       echo "   Skipped. Add manually: export PATH=\"\$HOME/.local/bin:\$PATH\""
     fi
   fi
-elif [[ -n "$SHELL_RC" ]]; then
-  echo "⚠  $SHELL_RC not found. Add ~/.local/bin to PATH for $CURRENT_SHELL manually."
+done
+
+if [[ ${#SHELLS_MISSING_PATH[@]} -gt 0 ]]; then
+  echo ""
+  echo "⚠  Add ~/.local/bin to PATH in: ${SHELLS_MISSING_PATH[*]}"
+  echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
 else
-  echo "⚠  Unknown shell: ${SHELL:-unset}. Ensure ~/.local/bin is in PATH."
+  echo "✓ ~/.local/bin is already in PATH"
 fi
 
 echo ""

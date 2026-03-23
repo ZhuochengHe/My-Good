@@ -1,65 +1,132 @@
-# Memory Module Implementation Plan
+# Memory Module Plan (v2)
 
-## Context
-
-The my_good agent currently has no cross-session memory. Each conversation starts fresh. We want to add a three-layer persistent memory system so the agent can remember identity facts, user preferences, and domain knowledge across sessions.
-
-User decisions:
-- Pure text search (no embeddings/vectors)
-- Agent-initiated via tool calls (save_memory, search_memory, etc.)
-- Layers separated by lifecycle: Layer 1 = permanent, Layer 2 = semi-persistent, Layer 3 = time-sensitive with TTL
-- Memory tools go in a dedicated top-level `memory` plugin
+> Replaces the original three-layer plan. Decisions recorded from design session on 2026-03-22.
 
 ---
 
-## Three-Layer Architecture
+## Design Goals
 
-| Layer | Name | Lifecycle | Injection | Example |
-|-------|------|-----------|-----------|---------|
-| 1 | Identity | Permanent, never expires | Always in system prompt | "User prefers concise answers" |
-| 2 | Preferences & Skills | Semi-persistent, updatable | Once at run() start | "User works in TypeScript on Node.js projects" |
-| 3 | Episodic / Domain | Time-sensitive, TTL-based | On-demand via search_memory tool | "Project phoenix uses PostgreSQL 15" |
-
----
-
-## File Structure
-
-### New files to create
-```
-src/types/memory.ts              # MemoryEntry, MemoryLayer, MemoryStore interface, etc.
-src/errors/memory.ts             # MemoryError hierarchy (MEMORY_001–006)
-src/memory/memory-store.ts       # JsonMemoryStore implementation
-src/memory/index.ts              # Re-exports
-plugins/memory/plugin.json       # Plugin manifest (5 tools)
-plugins/memory/handlers.js       # Tool handler implementations (ESM JS)
-```
-
-### Files to modify
-```
-src/types/tools.ts               # Add readonly memoryStore?: MemoryStore to ToolContext
-src/types/index.ts               # Re-export memory types
-src/plugins/tool-executor.ts     # Accept memoryStore in constructor, pass in context
-src/agent/tool-call-bridge.ts    # Forward memoryStore in ToolContext
-src/agent/execution-loop.ts      # Add memoryStore param; inject L1+L2 into system prompt
-src/cli/bootstrap.ts             # Construct JsonMemoryStore, wire to ToolExecutor + ExecutionLoop
-```
+- Cross-session persistent memory for a personal assistant agent
+- No high-precision RAG required; embedding-based similarity search is sufficient
+- Memory written via **session-end consolidation** (not in the agent loop) to decouple write quality from inference latency
+- Memory read via **system prompt injection** at session start + **on-demand search** during the session
+- Measurable: system is designed to be benchmarked with MemBench (see `docs/benchmark-adaptation.md`)
 
 ---
 
-## Key Interfaces (`src/types/memory.ts`)
+## Memory Kind System
+
+`kind` replaces the old `layer 1/2/3` distinction. It is semantically meaningful and drives lifecycle policy automatically.
+
+| Kind | What it stores | TTL | System prompt injection | Example |
+|------|---------------|-----|------------------------|---------|
+| `procedural` | How to treat the user — preferences, response style, persistent behavioral rules | None (update when changed) | Yes — injected at every session start | "User prefers concise answers without bullet points" |
+| `experiential` | How to do tasks effectively — workflows, patterns, project-specific techniques learned from past work | None (domain-scoped; degrades when project changes) | Yes — injected at every session start | "To debug this project: run `npm run typecheck` before looking at test output" |
+| `semantic` | Objective facts — project architecture, tech stack decisions, domain knowledge | None (overwritten when superseded) | No — retrieved on demand | "phoenix project uses hexagonal architecture with PostgreSQL 15" |
+| `episodic` | Time-bound events — active tasks, recent decisions, sprint goals, current bugs | Yes — set by consolidation LLM (7–90 days) | No — retrieved on demand | "User is currently building the memory consolidation pipeline" |
+
+**Classification rule for consolidation LLM:**
+> Ask: will this memory be useful 6 months from now?
+> - Yes, about how the user wants to be treated → `procedural`
+> - Yes, about how to do a category of work → `experiential`
+> - Yes, objective fact about a project or domain → `semantic`
+> - No, or depends on current context → `episodic` (set appropriate ttlDays)
+
+---
+
+## Type Definitions (`src/types/memory.ts`)
 
 ```typescript
-export type MemoryLayer = 1 | 2 | 3;
+export type MemoryKind = 'episodic' | 'semantic' | 'procedural' | 'experiential';
 
 export interface MemoryEntry {
-  readonly id: string;              // UUID
-  readonly layer: MemoryLayer;
-  readonly content: string;         // The factual text to remember
-  readonly tags: readonly string[]; // Keyword tags for search
-  readonly createdAt: number;       // Unix ms
-  readonly updatedAt: number;       // Unix ms
-  readonly expiresAt?: number;      // Unix ms, Layer 3 only
-  readonly source?: string;         // "user" | "agent"
+  readonly id: string;                // UUID v4
+  readonly kind: MemoryKind;          // Drives lifecycle and injection policy
+  readonly content: string;           // Free-text, processed by consolidation LLM
+  readonly tags: readonly string[];   // Free-form, LLM-generated; used as post-filter
+  readonly embedding?: readonly number[]; // text-embedding-3-small (1536-dim); optional until embedded
+  readonly relatedTo?: readonly string[]; // IDs of related entries — STUB, not queried yet
+  readonly sourceRef?: string;        // Opaque reference to origin (e.g. MemBench step ID)
+  readonly ttlDays?: number;          // episodic only; set by consolidation LLM
+  readonly createdAt: number;         // Unix ms
+  readonly updatedAt: number;         // Unix ms
+  readonly accessCount?: number;      // Incremented on every search hit; used in eviction scoring
+  readonly ttlRenewals?: number;      // Number of explicit TTL refreshes; used in eviction scoring
+  readonly source?: string;           // "user" | "agent" | "consolidation"
+}
+```
+
+**Notes:**
+- `relatedTo` is stored but never traversed in this version. It is populated during consolidation
+  when a new memory has cosine similarity 0.8–0.9 with an existing entry (related but not duplicate).
+  Graph traversal is deferred to a future phase.
+- `sourceRef` is required for MemBench `retri()` evaluation. For non-benchmark usage it can be omitted.
+- `tags` are free-form strings generated by the consolidation LLM. No predefined taxonomy.
+  Tags are used only as a post-filter after embedding search, not as primary recall mechanism.
+
+---
+
+## Storage Layout
+
+```
+~/.my-agent/memory/
+  episodic/        ← <uuid>.json per entry
+  semantic/        ← <uuid>.json per entry
+  procedural/      ← <uuid>.json per entry
+  experiential/    ← <uuid>.json per entry
+  embeddings.json  ← { [id: string]: number[] } — flat embedding index
+```
+
+### embeddings.json
+
+A single JSON map of `{ id → float32 array }`. Loaded fully into memory for cosine search.
+
+**Why this format:**
+- At personal assistant scale (~1k–5k entries), the file is ~6–30 MB
+- One `JSON.parse` loads the entire index; cosine search is in-memory, no per-file I/O
+- Atomic rewrite (tmp + rename) on every save/update/delete keeps it consistent with entry files
+- When entry count exceeds ~10k, replace with an HNSW index (e.g. `hnswlib-node`) without
+  changing the `EmbeddingIndex` interface
+
+### EmbeddingIndex interface
+
+```typescript
+export interface EmbeddingIndex {
+  get(id: string): number[] | null;
+  set(id: string, embedding: number[]): Promise<void>;
+  delete(id: string): Promise<void>;
+  searchByCosine(query: number[], topK: number): Promise<Array<{ id: string; score: number }>>;
+}
+```
+
+`JsonMemoryStore` holds an `EmbeddingIndex` instance. The two are kept separate so the
+embedding storage strategy can be swapped independently of the entry CRUD logic.
+
+### Embedding cache (future)
+
+Embeddings are expensive to recompute. Future work: add a content-hash → embedding cache so
+that if `consolidate()` extracts the same content string across multiple sessions, the API
+call is skipped and the cached embedding is reused. Cache stored in
+`~/.my-agent/memory/embedding-cache.json` as `{ [contentHash: string]: number[] }`.
+
+---
+
+## MemoryStore Interface (`src/types/memory.ts`)
+
+```typescript
+export interface MemoryUpdateInput {
+  readonly content?: string;
+  readonly tags?: readonly string[];
+  readonly ttlDays?: number;
+  readonly relatedTo?: readonly string[];
+}
+
+export interface MemorySearchOptions {
+  readonly kind?: MemoryKind;
+  readonly query?: string;            // Embedding similarity search
+  readonly tags?: readonly string[];  // Post-filter: entry must have at least one matching tag
+  readonly limit?: number;
+  readonly minScore?: number;         // Cosine similarity threshold (default 0.0)
 }
 
 export interface MemoryStore {
@@ -68,147 +135,198 @@ export interface MemoryStore {
   update(id: string, input: MemoryUpdateInput): Promise<MemoryEntry>;
   delete(id: string): Promise<void>;
   search(options: MemorySearchOptions): Promise<readonly MemoryEntry[]>;
-  loadLayer1(): Promise<readonly MemoryEntry[]>;  // For system prompt injection
+  loadForSystemPrompt(): Promise<readonly MemoryEntry[]>; // procedural + experiential, sorted by createdAt
 }
 ```
 
----
-
-## Storage Format
-
-Files stored in `~/.my-agent/memory/layer{1,2,3}/<uuid>.json`.
-
-Each file is a single JSON object (one entry per file — same atomicity philosophy as session JSONL).
-
-Atomic writes: temp file + `fs.rename()` with mode `0o600`.
+`search()` with a `query` string embeds the query and ranks results by cosine similarity.
+`search()` without a `query` falls back to recency sort (updatedAt descending).
 
 ---
 
-## System Prompt Injection (execution-loop.ts)
+## Consolidation Pipeline (`src/memory/consolidation.ts`)
 
-Current line 169:
-```typescript
-const systemPrompt = `${this.settings.behavior.systemPrompt}\n\nCurrent working directory: ${this.workingDirectory}`;
+Runs once at session end via a session lifecycle hook. Does not block the agent loop.
+
+```
+session messages (Message[])
+    │
+    ▼
+slidingWindowChunk(messages, maxTokens=3000, overlapTokens=500)
+    │
+    ▼  for each chunk:
+extractMemories(chunk) ── gpt-4o-mini structured output ──►
+  [{content, kind, tags, ttlDays}]
+    │
+    ▼  for each extracted candidate:
+embed(candidate.content) ── text-embedding-3-small ──► number[]
+    │
+    ▼
+searchByCosine(embedding, topK=3)
+    │
+    ├── cosine > 0.9  ──► mergeMemory(existing, candidate) ── gpt-4o-mini ──► update existing entry
+    │                      (preserves id, accessCount, ttlRenewals)
+    │
+    ├── 0.8 < cosine ≤ 0.9 ──► save new entry + stub relatedTo: [existing.id]
+    │
+    └── cosine ≤ 0.8  ──► save new entry
 ```
 
-New pattern (before the while loop, called once per run):
+### Consolidation LLM prompt (structured output schema)
+
 ```typescript
-const layer1 = this.memoryStore ? await this.memoryStore.loadLayer1() : [];
-const layer2 = this.memoryStore ? await this.memoryStore.search({ layer: 2 }) : [];
+// Output schema for gpt-4o-mini extraction call
+interface ExtractionOutput {
+  memories: Array<{
+    content: string;       // Processed factual statement, not raw dialogue
+    kind: MemoryKind;
+    tags: string[];        // Free-form, 2–5 tags
+    ttlDays: number | null; // episodic only; null for other kinds
+  }>;
+}
 
-const identitySection = layer1.length > 0
-  ? `\n\n## Persistent Identity\n${layer1.map(m => `- ${m.content}`).join('\n')}`
-  : '';
-
-const preferencesSection = layer2.length > 0
-  ? `\n\n## User Preferences & Skills\n${layer2.map(m => `- ${m.content}`).join('\n')}`
-  : '';
-
-const systemPrompt =
-  `${this.settings.behavior.systemPrompt}` +
-  identitySection +
-  preferencesSection +
-  `\n\nCurrent working directory: ${this.workingDirectory}`;
-```
-
-Layer 3 is NOT injected — retrieved on-demand via `search_memory` tool call.
-
----
-
-## Memory Plugin Tools (`plugins/memory/`)
-
-5 tools in `plugin.json`:
-
-| Tool | Purpose | Required params |
-|------|---------|-----------------|
-| `save_memory` | Create new memory entry | `content`, `layer` |
-| `search_memory` | Search by query/tags/layer | none (all optional) |
-| `update_memory` | Update content/tags/TTL | `id` |
-| `delete_memory` | Permanently delete entry | `id` |
-| `list_memories` | List all in a layer | none |
-
-Handlers are named ESM exports in `handlers.js`, following the `plugins/file-ops/handlers.js` pattern. Each handler uses `context.memoryStore` (passed through ToolContext).
-
----
-
-## ToolContext Extension (`src/types/tools.ts`)
-
-Add one optional field (backward-compatible):
-```typescript
-export interface ToolContext {
-  readonly sessionId: string;
-  readonly workingDirectory: string;
-  readonly env: Record<string, string>;
-  readonly signal?: AbortSignal;
-  readonly memoryStore?: MemoryStore;  // NEW
+// Output schema for merge call (only when cosine > 0.9)
+interface MergeOutput {
+  content: string;  // Merged factual statement combining both versions
+  tags: string[];
 }
 ```
 
+### Cost estimate
+
+For a typical session (~50 turns, ~4k tokens):
+- Chunk count: ~2 chunks
+- Extraction calls: 2 × ~$0.0003 = ~$0.0006
+- Embedding calls: ~10 extracted memories × negligible = ~$0.00002
+- Merge calls: rare (only on near-duplicates), ~$0.0001 each
+
+Per session cost is < $0.002. Negligible for personal assistant usage.
+
 ---
 
-## Bootstrap Wiring (`src/cli/bootstrap.ts`)
+## Read Policy (System Prompt Injection + On-Demand Search)
 
-Insert between ToolExecutor creation and ExecutionLoop creation:
+### Session start injection
+
+Called once before the agent loop begins (in `execution-loop.ts`):
+
 ```typescript
-const memoryDir = join(homedir(), '.my-agent', 'memory');
-const memoryStore = new JsonMemoryStore(memoryDir);
-// Ensure subdirectories exist: layer1/, layer2/, layer3/
+const injected = await memoryStore.loadForSystemPrompt();
+// Returns all procedural + experiential entries, sorted by createdAt asc
+// Injected as a "## What I know about you" section in the system prompt
 ```
 
-Pass `memoryStore` to both `ToolExecutor` constructor and `ExecutionLoop` constructor.
+Only `procedural` and `experiential` entries are injected — they are stable and always relevant.
+`semantic` and `episodic` entries are retrieved on demand.
+
+### On-demand search
+
+The agent calls `search_memory` tool during a session when it needs context about a specific
+topic. The tool performs embedding similarity search + optional tag post-filter.
+
+Search also increments `accessCount` on returned entries, feeding the eviction scorer.
 
 ---
 
-## Implementation Phases (TDD)
+## Eviction Policy (L3 / episodic only)
 
-### Phase 1 — Types & Errors
-- `src/types/memory.ts` — all interfaces
-- `src/errors/memory.ts` — MemoryError hierarchy (MEMORY_001–006)
-- Export from index files
+Runs at `initialize()` (startup sweep). Episodic entries past their TTL are scored:
 
-### Phase 2 — JsonMemoryStore
-- `src/memory/memory-store.ts` — CRUD + text search + TTL filtering
-- Tests: save, get, update, delete, search (tag/content/layer filters), TTL expiry, atomic write, ID validation
+| Factor | Signal | Weight |
+|--------|--------|--------|
+| `accessCount` | Read frequently → valuable | High |
+| Tags | `architecture`, `decision`, `convention` → keep; `sprint-goal`, `active-bug` → drop | High |
+| `ttlRenewals` | Explicitly refreshed → strong keep signal | Medium |
+| Content length | Longer, more detailed → more valuable | Low |
+| Age at expiry | Survived multiple TTL periods without renewal → less relevant | Low (negative) |
 
-### Phase 3 — ToolContext + ToolExecutor
-- Add `memoryStore?` to `ToolContext`
-- `ToolExecutor` constructor accepts optional `memoryStore`, passes to context
-- Update `tool-call-bridge.ts` to forward it
+Score ≥ 0.6 → promote: mark `pendingKB: true`, keep on disk for future Knowledge Base ingestion.
+Score < 0.6 → delete from disk.
 
-### Phase 4 — Memory Plugin
-- `plugins/memory/plugin.json` + `handlers.js`
-- Tests: all 5 handlers with mock store, edge cases
+---
 
-### Phase 5 — ExecutionLoop Injection
-- Add 7th constructor param `memoryStore?`
-- Inject L1 + L2 into system prompt before while loop (same in `run()` and `stream()`)
-- Tests: prompt contains L1, L2 not repeated per turn, empty store = unchanged prompt
+## File Structure
+
+### New / changed files
+
+```
+src/types/memory.ts              # MemoryKind, MemoryEntry (replaces layer with kind)
+src/memory/memory-store.ts       # JsonMemoryStore with EmbeddingIndex
+src/memory/embedding-index.ts    # JsonEmbeddingIndex (embeddings.json map)
+src/memory/consolidation.ts      # Consolidation pipeline (chunking, extraction, dedup)
+src/memory/eviction-scorer.ts    # Score function (unchanged interface)
+src/memory/index.ts              # Re-exports
+src/errors/memory.ts             # MemoryError hierarchy (unchanged)
+plugins/memory/plugin.json       # 5 tools (save_memory, search_memory, update_memory,
+                                 #          delete_memory, list_memories)
+plugins/memory/handlers.js       # Tool handlers (search now uses embedding similarity)
+```
+
+### Files to modify
+
+```
+src/types/tools.ts               # memoryStore?: MemoryStore in ToolContext (unchanged)
+src/agent/execution-loop.ts      # loadForSystemPrompt() injection at session start;
+                                 # consolidation hook at session end
+src/cli/bootstrap.ts             # Construct JsonMemoryStore + wire providers for embedding/LLM
+```
+
+---
+
+## Implementation Phases
+
+### Phase 1 — Types
+- Update `src/types/memory.ts`: replace `MemoryLayer` with `MemoryKind`, update `MemoryEntry`
+- Update `MemorySearchOptions`: replace `layer?` with `kind?`, add `minScore?`
+- Update error codes if needed
+- Update existing tests that reference `layer`
+
+### Phase 2 — EmbeddingIndex
+- `src/memory/embedding-index.ts`: `JsonEmbeddingIndex` implementing `EmbeddingIndex`
+- Atomic read/write of `embeddings.json`
+- `searchByCosine`: load map, compute cosine for all entries, return top-k
+- Tests: set/get/delete/search, concurrent writes, empty index
+
+### Phase 3 — JsonMemoryStore (updated)
+- Replace `layer{1,2,3}/` directories with `episodic/`, `semantic/`, `procedural/`, `experiential/`
+- Integrate `EmbeddingIndex`: `save()` stores embedding if provided, `delete()` removes from index
+- Update `search()`: embed query → cosine search → tag post-filter
+- Implement `loadForSystemPrompt()`
+- Tests: all existing tests updated for new kind field, new embedding search tests
+
+### Phase 4 — Consolidation
+- `src/memory/consolidation.ts`: full pipeline
+- Requires: OpenAI client instance (passed in constructor), `MemoryStore` instance
+- Tests: chunk logic, extraction mock (mock LLM responses), dedup logic with mock cosine scores
+
+### Phase 5 — Execution Loop Integration
+- `loadForSystemPrompt()` injection at session start
+- Session-end consolidation hook (non-blocking, errors logged but not thrown)
+- Tests: system prompt contains procedural/experiential, consolidation called on session end
 
 ### Phase 6 — Bootstrap Wiring
-- Wire JsonMemoryStore into bootstrap.ts
-- Verify no regressions in existing 1095 tests
+- Wire `OpenAIProvider` client for embedding calls
+- Wire consolidation into session lifecycle
+- Regression: all existing tests pass
 
 ---
 
-## Verification
+## Future Work
 
-1. Run `npm test` — all 1095 existing tests pass, ~60–90 new tests added
-2. Run `npm run lint && npm run build` — zero errors
-3. Manual smoke test:
-   ```
-   my-agent chat
-   > save_memory: "I prefer TypeScript strict mode" layer=2
-   > exit
-   my-agent chat  # new session
-   # Verify "I prefer TypeScript strict mode" appears in agent behavior
-   ```
-4. Check `~/.my-agent/memory/layer2/<uuid>.json` was written correctly
+### Graph traversal (Phase N)
+`relatedTo` links are already stored as stubs. Future: on search hit, expand 1–2 hops along
+`relatedTo` edges to surface contextually related memories that wouldn't be found by
+embedding similarity alone. Implementation: add `expandRelated(ids, depth)` to `MemoryStore`.
 
----
+### Knowledge Base (Phase N)
+High-scoring expired episodic entries (marked `pendingKB: true`) are ingested into a
+separate append-only JSONL knowledge base with full-text + embedding search. Distinct from
+L1/L2/L3 because it stores durable project/domain facts extracted from many sessions.
 
-## Canonical Patterns to Follow
+### HNSW index (Phase N)
+When entry count exceeds ~10k, replace `JsonEmbeddingIndex` with an HNSW implementation
+(e.g. `hnswlib-node`). Interface is identical; only the implementation file changes.
 
-- Atomic writes: `src/session/jsonl-store.ts` (temp file + rename, mode 0o600)
-- Plugin handlers: `plugins/file-ops/handlers.js` (named ESM exports, args+context, formatted string output)
-- Error hierarchy: `src/errors/session.ts`
-- ID validation: `JsonlSessionStore.validateSessionId()` pattern
+### Embedding cache (Phase N)
+Content-hash → embedding cache at `~/.my-agent/memory/embedding-cache.json`. Avoids
+redundant API calls when the same content string is extracted across multiple sessions.

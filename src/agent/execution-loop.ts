@@ -48,6 +48,8 @@ export interface OnToolCallCallback {
  */
 export interface ExtendedRunOptions extends AgentRunOptions {
   readonly onToolCall?: OnToolCallCallback;
+  /** Optional summary of a compacted prior conversation to inject into the system prompt. */
+  readonly compactSummary?: string;
 }
 
 /**
@@ -639,13 +641,6 @@ export class ExecutionLoop implements Agent {
    * Build the system prompt, injecting layer-1 and layer-2 memory entries when
    * a MemoryStore is present. Layer-3 entries are NOT injected here; they are
    * retrieved on-demand via the search_memory tool.
-   *
-   * When compactSummary is provided, a "## Previous Conversation Summary"
-   * section is appended after the memory sections and before the working
-   * directory so the model retains awareness of prior compacted context.
-   *
-   * @param compactSummary - Optional summary of compacted prior conversation
-   * @returns Assembled system prompt string
    */
   private async buildSystemPrompt(compactSummary?: string): Promise<string> {
     const layer1 = this.memoryStore ? await this.memoryStore.loadLayer1() : [];
@@ -663,9 +658,10 @@ export class ExecutionLoop implements Agent {
         ? `\n\n## User Preferences & Skills\n${layer2.map((m) => `- ${m.content}`).join('\n')}`
         : '';
 
-    const summarySection = compactSummary
-      ? `\n\n## Previous Conversation Summary\n${compactSummary}`
-      : '';
+    const summarySection =
+      compactSummary !== undefined && compactSummary.length > 0
+        ? `\n\n## Previous Conversation Summary\n${compactSummary}`
+        : '';
 
     return (
       `${this.settings.behavior.systemPrompt}` +
