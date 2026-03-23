@@ -236,7 +236,7 @@ async function runInteractive(
 
       // Run agent
       options.output.startLoading?.('Thinking...');
-      const result = await options.sessionManager.run(sessionId, userInput);
+      await options.sessionManager.run(sessionId, userInput);
       options.output.stopLoading?.();
 
       // Display result

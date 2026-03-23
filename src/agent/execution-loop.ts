@@ -660,7 +660,6 @@ export class ExecutionLoop implements Agent {
       `${this.settings.behavior.systemPrompt}` +
       identitySection +
       preferencesSection +
-      summarySection +
       `\n\nCurrent working directory: ${this.workingDirectory}` +
       `\n\nCurrent date and time: ${new Date().toLocaleString()}`
     );

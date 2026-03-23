@@ -19,7 +19,6 @@ import {
 } from './commands/session.js';
 import { pluginList, pluginInfo } from './commands/plugin.js';
 import { chat } from './commands/chat.js';
-import { runInkChat } from '../ui/ink/InkChatRunner.js';
 import { runSetup } from './commands/setup.js';
 import { settingsShow, settingsGet, settingsSet, settingsReset } from './commands/settings.js';
 import { updateModels } from './commands/model.js';
