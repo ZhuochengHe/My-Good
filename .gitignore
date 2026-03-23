@@ -43,3 +43,10 @@ temp/
 *.tmp
 
 knowledge.md
+
+# MemBench dataset files (large; download separately per docs/benchmark-adaptation.md)
+tests/bench/data/*
+!tests/bench/data/.gitkeep
+# MemBench results (local, not committed)
+tests/bench/membench-results/*
+!tests/bench/membench-results/.gitkeep
