@@ -24,7 +24,7 @@ let list_memories: any;
 function makeMockEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
     id: 'abc12345-0000-4000-8000-000000000001',
-    layer: 1,
+    kind: 'procedural',
     content: 'Test memory content',
     tags: ['test'],
     createdAt: 1700000000000,
@@ -46,7 +46,7 @@ describe('memory plugin handlers', () => {
       update: vi.fn().mockResolvedValue(makeMockEntry()),
       delete: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue(null),
-      loadLayer1: vi.fn().mockResolvedValue([]),
+      loadForSystemPrompt: vi.fn().mockResolvedValue([]),
     };
 
     mockContext = {
@@ -70,58 +70,53 @@ describe('memory plugin handlers', () => {
   // ---------------------------------------------------------------------------
 
   describe('save_memory', () => {
-    it('saves entry and returns formatted string with id and layer', async () => {
+    it('saves entry and returns formatted string with id and kind', async () => {
       const result = await save_memory(
-        { content: 'I prefer dark mode', layer: 2, tags: ['preferences'] },
+        { content: 'I prefer dark mode', kind: 'procedural', tags: ['preferences'] },
         mockContext
       );
 
       expect(mockMemoryStore.save).toHaveBeenCalledOnce();
       expect(result.output).toMatch(/Memory saved/);
-      expect(result.output).toMatch(/layer: 2/);
+      expect(result.output).toMatch(/kind: procedural/);
       expect(result.output).toMatch(/id:/);
     });
 
     it('saves entry without optional tags', async () => {
       const result = await save_memory(
-        { content: 'Core identity fact', layer: 1 },
+        { content: 'Core behavioral rule', kind: 'procedural' },
         mockContext
       );
 
       expect(mockMemoryStore.save).toHaveBeenCalledOnce();
       expect(result.output).toMatch(/Memory saved/);
-      expect(result.output).toMatch(/layer: 1/);
+      expect(result.output).toMatch(/kind: procedural/);
     });
 
-    it('computes expiresAt correctly when ttlDays is provided', async () => {
-      const before = Date.now();
+    it('passes ttlDays when provided', async () => {
       await save_memory(
-        { content: 'Temporary note', layer: 3, ttlDays: 7 },
+        { content: 'Temporary note', kind: 'episodic', ttlDays: 7 },
         mockContext
       );
-      const after = Date.now();
 
       const savedEntry = mockMemoryStore.save.mock.calls[0]?.[0];
       expect(savedEntry).toBeDefined();
-      const expectedMin = before + 7 * 86400000;
-      const expectedMax = after + 7 * 86400000;
-      expect(savedEntry.expiresAt).toBeGreaterThanOrEqual(expectedMin);
-      expect(savedEntry.expiresAt).toBeLessThanOrEqual(expectedMax);
+      expect(savedEntry.ttlDays).toBe(7);
     });
 
-    it('does not set expiresAt when ttlDays is not provided', async () => {
+    it('does not set ttlDays when not provided', async () => {
       await save_memory(
-        { content: 'Permanent entry', layer: 1 },
+        { content: 'Permanent entry', kind: 'procedural' },
         mockContext
       );
 
       const savedEntry = mockMemoryStore.save.mock.calls[0]?.[0];
-      expect(savedEntry.expiresAt).toBeUndefined();
+      expect(savedEntry.ttlDays).toBeUndefined();
     });
 
     it('passes source field when provided', async () => {
       await save_memory(
-        { content: 'User said hello', layer: 2, source: 'user' },
+        { content: 'User said hello', kind: 'semantic', source: 'user' },
         mockContext
       );
 
@@ -131,7 +126,7 @@ describe('memory plugin handlers', () => {
 
     it('returns error string when content is missing', async () => {
       const result = await save_memory(
-        { layer: 1 },
+        { kind: 'procedural' },
         mockContext
       );
 
@@ -141,7 +136,7 @@ describe('memory plugin handlers', () => {
 
     it('returns error string when content is empty string', async () => {
       const result = await save_memory(
-        { content: '', layer: 1 },
+        { content: '', kind: 'procedural' },
         mockContext
       );
 
@@ -149,29 +144,19 @@ describe('memory plugin handlers', () => {
       expect(result.output).toMatch(/content/i);
     });
 
-    it('returns error string when layer is invalid (0)', async () => {
+    it('returns error string when kind is invalid', async () => {
       const result = await save_memory(
-        { content: 'Valid content', layer: 0 },
+        { content: 'Valid content', kind: 'invalid-kind' },
         mockContext
       );
 
       expect(mockMemoryStore.save).not.toHaveBeenCalled();
-      expect(result.output).toMatch(/layer/i);
-    });
-
-    it('returns error string when layer is invalid (4)', async () => {
-      const result = await save_memory(
-        { content: 'Valid content', layer: 4 },
-        mockContext
-      );
-
-      expect(mockMemoryStore.save).not.toHaveBeenCalled();
-      expect(result.output).toMatch(/layer/i);
+      expect(result.output).toMatch(/kind/i);
     });
 
     it('returns "Memory store not available." when context.memoryStore is undefined', async () => {
       const result = await save_memory(
-        { content: 'test', layer: 1 },
+        { content: 'test', kind: 'procedural' },
         { ...mockContext, memoryStore: undefined }
       );
 
@@ -187,7 +172,7 @@ describe('memory plugin handlers', () => {
     it('returns formatted results when entries are found', async () => {
       const entry = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000001',
-        layer: 2,
+        kind: 'procedural',
         content: 'I prefer dark mode',
         tags: ['preferences', 'ui'],
       });
@@ -202,7 +187,7 @@ describe('memory plugin handlers', () => {
         expect.objectContaining({ query: 'dark mode' })
       );
       expect(result.output).toContain('abc12345-0000-4000-8000-000000000001');
-      expect(result.output).toContain('L2');
+      expect(result.output).toContain('procedural');
       expect(result.output).toContain('I prefer dark mode');
     });
 
@@ -228,14 +213,14 @@ describe('memory plugin handlers', () => {
 
     it('passes all optional filters to memoryStore.search', async () => {
       await search_memory(
-        { query: 'test', tags: ['a', 'b'], layer: 3, limit: 5 },
+        { query: 'test', tags: ['a', 'b'], kind: 'episodic', limit: 5 },
         mockContext
       );
 
       expect(mockMemoryStore.search).toHaveBeenCalledWith({
         query: 'test',
         tags: ['a', 'b'],
-        layer: 3,
+        kind: 'episodic',
         limit: 5,
       });
     });
@@ -250,13 +235,13 @@ describe('memory plugin handlers', () => {
       const e1 = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000001',
         content: 'First memory',
-        layer: 1,
+        kind: 'procedural',
         tags: [],
       });
       const e2 = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000002',
         content: 'Second memory',
-        layer: 2,
+        kind: 'semantic',
         tags: [],
       });
       mockMemoryStore.search.mockResolvedValue([e1, e2]);
@@ -313,19 +298,14 @@ describe('memory plugin handlers', () => {
       );
     });
 
-    it('computes new expiresAt when ttlDays is provided', async () => {
-      const before = Date.now();
+    it('passes ttlDays in update call when provided', async () => {
       await update_memory(
         { id: 'abc12345-0000-4000-8000-000000000001', ttlDays: 3 },
         mockContext
       );
-      const after = Date.now();
 
       const updateInput = mockMemoryStore.update.mock.calls[0]?.[1];
-      const expectedMin = before + 3 * 86400000;
-      const expectedMax = after + 3 * 86400000;
-      expect(updateInput.expiresAt).toBeGreaterThanOrEqual(expectedMin);
-      expect(updateInput.expiresAt).toBeLessThanOrEqual(expectedMax);
+      expect(updateInput.ttlDays).toBe(3);
     });
 
     it('returns "Memory not found: <id>" when MemoryNotFoundError is thrown', async () => {
@@ -413,13 +393,13 @@ describe('memory plugin handlers', () => {
   // ---------------------------------------------------------------------------
 
   describe('list_memories', () => {
-    it('calls search with layer param when layer is provided', async () => {
-      await list_memories({ layer: 2 }, mockContext);
+    it('calls search with kind param when kind is provided', async () => {
+      await list_memories({ kind: 'episodic' }, mockContext);
 
-      expect(mockMemoryStore.search).toHaveBeenCalledWith({ layer: 2 });
+      expect(mockMemoryStore.search).toHaveBeenCalledWith({ kind: 'episodic' });
     });
 
-    it('calls search without layer filter when layer is omitted', async () => {
+    it('calls search without kind filter when kind is omitted', async () => {
       await list_memories({}, mockContext);
 
       expect(mockMemoryStore.search).toHaveBeenCalledWith({});
@@ -428,45 +408,45 @@ describe('memory plugin handlers', () => {
     it('returns formatted entries when memories exist', async () => {
       const entry = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000001',
-        layer: 1,
-        content: 'Core identity',
-        tags: ['identity'],
+        kind: 'procedural',
+        content: 'Core behavioral rule',
+        tags: ['behavior'],
       });
       mockMemoryStore.search.mockResolvedValue([entry]);
 
-      const result = await list_memories({ layer: 1 }, mockContext);
+      const result = await list_memories({ kind: 'procedural' }, mockContext);
 
       expect(result.output).toContain('abc12345-0000-4000-8000-000000000001');
-      expect(result.output).toContain('L1');
-      expect(result.output).toContain('Core identity');
+      expect(result.output).toContain('procedural');
+      expect(result.output).toContain('Core behavioral rule');
     });
 
     it('returns "No memories found." when no entries exist', async () => {
       mockMemoryStore.search.mockResolvedValue([]);
 
-      const result = await list_memories({ layer: 3 }, mockContext);
+      const result = await list_memories({ kind: 'episodic' }, mockContext);
 
       expect(result.output).toBe('No memories found.');
     });
 
-    it('lists all layers when layer is omitted', async () => {
-      const e1 = makeMockEntry({ layer: 1, content: 'Layer 1 entry' });
+    it('lists all kinds when kind is omitted', async () => {
+      const e1 = makeMockEntry({ kind: 'procedural', content: 'Procedural entry' });
       const e2 = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000002',
-        layer: 3,
-        content: 'Layer 3 entry',
+        kind: 'episodic',
+        content: 'Episodic entry',
       });
       mockMemoryStore.search.mockResolvedValue([e1, e2]);
 
       const result = await list_memories({}, mockContext);
 
-      expect(result.output).toContain('Layer 1 entry');
-      expect(result.output).toContain('Layer 3 entry');
+      expect(result.output).toContain('Procedural entry');
+      expect(result.output).toContain('Episodic entry');
     });
 
     it('returns "Memory store not available." when context.memoryStore is undefined', async () => {
       const result = await list_memories(
-        { layer: 1 },
+        { kind: 'procedural' },
         { ...mockContext, memoryStore: undefined }
       );
 

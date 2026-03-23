@@ -7,21 +7,24 @@
 
 import { randomUUID } from 'crypto';
 
+/** Valid memory kind values. */
+const VALID_KINDS = new Set(['procedural', 'experiential', 'semantic', 'episodic']);
+
 /**
  * Creates a new MemoryEntry with auto-generated id and timestamps.
  * Mirrors createMemoryEntry from src/types/memory.ts to avoid TS import issues in plain JS.
  *
- * @param {1|2|3} layer - The memory layer to assign.
+ * @param {string} kind - The memory kind to assign.
  * @param {string} content - The factual text to remember.
  * @param {readonly string[]} tags - Optional keyword tags.
- * @param {{ expiresAt?: number; source?: string }} options - Optional expiresAt and source fields.
+ * @param {{ ttlDays?: number; source?: string; sourceRef?: string }} options - Optional fields.
  * @returns {object} A fully-populated MemoryEntry ready for storage.
  */
-function createMemoryEntry(layer, content, tags = [], options = {}) {
+function createMemoryEntry(kind, content, tags = [], options = {}) {
   const now = Date.now();
   return {
     id: randomUUID(),
-    layer,
+    kind,
     content,
     tags,
     createdAt: now,
@@ -56,7 +59,7 @@ function isMemoryNotFoundError(error) {
 function formatEntry(entry) {
   const tagSuffix =
     entry.tags && entry.tags.length > 0 ? ` [tags: ${entry.tags.join(', ')}]` : '';
-  return `[${entry.id}] (L${entry.layer}) ${entry.content}${tagSuffix}`;
+  return `[${entry.id}] (${entry.kind}) ${entry.content}${tagSuffix}`;
 }
 
 /**
@@ -75,30 +78,36 @@ export async function save_memory(args, context) {
     return { output: 'Error: "content" must be a non-empty string.' };
   }
 
-  const layer = args.layer;
-  if (layer !== 1 && layer !== 2 && layer !== 3) {
-    return { output: 'Error: "layer" must be 1, 2, or 3.' };
+  const kind = args.kind;
+  if (!VALID_KINDS.has(kind)) {
+    return {
+      output: `Error: "kind" must be one of: ${[...VALID_KINDS].join(', ')}.`,
+    };
   }
 
   const tags = Array.isArray(args.tags) ? args.tags : [];
   const options = {};
 
   if (typeof args.ttlDays === 'number') {
-    options.expiresAt = Date.now() + args.ttlDays * 86400000;
+    options.ttlDays = args.ttlDays;
   }
 
   if (typeof args.source === 'string') {
     options.source = args.source;
   }
 
-  const entry = createMemoryEntry(layer, args.content, tags, options);
+  if (typeof args.sourceRef === 'string') {
+    options.sourceRef = args.sourceRef;
+  }
+
+  const entry = createMemoryEntry(kind, args.content, tags, options);
   await context.memoryStore.save(entry);
 
-  return { output: `Memory saved (id: ${entry.id}, layer: ${entry.layer})` };
+  return { output: `Memory saved (id: ${entry.id}, kind: ${entry.kind})` };
 }
 
 /**
- * Searches memory entries by content, tags, or layer.
+ * Searches memory entries by content, tags, or kind.
  *
  * @param {Record<string, unknown>} args - Tool arguments.
  * @param {object} context - Tool context with memoryStore.
@@ -118,8 +127,8 @@ export async function search_memory(args, context) {
   if (Array.isArray(args.tags)) {
     searchOptions.tags = args.tags;
   }
-  if (typeof args.layer === 'number') {
-    searchOptions.layer = args.layer;
+  if (typeof args.kind === 'string' && VALID_KINDS.has(args.kind)) {
+    searchOptions.kind = args.kind;
   }
   if (typeof args.limit === 'number') {
     searchOptions.limit = args.limit;
@@ -160,7 +169,7 @@ export async function update_memory(args, context) {
     updateInput.tags = args.tags;
   }
   if (typeof args.ttlDays === 'number') {
-    updateInput.expiresAt = Date.now() + args.ttlDays * 86400000;
+    updateInput.ttlDays = args.ttlDays;
   }
 
   try {
@@ -202,7 +211,7 @@ export async function delete_memory(args, context) {
 }
 
 /**
- * Lists all memory entries, optionally filtered by layer.
+ * Lists all memory entries, optionally filtered by kind.
  *
  * @param {Record<string, unknown>} args - Tool arguments.
  * @param {object} context - Tool context with memoryStore.
@@ -216,8 +225,8 @@ export async function list_memories(args, context) {
   /** @type {Record<string, unknown>} */
   const searchOptions = {};
 
-  if (typeof args.layer === 'number') {
-    searchOptions.layer = args.layer;
+  if (typeof args.kind === 'string' && VALID_KINDS.has(args.kind)) {
+    searchOptions.kind = args.kind;
   }
 
   const results = await context.memoryStore.search(searchOptions);

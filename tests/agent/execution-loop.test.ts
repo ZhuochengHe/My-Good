@@ -1153,11 +1153,11 @@ describe('ExecutionLoop', () => {
   });
 
   describe('Memory Injection', () => {
-    /** Helper to create a MemoryEntry stub. */
-    function makeEntry(layer: 1 | 2 | 3, content: string): MemoryEntry {
+    /** Helper to create a MemoryEntry stub with the new kind-based API. */
+    function makeEntry(kind: 'procedural' | 'experiential' | 'semantic' | 'episodic', content: string): MemoryEntry {
       return {
         id: `entry-${content}`,
-        layer,
+        kind,
         content,
         tags: [],
         createdAt: Date.now(),
@@ -1165,27 +1165,23 @@ describe('ExecutionLoop', () => {
       };
     }
 
-    /** Creates a mock MemoryStore with configurable layer returns. */
+    /** Creates a mock MemoryStore using loadForSystemPrompt for injection. */
     function createMemoryStore(
-      layer1Entries: MemoryEntry[] = [],
-      layer2Entries: MemoryEntry[] = []
+      injectedEntries: MemoryEntry[] = []
     ): MemoryStore {
       return {
         get: vi.fn(),
         save: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
-        search: vi.fn(async (opts) => {
-          if (opts.layer === 2) return layer2Entries;
-          return [];
-        }),
-        loadLayer1: vi.fn(async () => layer1Entries),
+        search: vi.fn(async () => []),
+        loadForSystemPrompt: vi.fn(async () => injectedEntries),
       };
     }
 
-    it('run() includes L1 identity entries in system prompt', async () => {
-      const l1 = [makeEntry(1, 'My name is Agent Alpha')];
-      const memoryStore = createMemoryStore(l1, []);
+    it('run() includes procedural entries in system prompt', async () => {
+      const entries = [makeEntry('procedural', 'My name is Agent Alpha')];
+      const memoryStore = createMemoryStore(entries);
 
       let capturedSystemPrompt = '';
       const mockProviderWithCapture = new MockProvider();
@@ -1200,13 +1196,13 @@ describe('ExecutionLoop', () => {
 
       await agentWithMemory.run('Test');
 
-      expect(capturedSystemPrompt).toContain('## Persistent Identity');
+      expect(capturedSystemPrompt).toContain('## What I Know About You');
       expect(capturedSystemPrompt).toContain('My name is Agent Alpha');
     });
 
-    it('run() includes L2 preference entries in system prompt', async () => {
-      const l2 = [makeEntry(2, 'Prefers TypeScript over JavaScript')];
-      const memoryStore = createMemoryStore([], l2);
+    it('run() includes experiential entries in system prompt', async () => {
+      const entries = [makeEntry('experiential', 'Prefers TypeScript over JavaScript')];
+      const memoryStore = createMemoryStore(entries);
 
       let capturedSystemPrompt = '';
       const mockProviderWithCapture = new MockProvider();
@@ -1221,12 +1217,12 @@ describe('ExecutionLoop', () => {
 
       await agentWithMemory.run('Test');
 
-      expect(capturedSystemPrompt).toContain('## User Preferences & Skills');
+      expect(capturedSystemPrompt).toContain('## What I Know About You');
       expect(capturedSystemPrompt).toContain('Prefers TypeScript over JavaScript');
     });
 
-    it('run() with empty L1 and L2 does not add extra sections', async () => {
-      const memoryStore = createMemoryStore([], []);
+    it('run() with no injected memories does not add extra sections', async () => {
+      const memoryStore = createMemoryStore([]);
 
       let capturedSystemPrompt = '';
       const mockProviderWithCapture = new MockProvider();
@@ -1241,8 +1237,7 @@ describe('ExecutionLoop', () => {
 
       await agentWithMemory.run('Test');
 
-      expect(capturedSystemPrompt).not.toContain('## Persistent Identity');
-      expect(capturedSystemPrompt).not.toContain('## User Preferences & Skills');
+      expect(capturedSystemPrompt).not.toContain('## What I Know About You');
       expect(capturedSystemPrompt).toContain(settings.behavior.systemPrompt);
     });
 
@@ -1254,41 +1249,15 @@ describe('ExecutionLoop', () => {
         return createResponse('Response', 'end_turn');
       });
 
-      // No memoryStore provided — uses the default agent from beforeEach
       const agentNoMemory = new ExecutionLoop(config, settings, mockProviderWithCapture);
 
       await agentNoMemory.run('Test');
 
-      expect(capturedSystemPrompt).not.toContain('## Persistent Identity');
-      expect(capturedSystemPrompt).not.toContain('## User Preferences & Skills');
+      expect(capturedSystemPrompt).not.toContain('## What I Know About You');
     });
 
-    it('run() places L1 section before L2 section in prompt', async () => {
-      const l1 = [makeEntry(1, 'I am an agent')];
-      const l2 = [makeEntry(2, 'User prefers brevity')];
-      const memoryStore = createMemoryStore(l1, l2);
-
-      let capturedSystemPrompt = '';
-      const mockProviderWithCapture = new MockProvider();
-      mockProviderWithCapture.complete = vi.fn(async (req) => {
-        capturedSystemPrompt = req.systemPrompt as string;
-        return createResponse('Response', 'end_turn');
-      });
-
-      const agentWithMemory = new ExecutionLoop(
-        config, settings, mockProviderWithCapture, [], undefined, undefined, memoryStore
-      );
-
-      await agentWithMemory.run('Test');
-
-      const l1Idx = capturedSystemPrompt.indexOf('## Persistent Identity');
-      const l2Idx = capturedSystemPrompt.indexOf('## User Preferences & Skills');
-      expect(l1Idx).toBeGreaterThanOrEqual(0);
-      expect(l2Idx).toBeGreaterThan(l1Idx);
-    });
-
-    it('run() calls loadLayer1 but does NOT call search with layer:3 for injection', async () => {
-      const memoryStore = createMemoryStore([], []);
+    it('run() calls loadForSystemPrompt for injection', async () => {
+      const memoryStore = createMemoryStore([]);
 
       const mockProviderWithCapture = new MockProvider();
       mockProviderWithCapture.complete = vi.fn(async () => createResponse('Response', 'end_turn'));
@@ -1299,19 +1268,12 @@ describe('ExecutionLoop', () => {
 
       await agentWithMemory.run('Test');
 
-      expect(memoryStore.loadLayer1).toHaveBeenCalledTimes(1);
-
-      // search may be called for layer 2, but NOT for layer 3
-      const searchMock = memoryStore.search as ReturnType<typeof vi.fn>;
-      const layer3Calls = searchMock.mock.calls.filter(
-        (args: unknown[]) => (args[0] as { layer?: number }).layer === 3
-      );
-      expect(layer3Calls).toHaveLength(0);
+      expect(memoryStore.loadForSystemPrompt).toHaveBeenCalledTimes(1);
     });
 
-    it('stream() includes L1 identity entries in system prompt', async () => {
-      const l1 = [makeEntry(1, 'Streaming identity fact')];
-      const memoryStore = createMemoryStore(l1, []);
+    it('stream() includes procedural entries in system prompt', async () => {
+      const entries = [makeEntry('procedural', 'Streaming identity fact')];
+      const memoryStore = createMemoryStore(entries);
 
       let capturedSystemPrompt = '';
       const mockProviderWithCapture = new MockProvider();
@@ -1329,13 +1291,13 @@ describe('ExecutionLoop', () => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _e of agentWithMemory.stream('Test')) { /* noop */ }
 
-      expect(capturedSystemPrompt).toContain('## Persistent Identity');
+      expect(capturedSystemPrompt).toContain('## What I Know About You');
       expect(capturedSystemPrompt).toContain('Streaming identity fact');
     });
 
-    it('stream() includes L2 preference entries in system prompt', async () => {
-      const l2 = [makeEntry(2, 'Streaming preference fact')];
-      const memoryStore = createMemoryStore([], l2);
+    it('stream() includes experiential entries in system prompt', async () => {
+      const entries = [makeEntry('experiential', 'Streaming preference fact')];
+      const memoryStore = createMemoryStore(entries);
 
       let capturedSystemPrompt = '';
       const mockProviderWithCapture = new MockProvider();
@@ -1351,12 +1313,12 @@ describe('ExecutionLoop', () => {
 
       for await (const _e of agentWithMemory.stream('Test')) { /* noop */ }
 
-      expect(capturedSystemPrompt).toContain('## User Preferences & Skills');
+      expect(capturedSystemPrompt).toContain('## What I Know About You');
       expect(capturedSystemPrompt).toContain('Streaming preference fact');
     });
 
-    it('stream() with empty L1 and L2 does not add extra sections', async () => {
-      const memoryStore = createMemoryStore([], []);
+    it('stream() with no injected memories does not add extra sections', async () => {
+      const memoryStore = createMemoryStore([]);
 
       let capturedSystemPrompt = '';
       const mockProviderWithCapture = new MockProvider();
@@ -1372,8 +1334,7 @@ describe('ExecutionLoop', () => {
 
       for await (const _e of agentWithMemory.stream('Test')) { /* noop */ }
 
-      expect(capturedSystemPrompt).not.toContain('## Persistent Identity');
-      expect(capturedSystemPrompt).not.toContain('## User Preferences & Skills');
+      expect(capturedSystemPrompt).not.toContain('## What I Know About You');
     });
 
     it('stream() without memoryStore does not add memory sections', async () => {
@@ -1389,8 +1350,7 @@ describe('ExecutionLoop', () => {
 
       for await (const _e of agentNoMemory.stream('Test')) { /* noop */ }
 
-      expect(capturedSystemPrompt).not.toContain('## Persistent Identity');
-      expect(capturedSystemPrompt).not.toContain('## User Preferences & Skills');
+      expect(capturedSystemPrompt).not.toContain('## What I Know About You');
     });
   });
 

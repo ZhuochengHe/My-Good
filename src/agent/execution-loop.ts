@@ -638,25 +638,21 @@ export class ExecutionLoop implements Agent {
   }
 
   /**
-   * Build the system prompt, injecting layer-1 and layer-2 memory entries when
-   * a MemoryStore is present. Layer-3 entries are NOT injected here; they are
+   * Build the system prompt, injecting procedural and experiential memory entries when
+   * a MemoryStore is present. Semantic and episodic entries are NOT injected here; they are
    * retrieved on-demand via the search_memory tool.
    */
   private async buildSystemPrompt(compactSummary?: string): Promise<string> {
-    const layer1 = this.memoryStore ? await this.memoryStore.loadLayer1() : [];
-    const layer2 = this.memoryStore
-      ? await this.memoryStore.search({ layer: 2 })
+    const injectedMemories = this.memoryStore
+      ? await this.memoryStore.loadForSystemPrompt()
       : [];
 
     const identitySection =
-      layer1.length > 0
-        ? `\n\n## Persistent Identity\n${layer1.map((m) => `- ${m.content}`).join('\n')}`
+      injectedMemories.length > 0
+        ? `\n\n## What I Know About You\n${injectedMemories.map((m) => `- ${m.content}`).join('\n')}`
         : '';
 
-    const preferencesSection =
-      layer2.length > 0
-        ? `\n\n## User Preferences & Skills\n${layer2.map((m) => `- ${m.content}`).join('\n')}`
-        : '';
+    const preferencesSection = '';
 
     const summarySection =
       compactSummary !== undefined && compactSummary.length > 0

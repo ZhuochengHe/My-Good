@@ -8,9 +8,8 @@ import { JsonMemoryStore } from '../../src/memory/memory-store.js';
 import {
   MemoryNotFoundError,
   MemoryInvalidIdError,
-  MemoryInvalidLayerError,
+  MemoryInvalidKindError,
   MemoryInvalidContentError,
-  MemoryExpiredError,
 } from '../../src/errors/memory.js';
 import { createMemoryEntry } from '../../src/types/memory.js';
 import type { MemoryEntry } from '../../src/types/memory.js';
@@ -24,11 +23,11 @@ function makeTempDir(): string {
   return path.join(tmpdir(), `memory-test-${randomUUID()}`);
 }
 
-/** Builds a valid layer-1 MemoryEntry for testing. */
+/** Builds a valid procedural MemoryEntry for testing. */
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
     id: randomUUID(),
-    layer: 1,
+    kind: 'procedural',
     content: 'Test memory content',
     tags: ['test'],
     createdAt: Date.now(),
@@ -57,13 +56,13 @@ describe('JsonMemoryStore', () => {
 
   describe('save and get', () => {
     it('saves an entry and retrieves it by id', async () => {
-      const entry = makeEntry({ content: 'Hello world', layer: 1 });
+      const entry = makeEntry({ content: 'Hello world', kind: 'procedural' });
       await store.save(entry);
       const result = await store.get(entry.id);
       expect(result).not.toBeNull();
       expect(result?.id).toBe(entry.id);
       expect(result?.content).toBe('Hello world');
-      expect(result?.layer).toBe(1);
+      expect(result?.kind).toBe('procedural');
       expect(result?.tags).toEqual(['test']);
     });
 
@@ -101,45 +100,16 @@ describe('JsonMemoryStore', () => {
       await expect(store.save(entry)).resolves.not.toThrow();
     });
 
-    it('throws MemoryInvalidLayerError for layer 0', async () => {
-      const entry = makeEntry({ layer: 0 as 1 });
-      await expect(store.save(entry)).rejects.toThrow(MemoryInvalidLayerError);
+    it('throws MemoryInvalidKindError for invalid kind', async () => {
+      const entry = makeEntry({ kind: 'unknown' as 'procedural' });
+      await expect(store.save(entry)).rejects.toThrow(MemoryInvalidKindError);
     });
 
-    it('throws MemoryInvalidLayerError for layer 4', async () => {
-      const entry = makeEntry({ layer: 4 as 1 });
-      await expect(store.save(entry)).rejects.toThrow(MemoryInvalidLayerError);
-    });
-
-    it('accepts layers 1, 2, and 3', async () => {
-      for (const layer of [1, 2, 3] as const) {
-        const entry = makeEntry({ layer });
+    it('accepts all valid kinds', async () => {
+      for (const kind of ['procedural', 'experiential', 'semantic', 'episodic'] as const) {
+        const entry = makeEntry({ kind });
         await expect(store.save(entry)).resolves.not.toThrow();
       }
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // get with expiry
-  // ---------------------------------------------------------------------------
-
-  describe('get with expiry', () => {
-    it('throws MemoryExpiredError for an entry with expiresAt in the past', async () => {
-      const entry = makeEntry({
-        expiresAt: Date.now() - 1000,
-      });
-      await store.save(entry);
-      await expect(store.get(entry.id)).rejects.toThrow(MemoryExpiredError);
-    });
-
-    it('returns entry when expiresAt is in the future', async () => {
-      const entry = makeEntry({
-        expiresAt: Date.now() + 60_000,
-      });
-      await store.save(entry);
-      const result = await store.get(entry.id);
-      expect(result).not.toBeNull();
-      expect(result?.id).toBe(entry.id);
     });
   });
 
@@ -169,12 +139,19 @@ describe('JsonMemoryStore', () => {
       expect(updated.tags).toEqual(['b', 'c']);
     });
 
-    it('merges expiresAt field', async () => {
+    it('merges ttlDays field', async () => {
+      const entry = makeEntry({ kind: 'episodic' });
+      await store.save(entry);
+      const updated = await store.update(entry.id, { ttlDays: 14 });
+      expect(updated.ttlDays).toBe(14);
+    });
+
+    it('merges relatedTo field', async () => {
       const entry = makeEntry();
       await store.save(entry);
-      const newExpiry = Date.now() + 99_999;
-      const updated = await store.update(entry.id, { expiresAt: newExpiry });
-      expect(updated.expiresAt).toBe(newExpiry);
+      const relId = randomUUID();
+      const updated = await store.update(entry.id, { relatedTo: [relId] });
+      expect(updated.relatedTo).toEqual([relId]);
     });
 
     it('throws MemoryNotFoundError when updating a non-existent id', async () => {
@@ -216,9 +193,9 @@ describe('JsonMemoryStore', () => {
 
   describe('search', () => {
     it('returns all entries when no options provided', async () => {
-      const e1 = makeEntry({ layer: 1 });
-      const e2 = makeEntry({ layer: 2 });
-      const e3 = makeEntry({ layer: 3 });
+      const e1 = makeEntry({ kind: 'procedural' });
+      const e2 = makeEntry({ kind: 'semantic' });
+      const e3 = makeEntry({ kind: 'episodic' });
       await store.save(e1);
       await store.save(e2);
       await store.save(e3);
@@ -226,13 +203,13 @@ describe('JsonMemoryStore', () => {
       expect(results.length).toBe(3);
     });
 
-    it('filters by layer', async () => {
-      const e1 = makeEntry({ layer: 1 });
-      const e2 = makeEntry({ layer: 2 });
+    it('filters by kind', async () => {
+      const e1 = makeEntry({ kind: 'procedural' });
+      const e2 = makeEntry({ kind: 'semantic' });
       await store.save(e1);
       await store.save(e2);
-      const results = await store.search({ layer: 1 });
-      expect(results.every(r => r.layer === 1)).toBe(true);
+      const results = await store.search({ kind: 'procedural' });
+      expect(results.every(r => r.kind === 'procedural')).toBe(true);
       expect(results.some(r => r.id === e1.id)).toBe(true);
       expect(results.some(r => r.id === e2.id)).toBe(false);
     });
@@ -261,8 +238,12 @@ describe('JsonMemoryStore', () => {
       expect(ids).not.toContain(e3.id);
     });
 
-    it('excludes expired entries silently', async () => {
-      const expired = makeEntry({ expiresAt: Date.now() - 1000 });
+    it('excludes expired episodic entries silently', async () => {
+      const expired = makeEntry({
+        kind: 'episodic',
+        ttlDays: 1,
+        createdAt: Date.now() - 2 * 86400000,
+      });
       const valid = makeEntry();
       await store.save(expired);
       await store.save(valid);
@@ -296,44 +277,60 @@ describe('JsonMemoryStore', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // loadLayer1
+  // loadForSystemPrompt
   // ---------------------------------------------------------------------------
 
-  describe('loadLayer1', () => {
-    it('returns only layer 1 entries', async () => {
-      const l1 = makeEntry({ layer: 1 });
-      const l2 = makeEntry({ layer: 2 });
-      await store.save(l1);
-      await store.save(l2);
-      const results = await store.loadLayer1();
-      expect(results.every(r => r.layer === 1)).toBe(true);
-      expect(results.some(r => r.id === l1.id)).toBe(true);
-      expect(results.some(r => r.id === l2.id)).toBe(false);
+  describe('loadForSystemPrompt', () => {
+    it('returns only procedural and experiential entries', async () => {
+      const proc = makeEntry({ kind: 'procedural' });
+      const exp = makeEntry({ kind: 'experiential' });
+      const sem = makeEntry({ kind: 'semantic' });
+      const epi = makeEntry({ kind: 'episodic' });
+      await store.save(proc);
+      await store.save(exp);
+      await store.save(sem);
+      await store.save(epi);
+      const results = await store.loadForSystemPrompt();
+      const ids = results.map(r => r.id);
+      expect(ids).toContain(proc.id);
+      expect(ids).toContain(exp.id);
+      expect(ids).not.toContain(sem.id);
+      expect(ids).not.toContain(epi.id);
     });
 
-    it('excludes expired layer 1 entries', async () => {
-      const expired = makeEntry({ layer: 1, expiresAt: Date.now() - 1000 });
-      const valid = makeEntry({ layer: 1 });
+    it('excludes expired episodic entries (only procedural/experiential returned)', async () => {
+      const expired = makeEntry({
+        kind: 'episodic',
+        ttlDays: 1,
+        createdAt: Date.now() - 2 * 86400000,
+      });
+      const proc = makeEntry({ kind: 'procedural' });
       await store.save(expired);
-      await store.save(valid);
-      const results = await store.loadLayer1();
+      await store.save(proc);
+      const results = await store.loadForSystemPrompt();
       const ids = results.map(r => r.id);
       expect(ids).not.toContain(expired.id);
-      expect(ids).toContain(valid.id);
+      expect(ids).toContain(proc.id);
     });
 
     it('returns entries sorted by createdAt ascending', async () => {
       const now = Date.now();
-      const e1 = makeEntry({ layer: 1, createdAt: now - 2000, updatedAt: now - 2000 });
-      const e2 = makeEntry({ layer: 1, createdAt: now - 1000, updatedAt: now - 1000 });
-      const e3 = makeEntry({ layer: 1, createdAt: now, updatedAt: now });
+      const e1 = makeEntry({ kind: 'procedural', createdAt: now - 2000, updatedAt: now - 2000 });
+      const e2 = makeEntry({ kind: 'experiential', createdAt: now - 1000, updatedAt: now - 1000 });
+      const e3 = makeEntry({ kind: 'procedural', createdAt: now, updatedAt: now });
       await store.save(e3);
       await store.save(e1);
       await store.save(e2);
-      const results = await store.loadLayer1();
+      const results = await store.loadForSystemPrompt();
       expect(results[0]?.id).toBe(e1.id);
       expect(results[1]?.id).toBe(e2.id);
       expect(results[2]?.id).toBe(e3.id);
+    });
+
+    it('returns empty array when no procedural or experiential entries exist', async () => {
+      await store.save(makeEntry({ kind: 'semantic' }));
+      const results = await store.loadForSystemPrompt();
+      expect(results.length).toBe(0);
     });
   });
 
@@ -342,40 +339,41 @@ describe('JsonMemoryStore', () => {
   // ---------------------------------------------------------------------------
 
   describe('atomic writes', () => {
-    it('stores files at baseDir/layer{n}/<uuid>.json', async () => {
-      const entry = makeEntry({ layer: 2 });
+    it('stores files at baseDir/<kind>/<uuid>.json', async () => {
+      const entry = makeEntry({ kind: 'semantic' });
       await store.save(entry);
-      const filePath = path.join(baseDir, 'layer2', `${entry.id}.json`);
+      const filePath = path.join(baseDir, 'semantic', `${entry.id}.json`);
       const stat = await fs.stat(filePath);
       expect(stat.isFile()).toBe(true);
     });
 
     it('does not leave .tmp files after a successful save', async () => {
-      const entry = makeEntry({ layer: 1 });
+      const entry = makeEntry({ kind: 'procedural' });
       await store.save(entry);
-      const tmpPath = path.join(baseDir, 'layer1', `${entry.id}.json.tmp`);
+      const tmpPath = path.join(baseDir, 'procedural', `${entry.id}.json.tmp`);
       await expect(fs.stat(tmpPath)).rejects.toThrow();
     });
 
     it('writes files with mode 0o600', async () => {
-      const entry = makeEntry({ layer: 1 });
+      const entry = makeEntry({ kind: 'procedural' });
       await store.save(entry);
-      const filePath = path.join(baseDir, 'layer1', `${entry.id}.json`);
+      const filePath = path.join(baseDir, 'procedural', `${entry.id}.json`);
       const stat = await fs.stat(filePath);
-      // mode & 0o777 should equal 0o600
       expect(stat.mode & 0o777).toBe(0o600);
     });
 
     it('round-trips all fields correctly via JSON serialization', async () => {
+      const now = Date.now();
       const entry: MemoryEntry = {
         id: randomUUID(),
-        layer: 3,
+        kind: 'episodic',
         content: 'Rich content with unicode: 你好',
         tags: ['tag-a', 'tag-b'],
-        createdAt: 1_700_000_000_000,
-        updatedAt: 1_700_000_001_000,
-        expiresAt: 1_900_000_000_000,
+        createdAt: now,
+        updatedAt: now + 1000,
+        ttlDays: 30, // will not expire within the test
         source: 'agent',
+        sourceRef: 'step-42',
       };
       await store.save(entry);
       const result = await store.get(entry.id);
@@ -384,110 +382,110 @@ describe('JsonMemoryStore', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // TTL enforcement via ttlDays (layer 3 only)
+  // TTL enforcement via ttlDays (episodic only)
   // ---------------------------------------------------------------------------
 
   describe('TTL enforcement via ttlDays', () => {
     const TWO_DAYS_MS = 2 * 86400000;
     const ONE_DAY_MS = 86400000;
 
-    it('list (search) excludes expired L3 memories with ttlDays=1, createdAt 2 days ago', async () => {
-      const expiredL3 = makeEntry({
-        layer: 3,
+    it('search excludes expired episodic entries with ttlDays=1, createdAt 2 days ago', async () => {
+      const expiredEpisodic = makeEntry({
+        kind: 'episodic',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
       });
-      const validL3 = makeEntry({ layer: 3 });
-      await store.save(expiredL3);
-      await store.save(validL3);
+      const validEntry = makeEntry({ kind: 'procedural' });
+      await store.save(expiredEpisodic);
+      await store.save(validEntry);
       const results = await store.search({});
       const ids = results.map(r => r.id);
-      expect(ids).not.toContain(expiredL3.id);
-      expect(ids).toContain(validL3.id);
+      expect(ids).not.toContain(expiredEpisodic.id);
+      expect(ids).toContain(validEntry.id);
     });
 
-    it('search excludes expired L3 memories', async () => {
-      const expiredL3 = makeEntry({
-        layer: 3,
+    it('search excludes expired episodic entries by content query', async () => {
+      const expiredEpisodic = makeEntry({
+        kind: 'episodic',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
         content: 'expired ttl entry',
       });
-      const validL3 = makeEntry({ layer: 3, content: 'expired ttl entry' });
-      await store.save(expiredL3);
-      await store.save(validL3);
+      const validEntry = makeEntry({ kind: 'procedural', content: 'expired ttl entry' });
+      await store.save(expiredEpisodic);
+      await store.save(validEntry);
       const results = await store.search({ query: 'expired ttl entry' });
       const ids = results.map(r => r.id);
-      expect(ids).not.toContain(expiredL3.id);
-      expect(ids).toContain(validL3.id);
+      expect(ids).not.toContain(expiredEpisodic.id);
+      expect(ids).toContain(validEntry.id);
     });
 
-    it('get returns null for expired L3 memory with ttlDays', async () => {
-      const expiredL3 = makeEntry({
-        layer: 3,
+    it('get returns null for expired episodic entry with ttlDays', async () => {
+      const expiredEpisodic = makeEntry({
+        kind: 'episodic',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
       });
-      await store.save(expiredL3);
-      const result = await store.get(expiredL3.id);
+      await store.save(expiredEpisodic);
+      const result = await store.get(expiredEpisodic.id);
       expect(result).toBeNull();
     });
 
-    it('get returns entry for non-expired L3 memory with ttlDays', async () => {
-      const validL3 = makeEntry({
-        layer: 3,
+    it('get returns entry for non-expired episodic entry with ttlDays', async () => {
+      const validEpisodic = makeEntry({
+        kind: 'episodic',
         ttlDays: 5,
         createdAt: Date.now() - ONE_DAY_MS,
       });
-      await store.save(validL3);
-      const result = await store.get(validL3.id);
+      await store.save(validEpisodic);
+      const result = await store.get(validEpisodic.id);
       expect(result).not.toBeNull();
-      expect(result?.id).toBe(validL3.id);
+      expect(result?.id).toBe(validEpisodic.id);
     });
 
-    it('L3 memories without ttlDays are never expired by ttlDays check', async () => {
-      const l3NoTtl = makeEntry({
-        layer: 3,
+    it('episodic entries without ttlDays are never expired', async () => {
+      const episodicNoTtl = makeEntry({
+        kind: 'episodic',
         createdAt: Date.now() - TWO_DAYS_MS,
       });
-      await store.save(l3NoTtl);
-      const result = await store.get(l3NoTtl.id);
+      await store.save(episodicNoTtl);
+      const result = await store.get(episodicNoTtl.id);
       expect(result).not.toBeNull();
-      expect(result?.id).toBe(l3NoTtl.id);
+      expect(result?.id).toBe(episodicNoTtl.id);
     });
 
-    it('L1 memories are never expired by ttlDays even with ttlDays set', async () => {
-      const l1WithTtl = makeEntry({
-        layer: 1,
+    it('procedural entries are never expired by ttlDays even with ttlDays set', async () => {
+      const procWithTtl = makeEntry({
+        kind: 'procedural',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
       });
-      await store.save(l1WithTtl);
-      const result = await store.get(l1WithTtl.id);
+      await store.save(procWithTtl);
+      const result = await store.get(procWithTtl.id);
       expect(result).not.toBeNull();
-      expect(result?.id).toBe(l1WithTtl.id);
+      expect(result?.id).toBe(procWithTtl.id);
     });
 
-    it('L2 memories are never expired by ttlDays even with ttlDays set', async () => {
-      const l2WithTtl = makeEntry({
-        layer: 2,
+    it('semantic entries are never expired by ttlDays even with ttlDays set', async () => {
+      const semWithTtl = makeEntry({
+        kind: 'semantic',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
       });
-      await store.save(l2WithTtl);
-      const result = await store.get(l2WithTtl.id);
+      await store.save(semWithTtl);
+      const result = await store.get(semWithTtl.id);
       expect(result).not.toBeNull();
-      expect(result?.id).toBe(l2WithTtl.id);
+      expect(result?.id).toBe(semWithTtl.id);
     });
 
-    it('expired L3 ttlDays entries remain in the JSON file (soft eviction)', async () => {
-      const expiredL3 = makeEntry({
-        layer: 3,
+    it('expired episodic entries remain in the JSON file (soft eviction)', async () => {
+      const expiredEpisodic = makeEntry({
+        kind: 'episodic',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
       });
-      await store.save(expiredL3);
-      const filePath = path.join(baseDir, 'layer3', `${expiredL3.id}.json`);
+      await store.save(expiredEpisodic);
+      const filePath = path.join(baseDir, 'episodic', `${expiredEpisodic.id}.json`);
       const stat = await fs.stat(filePath);
       expect(stat.isFile()).toBe(true);
     });
@@ -499,7 +497,7 @@ describe('JsonMemoryStore', () => {
 
   describe('createMemoryEntry helper', () => {
     it('generates a valid UUID v4 id', () => {
-      const entry = createMemoryEntry(1, 'hello');
+      const entry = createMemoryEntry('procedural', 'hello');
       expect(entry.id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       );
@@ -507,20 +505,22 @@ describe('JsonMemoryStore', () => {
 
     it('sets createdAt and updatedAt to current time', () => {
       const before = Date.now();
-      const entry = createMemoryEntry(2, 'hello');
+      const entry = createMemoryEntry('experiential', 'hello');
       const after = Date.now();
       expect(entry.createdAt).toBeGreaterThanOrEqual(before);
       expect(entry.createdAt).toBeLessThanOrEqual(after);
       expect(entry.updatedAt).toBe(entry.createdAt);
     });
 
-    it('passes through optional expiresAt and source', () => {
-      const entry = createMemoryEntry(3, 'hello', ['t'], {
-        expiresAt: 9999,
+    it('passes through optional ttlDays, source, and sourceRef', () => {
+      const entry = createMemoryEntry('episodic', 'hello', ['t'], {
+        ttlDays: 7,
         source: 'user',
+        sourceRef: 'step-1',
       });
-      expect(entry.expiresAt).toBe(9999);
+      expect(entry.ttlDays).toBe(7);
       expect(entry.source).toBe('user');
+      expect(entry.sourceRef).toBe('step-1');
     });
   });
 
@@ -531,44 +531,41 @@ describe('JsonMemoryStore', () => {
   describe('eviction sweep', () => {
     const TWO_DAYS_MS = 2 * 86400000;
 
-    /** Makes an expired L3 entry (ttlDays=1, createdAt 2 days ago). */
-    function makeExpiredL3(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
+    /** Makes an expired episodic entry (ttlDays=1, createdAt 2 days ago). */
+    function makeExpiredEpisodic(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
       return makeEntry({
-        layer: 3,
+        kind: 'episodic',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
         ...overrides,
       });
     }
 
-    it('does nothing when expired L3 count is below threshold', async () => {
+    it('does nothing when expired episodic count is below threshold', async () => {
       const threshold = 5;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      // Save 3 expired L3 entries — below threshold of 5
-      const entries = [makeExpiredL3(), makeExpiredL3(), makeExpiredL3()];
+      const entries = [makeExpiredEpisodic(), makeExpiredEpisodic(), makeExpiredEpisodic()];
       for (const e of entries) {
         await store.save(e);
       }
 
       await store.evict();
 
-      // All 3 files should still be on disk
       for (const e of entries) {
-        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        const filePath = path.join(baseDir, 'episodic', `${e.id}.json`);
         await expect(fs.stat(filePath)).resolves.toBeTruthy();
       }
     });
 
-    it('removes low-value expired L3 entries when threshold is exceeded', async () => {
+    it('removes low-value expired episodic entries when threshold is exceeded', async () => {
       const threshold = 2;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      // 3 expired L3 entries with no valuable signals (low score)
       const lowValueEntries = [
-        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
-        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
-        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
       ];
       for (const e of lowValueEntries) {
         await store.save(e);
@@ -576,22 +573,20 @@ describe('JsonMemoryStore', () => {
 
       await store.evict();
 
-      // Low-value expired entries should be deleted
       for (const e of lowValueEntries) {
-        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        const filePath = path.join(baseDir, 'episodic', `${e.id}.json`);
         await expect(fs.stat(filePath)).rejects.toThrow();
       }
     });
 
-    it('keeps high-value expired L3 entries and marks them pendingKB: true', async () => {
+    it('keeps high-value expired episodic entries and marks them pendingKB: true', async () => {
       const threshold = 2;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      // 3 expired L3 entries with high-value signals (score >= 0.6)
       const highValueEntries = [
-        makeExpiredL3({ tags: ['architecture'], accessCount: 5, ttlRenewals: 1 }),
-        makeExpiredL3({ tags: ['decision'], accessCount: 3, ttlRenewals: 2 }),
-        makeExpiredL3({ tags: ['convention'], accessCount: 4, ttlRenewals: 1 }),
+        makeExpiredEpisodic({ tags: ['architecture'], accessCount: 5, ttlRenewals: 1 }),
+        makeExpiredEpisodic({ tags: ['decision'], accessCount: 3, ttlRenewals: 2 }),
+        makeExpiredEpisodic({ tags: ['convention'], accessCount: 4, ttlRenewals: 1 }),
       ];
       for (const e of highValueEntries) {
         await store.save(e);
@@ -599,9 +594,8 @@ describe('JsonMemoryStore', () => {
 
       await store.evict();
 
-      // High-value entries should still be on disk with pendingKB: true
       for (const e of highValueEntries) {
-        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        const filePath = path.join(baseDir, 'episodic', `${e.id}.json`);
         const raw = await fs.readFile(filePath, 'utf-8');
         const parsed = JSON.parse(raw) as MemoryEntry & { pendingKB?: boolean };
         expect(parsed).toBeDefined();
@@ -609,51 +603,48 @@ describe('JsonMemoryStore', () => {
       }
     });
 
-    it('never removes L1 entries even when threshold is exceeded', async () => {
+    it('never removes procedural entries even when threshold is exceeded', async () => {
       const threshold = 1;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      const l1Entry = makeEntry({ layer: 1 });
-      // Save an L1 entry and enough expired L3 entries to trigger eviction
-      await store.save(l1Entry);
-      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
-      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      const procEntry = makeEntry({ kind: 'procedural' });
+      await store.save(procEntry);
+      await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
 
       await store.evict();
 
-      const filePath = path.join(baseDir, 'layer1', `${l1Entry.id}.json`);
+      const filePath = path.join(baseDir, 'procedural', `${procEntry.id}.json`);
       await expect(fs.stat(filePath)).resolves.toBeTruthy();
     });
 
-    it('never removes L2 entries even when threshold is exceeded', async () => {
+    it('never removes semantic entries even when threshold is exceeded', async () => {
       const threshold = 1;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      const l2Entry = makeEntry({ layer: 2 });
-      await store.save(l2Entry);
-      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
-      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      const semEntry = makeEntry({ kind: 'semantic' });
+      await store.save(semEntry);
+      await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
 
       await store.evict();
 
-      const filePath = path.join(baseDir, 'layer2', `${l2Entry.id}.json`);
+      const filePath = path.join(baseDir, 'semantic', `${semEntry.id}.json`);
       await expect(fs.stat(filePath)).resolves.toBeTruthy();
     });
 
-    it('never removes non-expired L3 entries', async () => {
+    it('never removes non-expired episodic entries', async () => {
       const threshold = 1;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      // A valid (non-expired) L3 entry
-      const validL3 = makeEntry({ layer: 3, ttlDays: 30 }); // not expired
-      // Two expired L3 entries to trigger eviction
-      await store.save(validL3);
-      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
-      await store.save(makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      const validEpisodic = makeEntry({ kind: 'episodic', ttlDays: 30 });
+      await store.save(validEpisodic);
+      await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
+      await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
 
       await store.evict();
 
-      const filePath = path.join(baseDir, 'layer3', `${validL3.id}.json`);
+      const filePath = path.join(baseDir, 'episodic', `${validEpisodic.id}.json`);
       await expect(fs.stat(filePath)).resolves.toBeTruthy();
     });
 
@@ -661,41 +652,35 @@ describe('JsonMemoryStore', () => {
       const threshold = 2;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      // Save 3 low-value expired L3 entries
       const expiredEntries = [
-        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
-        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
-        makeExpiredL3({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
+        makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0, content: 'short' }),
       ];
       for (const e of expiredEntries) {
         await store.save(e);
       }
 
-      // initialize() should trigger the eviction sweep
       await store.initialize();
 
-      // Low-value expired entries should have been cleaned up
       for (const e of expiredEntries) {
-        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        const filePath = path.join(baseDir, 'episodic', `${e.id}.json`);
         await expect(fs.stat(filePath)).rejects.toThrow();
       }
     });
 
     it('uses default threshold of 100 when not provided', async () => {
-      // Default threshold store — no evictionThreshold argument
       store = new JsonMemoryStore(baseDir);
 
-      // Save 3 expired L3 entries — well below default threshold of 100
-      const entries = [makeExpiredL3(), makeExpiredL3(), makeExpiredL3()];
+      const entries = [makeExpiredEpisodic(), makeExpiredEpisodic(), makeExpiredEpisodic()];
       for (const e of entries) {
         await store.save(e);
       }
 
       await store.evict();
 
-      // Below threshold — files remain untouched
       for (const e of entries) {
-        const filePath = path.join(baseDir, 'layer3', `${e.id}.json`);
+        const filePath = path.join(baseDir, 'episodic', `${e.id}.json`);
         await expect(fs.stat(filePath)).resolves.toBeTruthy();
       }
     });

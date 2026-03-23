@@ -1,7 +1,7 @@
 {
   "id": "memory",
   "name": "memory",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Long-term memory management for the agent",
   "tools": [
     {
@@ -15,31 +15,32 @@
             "type": "string",
             "description": "The factual text to remember"
           },
-          "layer": {
-            "type": "number",
-            "description": "Memory layer: 1=permanent identity, 2=semi-persistent preferences, 3=time-sensitive episodic"
+          "kind": {
+            "type": "string",
+            "enum": ["procedural", "experiential", "semantic", "episodic"],
+            "description": "Memory kind: procedural=how to treat user, experiential=how to do tasks, semantic=objective facts, episodic=time-bound events"
           },
           "tags": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Keyword tags for search"
+            "description": "Keyword tags for search (2-5 tags recommended)"
           },
           "ttlDays": {
             "type": "number",
-            "description": "Time-to-live in days (layer 3 only)"
+            "description": "Time-to-live in days (episodic only)"
           },
           "source": {
             "type": "string",
-            "description": "Source of the memory: 'user' or 'agent'"
+            "description": "Source of the memory: 'user', 'agent', or 'consolidation'"
           }
         },
-        "required": ["content", "layer"]
+        "required": ["content", "kind"]
       },
       "handler": "handlers.js"
     },
     {
       "name": "search_memory",
-      "description": "Search memory entries by content, tags, or layer",
+      "description": "Search memory entries by content, tags, or kind",
       "dangerous": false,
       "parameters": {
         "type": "object",
@@ -53,9 +54,10 @@
             "items": { "type": "string" },
             "description": "Tags to filter by (any match)"
           },
-          "layer": {
-            "type": "number",
-            "description": "Filter by layer (1, 2, or 3)"
+          "kind": {
+            "type": "string",
+            "enum": ["procedural", "experiential", "semantic", "episodic"],
+            "description": "Filter by kind"
           },
           "limit": {
             "type": "number",
@@ -88,7 +90,7 @@
           },
           "ttlDays": {
             "type": "number",
-            "description": "New TTL in days from now"
+            "description": "New TTL in days from now (episodic only)"
           }
         },
         "required": ["id"]
@@ -113,14 +115,15 @@
     },
     {
       "name": "list_memories",
-      "description": "List all memory entries in a layer",
+      "description": "List all memory entries, optionally filtered by kind",
       "dangerous": false,
       "parameters": {
         "type": "object",
         "properties": {
-          "layer": {
-            "type": "number",
-            "description": "Layer to list (1, 2, or 3). Lists all layers if omitted."
+          "kind": {
+            "type": "string",
+            "enum": ["procedural", "experiential", "semantic", "episodic"],
+            "description": "Kind to list. Lists all kinds if omitted."
           }
         },
         "required": []

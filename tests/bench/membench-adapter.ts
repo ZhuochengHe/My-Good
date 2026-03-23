@@ -1,30 +1,33 @@
 /**
- * MemBench adapter wrapping the current (v1) JsonMemoryStore.
+ * MemBench adapter wrapping the JsonMemoryStore (v2, kind-based API).
  *
  * Maps the MemBench BaseMemory interface (store / recall / retri / reset) to
- * the existing layer-based MemoryStore.  This is a **baseline** adapter that
- * uses the current text-substring search — no embedding support yet.
+ * the kind-based MemoryStore.  This is a **baseline** adapter that uses the
+ * current text-substring search — no embedding support yet.
  *
  * Interface contract:
- *   store(message, stepId)  → saves raw message as a layer-2 entry; sets
+ *   store(message, stepId)  → saves raw message as a 'semantic' entry; sets
  *                             sourceRef to String(stepId) for retri()
  *   recall(question)        → substring-searches all entries, returns content
  *                             of top-10 hits joined by newline
  *   retri(question)         → same search, returns sourceRef values as integers
  *                             (for Recall@10 computation)
- *   reset()                 → deletes ALL entries across all three layers
+ *   reset()                 → deletes ALL entries across all four kinds
  *
- * Layer choice rationale:
- *   Layer 2 is used for all benchmark entries (persistent on-demand, no TTL).
- *   All three layers are cleared on reset() to guarantee a clean slate.
+ * Kind choice rationale:
+ *   'semantic' is used for all benchmark entries (objective facts, no TTL).
+ *   All four kinds are cleared on reset() to guarantee a clean slate.
  */
 
 import { JsonMemoryStore } from '../../src/memory/memory-store.js';
 import { randomUUID } from 'crypto';
-import type { MemoryEntry } from '../../src/types/memory.js';
+import type { MemoryEntry, MemoryKind } from '../../src/types/memory.js';
 
-/** Layer assigned to all MemBench entries. */
-const BENCH_LAYER = 2 as const;
+/** Kind assigned to all MemBench entries. */
+const BENCH_KIND: MemoryKind = 'semantic';
+
+/** All kinds to clear during reset(). */
+const ALL_KINDS: MemoryKind[] = ['procedural', 'experiential', 'semantic', 'episodic'];
 
 /** Number of entries returned per recall/retri call. */
 const TOP_K = 10;
@@ -34,7 +37,7 @@ function makeBenchEntry(message: string, stepId: number): MemoryEntry {
   const now = Date.now();
   return {
     id: randomUUID(),
-    layer: BENCH_LAYER,
+    kind: BENCH_KIND,
     content: message,
     tags: ['membench'],
     sourceRef: String(stepId),
@@ -109,12 +112,12 @@ export class MemBenchAdapter {
   }
 
   /**
-   * Clears all memory entries across all layers.
+   * Clears all memory entries across all kinds.
    * Called between trajectories to reset state.
    */
   async reset(): Promise<void> {
-    for (const layer of [1, 2, 3] as const) {
-      const entries = await this.memoryStore.search({ layer, limit: 100_000 });
+    for (const kind of ALL_KINDS) {
+      const entries = await this.memoryStore.search({ kind, limit: 100_000 });
       await Promise.all(entries.map(e => this.memoryStore.delete(e.id)));
     }
   }

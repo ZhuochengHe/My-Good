@@ -1,28 +1,54 @@
-# Benchmark Results
+# MemBench Results
 
-Tracks MemBench evaluation results across different memory architecture versions.
+Tracks MemBench evaluation results across memory architecture iterations.
 
-Dataset: `simple.json` (500 trajectories total)
-Metric definitions: see `tests/bench/README.md`
+**Dataset**: `tests/bench/data/membench/simple.json` (500 PS trajectories total)
+**Metric definitions**: see `tests/bench/README.md`
+**Random-guess baseline**: 25% (4-choice MCQ)
 
 ---
 
 ## Results
 
-| Date | Architecture | Trajectories | Accuracy | Recall@10 | Notes |
-|------|-------------|-------------|----------|-----------|-------|
-| 2026-03-23 | v1 baseline (substring search + recency fallback) | 100 | 49.0% | 9.0% | First run; recency fallback drives both metrics |
+| Date | Version | Trajectories | Accuracy | Recall@10 | Notes |
+|------|---------|-------------|----------|-----------|-------|
+| 2026-03-23 | v2-baseline | 100 | 49.0% | 8.0% | substring search; recency fallback; kind-based store |
 
 ---
 
 ## Architecture Descriptions
 
-### v1 baseline — `JsonMemoryStore` with substring search
+### v2-baseline — `JsonMemoryStore` (kind API) + substring search (2026-03-23)
 
-**Storage**: Each memory entry is a JSON file under `~/.my-agent/memory/layer{1,2,3}/<uuid>.json`. Three layers with different semantics (L1: working, L2: persistent on-demand, L3: episodic with TTL). Writes are atomic via tmp+rename.
+**Storage**: Each memory entry is a JSON file under `~/.my-agent/memory/<kind>/<uuid>.json`.
+Four kinds: `procedural`, `experiential`, `semantic`, `episodic`.
+Benchmark adapter uses `semantic` for all entries. Writes are atomic via tmp+rename.
 
-**Retrieval** (`search()`): Case-insensitive substring match on `entry.content`. Results sorted by `updatedAt` descending, then truncated to `limit`. No semantic understanding — query must share exact keywords with stored content.
+**Retrieval** (`search()`): Case-insensitive substring match on `entry.content`.
+Results sorted by `updatedAt` descending, then truncated to `limit`.
 
-**Benchmark adapter behavior**: When substring search returns no hits (the common case for paraphrased questions), falls back to returning the most-recent TOP_K entries by recency. This fallback is what produces non-zero Recall@10 (9%) and above-random Accuracy (49%) — not actual retrieval quality.
+**Benchmark adapter behavior**: `recall(question)` passes the full question string as the
+substring query. When no substring match is found (the common case for paraphrased questions),
+falls back to the most-recent TOP_K entries by recency.
 
-**Interpretation**: Accuracy=49% vs. random baseline of 25% is driven entirely by recency luck (recent steps tend to be relevant). Recall@10=9% means the correct source step appears in the top-10 recency fallback only 9% of the time. True semantic retrieval score is effectively 0%.
+**Why performance is poor:**
+
+The core problem is a *vocabulary mismatch* between questions and stored messages.
+MemBench questions are semantic paraphrases of the stored content — not lexical copies.
+
+Example from `simple.json tid=0`:
+- Stored (sid=2): `"his birthday is on August 23rd"`
+- Question: `"When was Landon born?"`
+- Substring "born" only matches sid=4 (`"born in Philadelphia, PA"`), not sid=2.
+- Result: correct step is never retrieved → LLM gets wrong context → wrong answer.
+
+**Metrics breakdown:**
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| Recall@10 | 8% | Correct step found in top-10 only 8% of the time. Near-zero real retrieval. |
+| Accuracy | 49% | Slightly above 25% random; driven by recency-fallback luck, not retrieval. |
+
+The recency fallback is the entire source of non-random accuracy. When the answer happens to
+be in the most recent ~10 messages (common in short trajectories), the LLM gets lucky.
+The retrieval system itself contributes almost nothing.

@@ -55,16 +55,19 @@ export class MemoryInvalidIdError extends MemoryError {
 }
 
 /**
- * Thrown when a memory layer value is not 1, 2, or 3. Code: MEMORY_003.
+ * Thrown when a memory kind value is not a valid MemoryKind. Code: MEMORY_003.
  */
-export class MemoryInvalidLayerError extends MemoryError {
-  /** The invalid layer value that was provided. */
-  readonly layer: unknown;
+export class MemoryInvalidKindError extends MemoryError {
+  /** The invalid kind value that was provided. */
+  readonly kind: unknown;
 
-  constructor(layer: unknown) {
-    super('MEMORY_003', `Invalid memory layer: ${String(layer)}. Must be 1, 2, or 3`);
-    this.name = 'MemoryInvalidLayerError';
-    this.layer = layer;
+  constructor(kind: unknown) {
+    super(
+      'MEMORY_003',
+      `Invalid memory kind: "${String(kind)}". Must be one of: procedural, experiential, semantic, episodic`
+    );
+    this.name = 'MemoryInvalidKindError';
+    this.kind = kind;
   }
 }
 
