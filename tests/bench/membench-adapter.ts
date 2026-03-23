@@ -98,10 +98,10 @@ export class MemBenchAdapter {
    * @returns Array of integer step IDs from retrieved entries
    */
   async retri(question: string): Promise<number[]> {
-    const results = await this.memoryStore.search({
-      query: question,
-      limit: TOP_K,
-    });
+    let results = await this.memoryStore.search({ query: question, limit: TOP_K });
+    if (results.length === 0) {
+      results = await this.memoryStore.search({ limit: TOP_K });
+    }
     return results
       .filter(e => e.sourceRef !== undefined)
       .map(e => parseInt(e.sourceRef as string, 10))
