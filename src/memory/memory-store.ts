@@ -353,35 +353,89 @@ export class JsonMemoryStore implements MemoryStore {
 
     let results = all;
 
-    // Tag post-filter
-    if (options.tags !== undefined && options.tags.length > 0) {
-      const tagSet = new Set(options.tags);
-      results = results.filter(e => e.tags.some(t => tagSet.has(t)));
-    }
+    // Hybrid reranking: embedding cosine + BM25-TF + tag boost.
+    //
+    // Scoring formula:
+    //   cosine_norm = (cosine + 1) / 2          → maps [-1, 1] to [0, 1]
+    //   bm25_norm   = min(1, Σ tf/(tf+1.2) / |terms|)  → [0, 1]
+    //   tag_hit     = 1 if any tag matches, else 0
+    //   final_score = 0.75 * cosine_norm + 0.25 * bm25_norm + 0.1 * tag_hit
+    //
+    // Tags are never a hard pre-filter — they only boost, so high-cosine entries
+    // without matching tags are never silently dropped.
+    const BM25_K1 = 1.2;
+    const TAG_BOOST = 0.1;
 
-    // Embedding search: if a pre-computed query vector is provided and an embeddingIndex
-    // is available, rank by cosine similarity and apply optional minScore threshold.
-    // Falls back to substring + recency when either condition is absent.
+    const queryTerms = options.query
+      ? options.query.toLowerCase().split(/\s+/).filter(Boolean)
+      : [];
+    const tagSet = options.tags !== undefined && options.tags.length > 0
+      ? new Set(options.tags)
+      : null;
+
     if (options.queryEmbedding !== undefined && this.embeddingIndex) {
-      const limit = options.limit !== undefined && options.limit > 0 ? options.limit : results.length;
       const minScore = options.minScore ?? 0;
-      const idSet = new Set(results.map(e => e.id));
-      const ranked = await this.embeddingIndex.searchByCosine(
+
+      // Fetch cosine scores for all candidates (no pre-filter).
+      const cosineResults = await this.embeddingIndex.searchByCosine(
         options.queryEmbedding as number[],
-        limit
+        all.length
       );
-      const orderedIds = ranked
-        .filter(r => r.score >= minScore && idSet.has(r.id))
-        .map(r => r.id);
-      const byId = new Map(results.map(e => [e.id, e]));
-      results = orderedIds.map(id => byId.get(id)!).filter(Boolean);
+      const cosineMap = new Map(cosineResults.map(r => [r.id, r.score]));
+
+      const scored = results.map(entry => {
+        const raw = cosineMap.get(entry.id) ?? -1;
+        const cosineNorm = (raw + 1) / 2;  // [-1, 1] → [0, 1]
+
+        let bm25 = 0;
+        if (queryTerms.length > 0) {
+          const lower = entry.content.toLowerCase();
+          for (const term of queryTerms) {
+            let tf = 0;
+            let pos = lower.indexOf(term);
+            while (pos !== -1) { tf++; pos = lower.indexOf(term, pos + 1); }
+            bm25 += tf / (tf + BM25_K1);
+          }
+          bm25 = Math.min(1, bm25 / queryTerms.length);
+        }
+
+        // overlap ratio = matched_tags / query_tag_count (capped at 5 by handler layer)
+        const tagOverlap = tagSet !== null && tagSet.size > 0
+          ? entry.tags.filter(t => tagSet.has(t)).length / tagSet.size
+          : 0;
+        const score = 0.75 * cosineNorm + 0.25 * bm25 + TAG_BOOST * tagOverlap;
+
+        return { entry, score, rawCosine: raw };
+      });
+
+      results = scored
+        .filter(s => s.rawCosine >= minScore)
+        .sort((a, b) => b.score - a.score)
+        .map(s => s.entry);
     } else {
-      // Substring search fallback
-      if (options.query !== undefined && options.query.length > 0) {
-        const lower = options.query.toLowerCase();
-        results = results.filter(e => e.content.toLowerCase().includes(lower));
+      // No embedding: BM25-TF + tag boost, fall back to recency.
+      if (queryTerms.length > 0 || tagSet !== null) {
+        const scored = results.map(entry => {
+          const lower = entry.content.toLowerCase();
+          let bm25 = 0;
+          for (const term of queryTerms) {
+            let tf = 0;
+            let pos = lower.indexOf(term);
+            while (pos !== -1) { tf++; pos = lower.indexOf(term, pos + 1); }
+            bm25 += tf / (tf + BM25_K1);
+          }
+          if (queryTerms.length > 0) bm25 = Math.min(1, bm25 / queryTerms.length);
+          const tagHit = tagSet !== null && entry.tags.some(t => tagSet.has(t)) ? 1 : 0;
+          return { entry, score: bm25 + TAG_BOOST * tagHit };
+        });
+        const filtered = queryTerms.length > 0 ? scored.filter(s => s.score > 0) : scored;
+        filtered.sort((a, b) =>
+          b.score !== a.score ? b.score - a.score : b.entry.updatedAt - a.entry.updatedAt
+        );
+        results = filtered.map(s => s.entry);
+      } else {
+        results.sort((a, b) => b.updatedAt - a.updatedAt);
       }
-      results.sort((a, b) => b.updatedAt - a.updatedAt);
     }
 
     if (options.limit !== undefined && options.limit > 0) {
