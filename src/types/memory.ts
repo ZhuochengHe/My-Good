@@ -57,6 +57,8 @@ export interface MemoryEntry {
   readonly lastAccessed?: number;
   /** Number of times the TTL was explicitly refreshed. Influences eviction scoring. */
   readonly ttlRenewals?: number;
+  /** Opaque reference to the origin of this memory (e.g. MemBench step ID). */
+  readonly sourceRef?: string;
 }
 
 /**

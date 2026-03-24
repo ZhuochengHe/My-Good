@@ -158,6 +158,8 @@ cosine > 0.9   → merge: LLM call → update existing entry
 
 Runs at `initialize()` on expired episodic entries when count exceeds threshold (default: 100).
 
+Scoring factors (weighted sum → 0.0–1.0):
+
 | Factor | Weight | Condition |
 |---|---|---|
 | High-value tags (`architecture`, `decision`, `convention`) | +0.4 | tag match |
