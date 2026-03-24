@@ -43,17 +43,31 @@ function cosineSimilarity(a: number[], b: number[]): number {
 /**
  * JSON file-based embedding index.
  * Maintains an in-memory map that is persisted to embeddings.json.
+ *
+ * All mutating operations (set, delete, clear) are serialized through a
+ * promise chain so concurrent callers never race on embeddings.json.tmp.
  */
 export class JsonEmbeddingIndex implements EmbeddingIndex {
   private readonly filePath: string;
   /** In-memory embedding map; lazily loaded on first access. */
   private map: Map<string, number[]> | null = null;
+  /** Serializes all write operations to prevent concurrent rename races. */
+  private writeQueue: Promise<void> = Promise.resolve();
 
   /**
    * @param baseDir - Directory where embeddings.json will be stored
    */
   constructor(baseDir: string) {
     this.filePath = path.join(baseDir, EMBEDDINGS_FILE);
+  }
+
+  /**
+   * Enqueues a write operation so it runs after all previous writes complete.
+   * Prevents concurrent callers from racing on embeddings.json.tmp.
+   */
+  private enqueue(fn: () => Promise<void>): Promise<void> {
+    this.writeQueue = this.writeQueue.then(fn, fn);
+    return this.writeQueue;
   }
 
   /**
@@ -116,9 +130,11 @@ export class JsonEmbeddingIndex implements EmbeddingIndex {
    * @param embedding - Embedding vector to store
    */
   async set(id: string, embedding: number[]): Promise<void> {
-    const map = await this.loadMap();
-    map.set(id, embedding);
-    await this.saveMap(map);
+    return this.enqueue(async () => {
+      const map = await this.loadMap();
+      map.set(id, embedding);
+      await this.saveMap(map);
+    });
   }
 
   /**
@@ -128,10 +144,23 @@ export class JsonEmbeddingIndex implements EmbeddingIndex {
    * @param id - Entry UUID
    */
   async delete(id: string): Promise<void> {
-    const map = await this.loadMap();
-    if (!map.has(id)) return;
-    map.delete(id);
-    await this.saveMap(map);
+    return this.enqueue(async () => {
+      const map = await this.loadMap();
+      if (!map.has(id)) return;
+      map.delete(id);
+      await this.saveMap(map);
+    });
+  }
+
+  /**
+   * Removes all embeddings from the index.
+   * More efficient than calling delete() for each entry when clearing many entries.
+   */
+  async clear(): Promise<void> {
+    return this.enqueue(async () => {
+      this.map = new Map();
+      await this.saveMap(this.map);
+    });
   }
 
   /**

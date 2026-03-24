@@ -4,8 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_TARGET="$HOME/.local/bin/my-agent"
 
-echo "Building my-agent..."
+echo "Installing dependencies..."
 cd "$SCRIPT_DIR"
+npm install
+
+echo "Building my-agent..."
 npm run build
 
 echo "Installing to $BIN_TARGET..."
@@ -71,3 +74,6 @@ fi
 
 echo ""
 echo "Run: my-agent setup"
+echo ""
+echo "Note: persistent memory requires an OpenAI API key (used for gpt-4o-mini consolidation"
+echo "      and text-embedding-3-small search). Configure via: my-agent setup"

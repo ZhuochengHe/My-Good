@@ -1,6 +1,7 @@
 /**
- * Tests for eviction scorer.
- * Written FIRST following TDD methodology (RED → GREEN → REFACTOR).
+ * Tests for the eviction scorer.
+ * scoreMemory() assigns a retention score in [0, 1] to expired episodic entries.
+ * Only episodic entries are ever scored — other kinds are never evicted.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -8,21 +9,23 @@ import { scoreMemory } from '../../src/memory/eviction-scorer.js';
 import type { MemoryEntry } from '../../src/types/memory.js';
 import { randomUUID } from 'crypto';
 
-/** Builds a minimal expired layer-3 MemoryEntry for scorer tests.
+/**
+ * Builds a minimal expired episodic MemoryEntry for scorer tests.
  *
- * Default: ttlDays=1, createdAt 1.5 days ago — expired but well within 2× TTL
- * so the age-penalty factor never fires unless overridden.
+ * Defaults: ttlDays=1, createdAt 1.5 days ago (expired), lastAccessed 1.5 days ago
+ * (within 2× TTL — so the stale-access penalty does NOT fire unless overridden).
  */
-function makeL3Entry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
+function makeEpisodicEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   const now = Date.now();
+  const createdAt = now - Math.round(1.5 * 86400000);
   return {
     id: randomUUID(),
-    layer: 3,
+    kind: 'episodic',
     content: 'Short content',
     tags: [],
-    // 1.5 days ago with ttlDays=1: expired (> 1d) but not "old" (< 2d = 2× TTL)
-    createdAt: now - Math.round(1.5 * 86400000),
-    updatedAt: now - 86400000,
+    createdAt,
+    updatedAt: createdAt,
+    lastAccessed: createdAt, // within 2× ttlDays=1 (i.e. < 2 days ago) — no penalty
     ttlDays: 1,
     ...overrides,
   };
@@ -35,12 +38,12 @@ describe('scoreMemory', () => {
 
   describe('score is always clamped to [0, 1]', () => {
     it('returns a number >= 0 for an entry with no positive signals', () => {
-      const entry = makeL3Entry();
+      const entry = makeEpisodicEntry();
       expect(scoreMemory(entry)).toBeGreaterThanOrEqual(0);
     });
 
     it('returns a number <= 1 even when all positive signals apply', () => {
-      const entry = makeL3Entry({
+      const entry = makeEpisodicEntry({
         tags: ['architecture', 'decision', 'convention'],
         accessCount: 5,
         ttlRenewals: 3,
@@ -52,183 +55,181 @@ describe('scoreMemory', () => {
 
   // ---------------------------------------------------------------------------
   // Tag category factor (+0.4)
+  // High-value tags: 'architecture', 'decision', 'convention'
   // ---------------------------------------------------------------------------
 
-  describe('tag category factor', () => {
+  describe('tag category factor (+0.4)', () => {
     it('adds 0.4 when tags include "architecture"', () => {
-      const withArch = makeL3Entry({ tags: ['architecture'] });
-      const withoutArch = makeL3Entry({ tags: [] });
-      expect(scoreMemory(withArch)).toBeGreaterThan(scoreMemory(withoutArch));
-      expect(scoreMemory(withArch) - scoreMemory(withoutArch)).toBeCloseTo(0.4);
+      const withTag = makeEpisodicEntry({ tags: ['architecture'] });
+      const without = makeEpisodicEntry({ tags: [] });
+      expect(scoreMemory(withTag) - scoreMemory(without)).toBeCloseTo(0.4);
     });
 
     it('adds 0.4 when tags include "decision"', () => {
-      const withDecision = makeL3Entry({ tags: ['decision'] });
-      const withoutDecision = makeL3Entry({ tags: [] });
-      expect(scoreMemory(withDecision) - scoreMemory(withoutDecision)).toBeCloseTo(0.4);
+      const withTag = makeEpisodicEntry({ tags: ['decision'] });
+      const without = makeEpisodicEntry({ tags: [] });
+      expect(scoreMemory(withTag) - scoreMemory(without)).toBeCloseTo(0.4);
     });
 
     it('adds 0.4 when tags include "convention"', () => {
-      const withConvention = makeL3Entry({ tags: ['convention'] });
-      const withoutConvention = makeL3Entry({ tags: [] });
-      expect(scoreMemory(withConvention) - scoreMemory(withoutConvention)).toBeCloseTo(0.4);
+      const withTag = makeEpisodicEntry({ tags: ['convention'] });
+      const without = makeEpisodicEntry({ tags: [] });
+      expect(scoreMemory(withTag) - scoreMemory(without)).toBeCloseTo(0.4);
     });
 
     it('applies tag bonus only once even with multiple qualifying tags', () => {
-      const multiTag = makeL3Entry({ tags: ['architecture', 'decision', 'convention'] });
-      const singleTag = makeL3Entry({ tags: ['architecture'] });
-      // Both should produce the same score since it's a boolean +0.4 factor
+      const multiTag = makeEpisodicEntry({ tags: ['architecture', 'decision', 'convention'] });
+      const singleTag = makeEpisodicEntry({ tags: ['architecture'] });
+      // Boolean factor — three matching tags score identically to one
       expect(scoreMemory(multiTag)).toBeCloseTo(scoreMemory(singleTag));
     });
 
-    it('does not add tag bonus for unrelated tags', () => {
-      const unrelated = makeL3Entry({ tags: ['sprint-goal', 'bug', 'feature'] });
-      const noTags = makeL3Entry({ tags: [] });
+    it('does not add tag bonus for non-qualifying tags', () => {
+      // Tags that belong to other memory kinds (preference, experiential, semantic)
+      // or are general labels should not trigger the high-value bonus
+      const unrelated = makeEpisodicEntry({ tags: ['sprint-goal', 'bug', 'preference'] });
+      const noTags = makeEpisodicEntry({ tags: [] });
       expect(scoreMemory(unrelated)).toBeCloseTo(scoreMemory(noTags));
     });
   });
 
   // ---------------------------------------------------------------------------
   // Access frequency factor (+0.25)
+  // Threshold: accessCount >= 3
   // ---------------------------------------------------------------------------
 
-  describe('access frequency factor', () => {
+  describe('access frequency factor (+0.25)', () => {
     it('adds 0.25 when accessCount >= 3', () => {
-      const highAccess = makeL3Entry({ accessCount: 3 });
-      const noAccess = makeL3Entry({ accessCount: 0 });
+      const highAccess = makeEpisodicEntry({ accessCount: 3 });
+      const noAccess = makeEpisodicEntry({ accessCount: 0 });
       expect(scoreMemory(highAccess) - scoreMemory(noAccess)).toBeCloseTo(0.25);
     });
 
     it('adds 0.25 when accessCount > 3', () => {
-      const veryHighAccess = makeL3Entry({ accessCount: 10 });
-      const noAccess = makeL3Entry({ accessCount: 0 });
+      const veryHighAccess = makeEpisodicEntry({ accessCount: 10 });
+      const noAccess = makeEpisodicEntry({ accessCount: 0 });
       expect(scoreMemory(veryHighAccess) - scoreMemory(noAccess)).toBeCloseTo(0.25);
     });
 
     it('does not add access bonus when accessCount < 3', () => {
-      const lowAccess = makeL3Entry({ accessCount: 2 });
-      const noAccess = makeL3Entry({ accessCount: 0 });
+      const lowAccess = makeEpisodicEntry({ accessCount: 2 });
+      const noAccess = makeEpisodicEntry({ accessCount: 0 });
       expect(scoreMemory(lowAccess)).toBeCloseTo(scoreMemory(noAccess));
     });
 
-    it('does not add access bonus when accessCount is undefined', () => {
-      const undefinedAccess = makeL3Entry({ accessCount: undefined });
-      const zeroAccess = makeL3Entry({ accessCount: 0 });
+    it('treats undefined accessCount as 0', () => {
+      const undefinedAccess = makeEpisodicEntry({ accessCount: undefined });
+      const zeroAccess = makeEpisodicEntry({ accessCount: 0 });
       expect(scoreMemory(undefinedAccess)).toBeCloseTo(scoreMemory(zeroAccess));
     });
   });
 
   // ---------------------------------------------------------------------------
   // TTL renewals factor (+0.2)
+  // Threshold: ttlRenewals >= 1
   // ---------------------------------------------------------------------------
 
-  describe('TTL renewals factor', () => {
+  describe('TTL renewals factor (+0.2)', () => {
     it('adds 0.2 when ttlRenewals >= 1', () => {
-      const renewed = makeL3Entry({ ttlRenewals: 1 });
-      const notRenewed = makeL3Entry({ ttlRenewals: 0 });
+      const renewed = makeEpisodicEntry({ ttlRenewals: 1 });
+      const notRenewed = makeEpisodicEntry({ ttlRenewals: 0 });
       expect(scoreMemory(renewed) - scoreMemory(notRenewed)).toBeCloseTo(0.2);
     });
 
-    it('adds 0.2 when ttlRenewals > 1', () => {
-      const manyRenewals = makeL3Entry({ ttlRenewals: 5 });
-      const notRenewed = makeL3Entry({ ttlRenewals: 0 });
-      expect(scoreMemory(manyRenewals) - scoreMemory(notRenewed)).toBeCloseTo(0.2);
+    it('adds 0.2 when ttlRenewals > 1 (bonus does not stack)', () => {
+      const manyRenewals = makeEpisodicEntry({ ttlRenewals: 5 });
+      const oneRenewal = makeEpisodicEntry({ ttlRenewals: 1 });
+      expect(scoreMemory(manyRenewals)).toBeCloseTo(scoreMemory(oneRenewal));
     });
 
-    it('does not add TTL bonus when ttlRenewals is 0', () => {
-      const zeroRenewals = makeL3Entry({ ttlRenewals: 0 });
-      const undefinedRenewals = makeL3Entry({ ttlRenewals: undefined });
-      expect(scoreMemory(zeroRenewals)).toBeCloseTo(scoreMemory(undefinedRenewals));
-    });
-
-    it('does not add TTL bonus when ttlRenewals is undefined', () => {
-      const baseline = makeL3Entry({ ttlRenewals: undefined });
-      const zeroBaseline = makeL3Entry({ ttlRenewals: 0 });
-      expect(scoreMemory(baseline)).toBeCloseTo(scoreMemory(zeroBaseline));
+    it('treats undefined ttlRenewals as 0', () => {
+      const undefinedRenewals = makeEpisodicEntry({ ttlRenewals: undefined });
+      const zeroRenewals = makeEpisodicEntry({ ttlRenewals: 0 });
+      expect(scoreMemory(undefinedRenewals)).toBeCloseTo(scoreMemory(zeroRenewals));
     });
   });
 
   // ---------------------------------------------------------------------------
   // Content specificity factor (+0.1)
+  // Threshold: content.length > 200
   // ---------------------------------------------------------------------------
 
-  describe('content specificity factor', () => {
+  describe('content specificity factor (+0.1)', () => {
     it('adds 0.1 when content.length > 200', () => {
-      const longContent = makeL3Entry({ content: 'x'.repeat(201) });
-      const shortContent = makeL3Entry({ content: 'short' });
-      expect(scoreMemory(longContent) - scoreMemory(shortContent)).toBeCloseTo(0.1);
+      const long = makeEpisodicEntry({ content: 'x'.repeat(201) });
+      const short = makeEpisodicEntry({ content: 'short' });
+      expect(scoreMemory(long) - scoreMemory(short)).toBeCloseTo(0.1);
     });
 
-    it('does not add content bonus when content.length is exactly 200', () => {
-      const exactlyTwoHundred = makeL3Entry({ content: 'x'.repeat(200) });
-      const shortContent = makeL3Entry({ content: 'short' });
-      expect(scoreMemory(exactlyTwoHundred)).toBeCloseTo(scoreMemory(shortContent));
-    });
-
-    it('does not add content bonus for short content', () => {
-      const shortContent = makeL3Entry({ content: 'hello' });
-      const baseline = makeL3Entry({ content: 'x' });
-      expect(scoreMemory(shortContent)).toBeCloseTo(scoreMemory(baseline));
+    it('does not add bonus at exactly 200 characters', () => {
+      const exactlyTwoHundred = makeEpisodicEntry({ content: 'x'.repeat(200) });
+      const short = makeEpisodicEntry({ content: 'short' });
+      expect(scoreMemory(exactlyTwoHundred)).toBeCloseTo(scoreMemory(short));
     });
   });
 
   // ---------------------------------------------------------------------------
-  // Age at expiry factor (negative: -0.1 when ttlRenewals === 0 and old)
+  // Stale access penalty (-0.1)
+  // Fires when lastAccessed > 2 × ttlDays ago (entry was never re-read after expiry)
   // ---------------------------------------------------------------------------
 
-  describe('age at expiry factor', () => {
-    it('subtracts 0.1 when ttlRenewals === 0 and entry survived multiple TTL periods', () => {
+  describe('stale access penalty (-0.1)', () => {
+    it('subtracts 0.1 when lastAccessed is older than 2× ttlDays period', () => {
       const threeMonthsAgo = Date.now() - 90 * 86400000;
-      // Baseline: long content (+0.1). Old unrewened entry should score lower.
-      const oldEntry = makeL3Entry({
-        ttlRenewals: 0,
-        createdAt: threeMonthsAgo,
+      const stale = makeEpisodicEntry({
         ttlDays: 30,
-        content: 'x'.repeat(201), // +0.1 so we have a visible positive baseline
+        lastAccessed: threeMonthsAgo, // 90 days ago > 2×30 = 60 days — penalty fires
+        content: 'x'.repeat(201),     // +0.1 so there's a visible baseline to compare
       });
-      const recentEntry = makeL3Entry({
-        ttlRenewals: 0,
-        createdAt: Date.now() - 2 * 86400000, // within first TTL period — no penalty
+      const fresh = makeEpisodicEntry({
         ttlDays: 30,
-        content: 'x'.repeat(201), // same positive signal
-      });
-      // oldEntry survived > 2 TTL periods → penalty applies → lower score
-      expect(scoreMemory(oldEntry)).toBeLessThan(scoreMemory(recentEntry));
-    });
-
-    it('does not subtract when ttlRenewals >= 1 (renewed entry is not penalised)', () => {
-      const threeMonthsAgo = Date.now() - 90 * 86400000;
-      const oldRenewed = makeL3Entry({
-        ttlRenewals: 1,
-        createdAt: threeMonthsAgo,
-        ttlDays: 30,
+        lastAccessed: Date.now() - 2 * 86400000, // recently accessed — no penalty
         content: 'x'.repeat(201),
       });
-      const oldNotRenewed = makeL3Entry({
-        ttlRenewals: 0,
-        createdAt: threeMonthsAgo,
-        ttlDays: 30,
-        content: 'x'.repeat(201),
-      });
-      expect(scoreMemory(oldRenewed)).toBeGreaterThan(scoreMemory(oldNotRenewed));
+      expect(scoreMemory(stale)).toBeLessThan(scoreMemory(fresh));
+      expect(scoreMemory(fresh) - scoreMemory(stale)).toBeCloseTo(0.1);
     });
 
-    it('does not subtract when ttlDays is undefined', () => {
+    it('does not subtract when lastAccessed is undefined', () => {
+      const noAccessRecord = makeEpisodicEntry({
+        ttlDays: 30,
+        lastAccessed: undefined,
+        content: 'x'.repeat(201),
+      });
+      const staleAccessRecord = makeEpisodicEntry({
+        ttlDays: 30,
+        lastAccessed: Date.now() - 90 * 86400000, // > 2× TTL — penalty applies
+        content: 'x'.repeat(201),
+      });
+      expect(scoreMemory(noAccessRecord)).toBeGreaterThan(scoreMemory(staleAccessRecord));
+    });
+
+    it('does not subtract when ttlDays is undefined (no TTL baseline to measure against)', () => {
       const threeMonthsAgo = Date.now() - 90 * 86400000;
-      const entryNoTtl = makeL3Entry({
-        ttlRenewals: 0,
+      const noTtl = makeEpisodicEntry({
         ttlDays: undefined,
-        createdAt: threeMonthsAgo,
-        content: 'x'.repeat(201), // give a baseline positive signal
+        lastAccessed: threeMonthsAgo, // stale timestamp but no ttlDays → penalty never fires
+        content: 'x'.repeat(201),
       });
-      const entryWithTtl = makeL3Entry({
-        ttlRenewals: 0,
+      const withTtl = makeEpisodicEntry({
         ttlDays: 30,
-        createdAt: threeMonthsAgo,
-        content: 'x'.repeat(201), // same positive signal
+        lastAccessed: threeMonthsAgo, // > 2×30 days → penalty fires
+        content: 'x'.repeat(201),
       });
-      // entryWithTtl should be penalised (survived >2 TTL periods), entryNoTtl should not
-      expect(scoreMemory(entryNoTtl)).toBeGreaterThan(scoreMemory(entryWithTtl));
+      expect(scoreMemory(noTtl)).toBeGreaterThan(scoreMemory(withTtl));
+    });
+
+    it('does not subtract when lastAccessed is within 2× ttlDays', () => {
+      // ttlDays=30 → stale cutoff = 60 days; lastAccessed 45 days ago → still safe
+      const withinWindow = makeEpisodicEntry({
+        ttlDays: 30,
+        lastAccessed: Date.now() - 45 * 86400000, // < 60 day cutoff — no penalty
+      });
+      const baseline = makeEpisodicEntry({
+        ttlDays: 30,
+        lastAccessed: Date.now() - 1 * 86400000, // very recent — definitely no penalty
+      });
+      expect(scoreMemory(withinWindow)).toBeCloseTo(scoreMemory(baseline));
     });
   });
 
@@ -238,50 +239,63 @@ describe('scoreMemory', () => {
 
   describe('combined scoring', () => {
     it('entry with no signals scores 0', () => {
-      const entry = makeL3Entry({
+      const entry = makeEpisodicEntry({
         tags: [],
         accessCount: 0,
         ttlRenewals: 0,
         content: 'short',
-        createdAt: Date.now() - 2 * 86400000,
-        ttlDays: 1,
+        // lastAccessed kept at default (recent) so stale penalty does not apply
       });
-      // Should be 0 (no positive signals), possibly -0.1 from age penalty clamped to 0
+      // No positive signals → 0; stale penalty clamped at 0
       expect(scoreMemory(entry)).toBeGreaterThanOrEqual(0);
       expect(scoreMemory(entry)).toBeLessThan(0.1);
     });
 
     it('architecture tag + high access + renewals = high value (>= 0.6)', () => {
-      const entry = makeL3Entry({
+      const entry = makeEpisodicEntry({
         tags: ['architecture'],
         accessCount: 5,
         ttlRenewals: 2,
         content: 'short',
       });
-      // 0.4 + 0.25 + 0.2 = 0.85 >= 0.6
+      // 0.4 + 0.25 + 0.2 = 0.85 >= 0.6 threshold
       expect(scoreMemory(entry)).toBeGreaterThanOrEqual(0.6);
     });
 
-    it('decision tag + long content = borderline high value', () => {
-      const entry = makeL3Entry({
+    it('decision tag + long content = below high-value threshold (0.5)', () => {
+      const entry = makeEpisodicEntry({
         tags: ['decision'],
         accessCount: 0,
         ttlRenewals: 0,
         content: 'x'.repeat(201),
       });
-      // 0.4 + 0.1 = 0.5 — below 0.6 unless age penalty does not apply
+      // 0.4 + 0.1 = 0.5 — below the 0.6 pendingKB threshold
       expect(scoreMemory(entry)).toBeCloseTo(0.5, 1);
     });
 
-    it('all signals active scores close to 1', () => {
-      const entry = makeL3Entry({
+    it('all signals active scores close to 0.95', () => {
+      const entry = makeEpisodicEntry({
         tags: ['architecture'],
         accessCount: 5,
         ttlRenewals: 3,
         content: 'x'.repeat(300),
+        // lastAccessed is recent (default) so stale penalty does not apply
       });
       // 0.4 + 0.25 + 0.2 + 0.1 = 0.95
       expect(scoreMemory(entry)).toBeCloseTo(0.95, 1);
+    });
+
+    it('stale penalty reduces a borderline entry below 0.6', () => {
+      // Without stale penalty: decision(0.4) + content(0.1) = 0.5 — already below 0.6
+      // Add stale: 0.5 - 0.1 = 0.4 (clamped to 0 if negative, but 0.4 is valid)
+      const stale = makeEpisodicEntry({
+        tags: ['decision'],
+        content: 'x'.repeat(201),
+        ttlDays: 30,
+        lastAccessed: Date.now() - 90 * 86400000, // > 2× TTL — penalty fires
+      });
+      expect(scoreMemory(stale)).toBeCloseTo(0.4, 1);
+      expect(scoreMemory(stale)).toBeLessThan(0.6);
     });
   });
 });

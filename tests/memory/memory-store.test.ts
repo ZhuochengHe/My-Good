@@ -23,11 +23,11 @@ function makeTempDir(): string {
   return path.join(tmpdir(), `memory-test-${randomUUID()}`);
 }
 
-/** Builds a valid procedural MemoryEntry for testing. */
+/** Builds a valid preference MemoryEntry for testing. */
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
     id: randomUUID(),
-    kind: 'procedural',
+    kind: 'preference',
     content: 'Test memory content',
     tags: ['test'],
     createdAt: Date.now(),
@@ -56,13 +56,13 @@ describe('JsonMemoryStore', () => {
 
   describe('save and get', () => {
     it('saves an entry and retrieves it by id', async () => {
-      const entry = makeEntry({ content: 'Hello world', kind: 'procedural' });
+      const entry = makeEntry({ content: 'Hello world', kind: 'preference' });
       await store.save(entry);
       const result = await store.get(entry.id);
       expect(result).not.toBeNull();
       expect(result?.id).toBe(entry.id);
       expect(result?.content).toBe('Hello world');
-      expect(result?.kind).toBe('procedural');
+      expect(result?.kind).toBe('preference');
       expect(result?.tags).toEqual(['test']);
     });
 
@@ -101,12 +101,12 @@ describe('JsonMemoryStore', () => {
     });
 
     it('throws MemoryInvalidKindError for invalid kind', async () => {
-      const entry = makeEntry({ kind: 'unknown' as 'procedural' });
+      const entry = makeEntry({ kind: 'unknown' as 'preference' });
       await expect(store.save(entry)).rejects.toThrow(MemoryInvalidKindError);
     });
 
     it('accepts all valid kinds', async () => {
-      for (const kind of ['procedural', 'experiential', 'semantic', 'episodic'] as const) {
+      for (const kind of ['preference', 'experiential', 'semantic', 'episodic'] as const) {
         const entry = makeEntry({ kind });
         await expect(store.save(entry)).resolves.not.toThrow();
       }
@@ -193,7 +193,7 @@ describe('JsonMemoryStore', () => {
 
   describe('search', () => {
     it('returns all entries when no options provided', async () => {
-      const e1 = makeEntry({ kind: 'procedural' });
+      const e1 = makeEntry({ kind: 'preference' });
       const e2 = makeEntry({ kind: 'semantic' });
       const e3 = makeEntry({ kind: 'episodic' });
       await store.save(e1);
@@ -204,12 +204,12 @@ describe('JsonMemoryStore', () => {
     });
 
     it('filters by kind', async () => {
-      const e1 = makeEntry({ kind: 'procedural' });
+      const e1 = makeEntry({ kind: 'preference' });
       const e2 = makeEntry({ kind: 'semantic' });
       await store.save(e1);
       await store.save(e2);
-      const results = await store.search({ kind: 'procedural' });
-      expect(results.every(r => r.kind === 'procedural')).toBe(true);
+      const results = await store.search({ kind: 'preference' });
+      expect(results.every(r => r.kind === 'preference')).toBe(true);
       expect(results.some(r => r.id === e1.id)).toBe(true);
       expect(results.some(r => r.id === e2.id)).toBe(false);
     });
@@ -281,43 +281,62 @@ describe('JsonMemoryStore', () => {
   // ---------------------------------------------------------------------------
 
   describe('loadForSystemPrompt', () => {
-    it('returns only procedural and experiential entries', async () => {
-      const proc = makeEntry({ kind: 'procedural' });
-      const exp = makeEntry({ kind: 'experiential' });
-      const sem = makeEntry({ kind: 'semantic' });
+    it('returns all preference entries and recent episodic entries', async () => {
+      const pref = makeEntry({ kind: 'preference' });
       const epi = makeEntry({ kind: 'episodic' });
-      await store.save(proc);
-      await store.save(exp);
-      await store.save(sem);
+      const sem = makeEntry({ kind: 'semantic' });
+      const exp = makeEntry({ kind: 'experiential' });
+      await store.save(pref);
       await store.save(epi);
+      await store.save(sem);
+      await store.save(exp);
       const results = await store.loadForSystemPrompt();
       const ids = results.map(r => r.id);
-      expect(ids).toContain(proc.id);
-      expect(ids).toContain(exp.id);
+      expect(ids).toContain(pref.id);
+      expect(ids).toContain(epi.id);
       expect(ids).not.toContain(sem.id);
-      expect(ids).not.toContain(epi.id);
+      expect(ids).not.toContain(exp.id);
     });
 
-    it('excludes expired episodic entries (only procedural/experiential returned)', async () => {
+    it('limits episodic entries to 5 (most recently updated)', async () => {
+      const now = Date.now();
+      // Save 7 episodic entries with distinct updatedAt timestamps
+      const episodics = Array.from({ length: 7 }, (_, i) =>
+        makeEntry({ kind: 'episodic', updatedAt: now + i * 1000, createdAt: now + i * 1000 })
+      );
+      for (const e of episodics) await store.save(e);
+
+      const results = await store.loadForSystemPrompt();
+      const episodicResults = results.filter(r => r.kind === 'episodic');
+      expect(episodicResults).toHaveLength(5);
+      // Should be the 5 most recently updated (indices 6..2)
+      const returnedIds = new Set(episodicResults.map(r => r.id));
+      for (const e of episodics.slice(2)) {
+        expect(returnedIds.has(e.id)).toBe(true);
+      }
+    });
+
+    it('excludes expired episodic entries', async () => {
       const expired = makeEntry({
         kind: 'episodic',
         ttlDays: 1,
         createdAt: Date.now() - 2 * 86400000,
+        updatedAt: Date.now() - 2 * 86400000,
       });
-      const proc = makeEntry({ kind: 'procedural' });
+      const pref = makeEntry({ kind: 'preference' });
       await store.save(expired);
-      await store.save(proc);
+      await store.save(pref);
       const results = await store.loadForSystemPrompt();
       const ids = results.map(r => r.id);
       expect(ids).not.toContain(expired.id);
-      expect(ids).toContain(proc.id);
+      expect(ids).toContain(pref.id);
     });
 
-    it('returns entries sorted by createdAt ascending', async () => {
+    it('returns preference entries sorted by createdAt ascending', async () => {
       const now = Date.now();
-      const e1 = makeEntry({ kind: 'procedural', createdAt: now - 2000, updatedAt: now - 2000 });
-      const e2 = makeEntry({ kind: 'experiential', createdAt: now - 1000, updatedAt: now - 1000 });
-      const e3 = makeEntry({ kind: 'procedural', createdAt: now, updatedAt: now });
+      const e1 = makeEntry({ kind: 'preference', createdAt: now - 2000, updatedAt: now - 2000 });
+      const e2 = makeEntry({ kind: 'preference', createdAt: now - 1000, updatedAt: now - 1000 });
+      const e3 = makeEntry({ kind: 'preference', createdAt: now, updatedAt: now });
       await store.save(e3);
       await store.save(e1);
       await store.save(e2);
@@ -327,8 +346,9 @@ describe('JsonMemoryStore', () => {
       expect(results[2]?.id).toBe(e3.id);
     });
 
-    it('returns empty array when no procedural or experiential entries exist', async () => {
+    it('returns empty array when no preference or episodic entries exist', async () => {
       await store.save(makeEntry({ kind: 'semantic' }));
+      await store.save(makeEntry({ kind: 'experiential' }));
       const results = await store.loadForSystemPrompt();
       expect(results.length).toBe(0);
     });
@@ -348,16 +368,16 @@ describe('JsonMemoryStore', () => {
     });
 
     it('does not leave .tmp files after a successful save', async () => {
-      const entry = makeEntry({ kind: 'procedural' });
+      const entry = makeEntry({ kind: 'preference' });
       await store.save(entry);
-      const tmpPath = path.join(baseDir, 'procedural', `${entry.id}.json.tmp`);
+      const tmpPath = path.join(baseDir, 'preference', `${entry.id}.json.tmp`);
       await expect(fs.stat(tmpPath)).rejects.toThrow();
     });
 
     it('writes files with mode 0o600', async () => {
-      const entry = makeEntry({ kind: 'procedural' });
+      const entry = makeEntry({ kind: 'preference' });
       await store.save(entry);
-      const filePath = path.join(baseDir, 'procedural', `${entry.id}.json`);
+      const filePath = path.join(baseDir, 'preference', `${entry.id}.json`);
       const stat = await fs.stat(filePath);
       expect(stat.mode & 0o777).toBe(0o600);
     });
@@ -372,7 +392,6 @@ describe('JsonMemoryStore', () => {
         createdAt: now,
         updatedAt: now + 1000,
         ttlDays: 30, // will not expire within the test
-        source: 'agent',
         sourceRef: 'step-42',
       };
       await store.save(entry);
@@ -395,7 +414,7 @@ describe('JsonMemoryStore', () => {
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
       });
-      const validEntry = makeEntry({ kind: 'procedural' });
+      const validEntry = makeEntry({ kind: 'preference' });
       await store.save(expiredEpisodic);
       await store.save(validEntry);
       const results = await store.search({});
@@ -411,7 +430,7 @@ describe('JsonMemoryStore', () => {
         createdAt: Date.now() - TWO_DAYS_MS,
         content: 'expired ttl entry',
       });
-      const validEntry = makeEntry({ kind: 'procedural', content: 'expired ttl entry' });
+      const validEntry = makeEntry({ kind: 'preference', content: 'expired ttl entry' });
       await store.save(expiredEpisodic);
       await store.save(validEntry);
       const results = await store.search({ query: 'expired ttl entry' });
@@ -454,9 +473,9 @@ describe('JsonMemoryStore', () => {
       expect(result?.id).toBe(episodicNoTtl.id);
     });
 
-    it('procedural entries are never expired by ttlDays even with ttlDays set', async () => {
+    it('preference entries are never expired by ttlDays even with ttlDays set', async () => {
       const procWithTtl = makeEntry({
-        kind: 'procedural',
+        kind: 'preference',
         ttlDays: 1,
         createdAt: Date.now() - TWO_DAYS_MS,
       });
@@ -497,29 +516,28 @@ describe('JsonMemoryStore', () => {
 
   describe('createMemoryEntry helper', () => {
     it('generates a valid UUID v4 id', () => {
-      const entry = createMemoryEntry('procedural', 'hello');
+      const entry = createMemoryEntry('preference', 'hello');
       expect(entry.id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       );
     });
 
-    it('sets createdAt and updatedAt to current time', () => {
+    it('sets createdAt, updatedAt, and lastAccessed to current time', () => {
       const before = Date.now();
       const entry = createMemoryEntry('experiential', 'hello');
       const after = Date.now();
       expect(entry.createdAt).toBeGreaterThanOrEqual(before);
       expect(entry.createdAt).toBeLessThanOrEqual(after);
       expect(entry.updatedAt).toBe(entry.createdAt);
+      expect(entry.lastAccessed).toBe(entry.createdAt);
     });
 
-    it('passes through optional ttlDays, source, and sourceRef', () => {
+    it('passes through optional ttlDays and sourceRef', () => {
       const entry = createMemoryEntry('episodic', 'hello', ['t'], {
         ttlDays: 7,
-        source: 'user',
         sourceRef: 'step-1',
       });
       expect(entry.ttlDays).toBe(7);
-      expect(entry.source).toBe('user');
       expect(entry.sourceRef).toBe('step-1');
     });
   });
@@ -603,18 +621,18 @@ describe('JsonMemoryStore', () => {
       }
     });
 
-    it('never removes procedural entries even when threshold is exceeded', async () => {
+    it('never removes preference entries even when threshold is exceeded', async () => {
       const threshold = 1;
       store = new JsonMemoryStore(baseDir, threshold);
 
-      const procEntry = makeEntry({ kind: 'procedural' });
+      const procEntry = makeEntry({ kind: 'preference' });
       await store.save(procEntry);
       await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
       await store.save(makeExpiredEpisodic({ tags: [], accessCount: 0, ttlRenewals: 0 }));
 
       await store.evict();
 
-      const filePath = path.join(baseDir, 'procedural', `${procEntry.id}.json`);
+      const filePath = path.join(baseDir, 'preference', `${procEntry.id}.json`);
       await expect(fs.stat(filePath)).resolves.toBeTruthy();
     });
 

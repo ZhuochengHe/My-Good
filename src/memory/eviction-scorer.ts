@@ -30,27 +30,21 @@ const CONTENT_SPECIFICITY_MIN_LENGTH = 200;
 /** Weight applied when content exceeds CONTENT_SPECIFICITY_MIN_LENGTH. */
 const WEIGHT_CONTENT_SPECIFICITY = 0.1;
 
-/** Penalty applied when the entry survived multiple TTL periods without renewal. */
-const PENALTY_OLD_UNRENEWED = 0.1;
+/** Penalty applied when the entry has not been accessed for a long time. */
+const PENALTY_STALE_ACCESS = 0.1;
 
 /**
- * Returns true when the entry has survived at least two full TTL periods
- * without any renewal — a signal that the information has become stale.
- * Requires age > 2 × ttlDays to distinguish clearly expired from borderline.
+ * Threshold in milliseconds after which an entry is considered stale if not accessed.
+ * Default: 2 × TTL period. Entries not retrieved within this window after expiry
+ * are unlikely to be useful.
  *
  * @param entry - Memory entry to evaluate
  */
-function isOldUnrenewed(entry: MemoryEntry): boolean {
-  if ((entry.ttlRenewals ?? 0) > 0) {
-    return false;
-  }
-  if (entry.ttlDays === undefined || entry.ttlDays <= 0) {
-    return false;
-  }
-  const ageMs = Date.now() - entry.createdAt;
-  const ttlMs = entry.ttlDays * 86400000;
-  // "Survived multiple TTL periods" means age > 2 full TTL periods
-  return ageMs > 2 * ttlMs;
+function isStaleByLastAccessed(entry: MemoryEntry): boolean {
+  if (entry.lastAccessed === undefined) return false;
+  if (entry.ttlDays === undefined || entry.ttlDays <= 0) return false;
+  const staleCutoffMs = entry.ttlDays * 86400000 * 2;
+  return (Date.now() - entry.lastAccessed) > staleCutoffMs;
 }
 
 /**
@@ -61,7 +55,11 @@ function isOldUnrenewed(entry: MemoryEntry): boolean {
  *   +0.25 — accessCount >= 3
  *   +0.2  — ttlRenewals >= 1
  *   +0.1  — content.length > 200
- *   -0.1  — no renewals and entry is older than one TTL period (stale)
+ *   -0.1  — lastAccessed is older than 2 × TTL period (stale access pattern)
+ *
+ * updatedAt signals whether the content was recently modified (e.g. via merge during
+ * consolidation), but is not directly used in scoring — it informs the caller whether
+ * the entry has been refreshed since creation.
  *
  * The result is clamped to [0, 1].
  *
@@ -91,9 +89,10 @@ export function scoreMemory(entry: MemoryEntry): number {
     score += WEIGHT_CONTENT_SPECIFICITY;
   }
 
-  // Factor 5: age penalty (-0.1) for unrenewed old entries
-  if (isOldUnrenewed(entry)) {
-    score -= PENALTY_OLD_UNRENEWED;
+  // Factor 5: stale access penalty (-0.1)
+  // lastAccessed not updated for > 2 TTL periods → user never found this useful
+  if (isStaleByLastAccessed(entry)) {
+    score -= PENALTY_STALE_ACCESS;
   }
 
   // Clamp to [0, 1]

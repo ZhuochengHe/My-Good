@@ -17,8 +17,8 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["procedural", "experiential", "semantic", "episodic"],
-            "description": "Memory kind: procedural=how to treat user, experiential=how to do tasks, semantic=objective facts, episodic=time-bound events"
+            "enum": ["preference", "experiential", "semantic", "episodic"],
+            "description": "Memory kind: preference=how to treat user, experiential=how to do tasks, semantic=objective facts, episodic=time-bound events"
           },
           "tags": {
             "type": "array",
@@ -56,7 +56,7 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["procedural", "experiential", "semantic", "episodic"],
+            "enum": ["preference", "experiential", "semantic", "episodic"],
             "description": "Filter by kind"
           },
           "limit": {
@@ -122,7 +122,7 @@
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["procedural", "experiential", "semantic", "episodic"],
+            "enum": ["preference", "experiential", "semantic", "episodic"],
             "description": "Kind to list. Lists all kinds if omitted."
           }
         },

@@ -8,7 +8,7 @@
 import { randomUUID } from 'crypto';
 
 /** Valid memory kind values. */
-const VALID_KINDS = new Set(['procedural', 'experiential', 'semantic', 'episodic']);
+const VALID_KINDS = new Set(['preference', 'experiential', 'semantic', 'episodic']);
 
 /**
  * Creates a new MemoryEntry with auto-generated id and timestamps.
@@ -90,10 +90,6 @@ export async function save_memory(args, context) {
 
   if (typeof args.ttlDays === 'number') {
     options.ttlDays = args.ttlDays;
-  }
-
-  if (typeof args.source === 'string') {
-    options.source = args.source;
   }
 
   if (typeof args.sourceRef === 'string') {

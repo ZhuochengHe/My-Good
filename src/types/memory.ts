@@ -8,7 +8,7 @@ import { randomUUID } from 'crypto';
 /**
  * Memory kind identifier. Drives lifecycle policy and system-prompt injection.
  *
- * - procedural:   How to treat the user — preferences, response style, persistent behavioral rules.
+ * - preference:   How to treat the user — preferences, response style, persistent behavioral rules.
  *                 Always injected into the system prompt.
  * - experiential: How to do tasks effectively — workflows, patterns, project-specific techniques.
  *                 Always injected into the system prompt.
@@ -17,11 +17,11 @@ import { randomUUID } from 'crypto';
  * - episodic:     Time-bound events — active tasks, recent decisions, sprint goals, current bugs.
  *                 Retrieved on demand; may carry a ttlDays value.
  */
-export type MemoryKind = 'procedural' | 'experiential' | 'semantic' | 'episodic';
+export type MemoryKind = 'preference' | 'experiential' | 'semantic' | 'episodic';
 
 /** Valid kind values. */
 export const VALID_KINDS = new Set<string>([
-  'procedural',
+  'preference',
   'experiential',
   'semantic',
   'episodic',
@@ -53,10 +53,10 @@ export interface MemoryEntry {
   readonly updatedAt: number;
   /** Number of times this entry has been read. Influences eviction scoring. */
   readonly accessCount?: number;
+  /** Unix timestamp (ms) of the last retrieval via search(). Initialized to createdAt. */
+  readonly lastAccessed?: number;
   /** Number of times the TTL was explicitly refreshed. Influences eviction scoring. */
   readonly ttlRenewals?: number;
-  /** Origin of the memory: "user" | "agent" | "consolidation". */
-  readonly source?: string;
 }
 
 /**
@@ -79,8 +79,10 @@ export interface MemoryUpdateInput {
 export interface MemorySearchOptions {
   /** Filter to a specific kind. */
   readonly kind?: MemoryKind;
-  /** Embedding similarity search query string (embedded before search). */
+  /** Substring search fallback query string (used when queryEmbedding is absent). */
   readonly query?: string;
+  /** Pre-computed query embedding vector for cosine similarity search. */
+  readonly queryEmbedding?: readonly number[];
   /** Post-filter: return entries that have ANY of these tags. */
   readonly tags?: readonly string[];
   /** Maximum number of results to return. */
@@ -105,6 +107,8 @@ export interface EmbeddingIndex {
    * Results are sorted by score descending.
    */
   searchByCosine(query: number[], topK: number): Promise<Array<{ id: string; score: number }>>;
+  /** Removes all embeddings from the index. */
+  clear(): Promise<void>;
 }
 
 /**
@@ -153,10 +157,10 @@ export interface MemoryStore {
   search(options: MemorySearchOptions): Promise<readonly MemoryEntry[]>;
 
   /**
-   * Loads all non-expired procedural and experiential entries sorted by createdAt ascending.
+   * Loads all non-expired preference and experiential entries sorted by createdAt ascending.
    * Used to inject persistent context into the system prompt at session start.
    *
-   * @returns procedural + experiential entries in creation order
+   * @returns preference + experiential entries in creation order
    */
   loadForSystemPrompt(): Promise<readonly MemoryEntry[]>;
 }
@@ -167,14 +171,14 @@ export interface MemoryStore {
  * @param kind - The memory kind to assign
  * @param content - The factual text to remember
  * @param tags - Optional keyword tags
- * @param options - Optional ttlDays, source, and sourceRef fields
+ * @param options - Optional ttlDays and sourceRef fields
  * @returns A fully-populated MemoryEntry ready for storage
  */
 export function createMemoryEntry(
   kind: MemoryKind,
   content: string,
   tags: readonly string[] = [],
-  options: { ttlDays?: number; source?: string; sourceRef?: string } = {}
+  options: { ttlDays?: number; sourceRef?: string } = {}
 ): MemoryEntry {
   const now = Date.now();
   return {
@@ -184,6 +188,7 @@ export function createMemoryEntry(
     tags,
     createdAt: now,
     updatedAt: now,
+    lastAccessed: now,
     ...options,
   };
 }

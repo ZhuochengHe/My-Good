@@ -6,7 +6,7 @@
  *
  * Directory layout:
  *   baseDir/
- *     procedural/    ← always injected into system prompt
+ *     preference/    ← always injected into system prompt
  *     experiential/  ← always injected into system prompt
  *     semantic/      ← retrieved on demand
  *     episodic/      ← retrieved on demand; supports TTL eviction
@@ -46,8 +46,8 @@ const HIGH_VALUE_SCORE_THRESHOLD = 0.6;
 const UUID_V4_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Kinds that are always injected into the system prompt at session start. */
-const SYSTEM_PROMPT_KINDS = new Set<MemoryKind>(['procedural', 'experiential']);
+/** Max number of recent episodic entries to inject into the system prompt. */
+const SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT = 5;
 
 /**
  * Returns true if the string is a valid UUID v4.
@@ -359,38 +359,73 @@ export class JsonMemoryStore implements MemoryStore {
       results = results.filter(e => e.tags.some(t => tagSet.has(t)));
     }
 
-    // Text search: substring match on content.
-    // Embedding-based ranking (via embeddingIndex) requires a pre-computed query vector
-    // which is produced by the consolidation layer. Until that is wired in, fall back
-    // to case-insensitive substring search for all query requests.
-    if (options.query !== undefined && options.query.length > 0) {
-      const lower = options.query.toLowerCase();
-      results = results.filter(e => e.content.toLowerCase().includes(lower));
+    // Embedding search: if a pre-computed query vector is provided and an embeddingIndex
+    // is available, rank by cosine similarity and apply optional minScore threshold.
+    // Falls back to substring + recency when either condition is absent.
+    if (options.queryEmbedding !== undefined && this.embeddingIndex) {
+      const limit = options.limit !== undefined && options.limit > 0 ? options.limit : results.length;
+      const minScore = options.minScore ?? 0;
+      const idSet = new Set(results.map(e => e.id));
+      const ranked = await this.embeddingIndex.searchByCosine(
+        options.queryEmbedding as number[],
+        limit
+      );
+      const orderedIds = ranked
+        .filter(r => r.score >= minScore && idSet.has(r.id))
+        .map(r => r.id);
+      const byId = new Map(results.map(e => [e.id, e]));
+      results = orderedIds.map(id => byId.get(id)!).filter(Boolean);
+    } else {
+      // Substring search fallback
+      if (options.query !== undefined && options.query.length > 0) {
+        const lower = options.query.toLowerCase();
+        results = results.filter(e => e.content.toLowerCase().includes(lower));
+      }
+      results.sort((a, b) => b.updatedAt - a.updatedAt);
     }
-
-    results.sort((a, b) => b.updatedAt - a.updatedAt);
 
     if (options.limit !== undefined && options.limit > 0) {
       results = results.slice(0, options.limit);
     }
 
+    // Increment accessCount on every returned entry so the eviction scorer can
+    // distinguish frequently-read entries from stale ones.
+    const now = Date.now();
+    await Promise.all(
+      results.map(entry => {
+        const filePath = this.entryPath(entry.kind, entry.id);
+        const updated: MemoryEntry = {
+          ...entry,
+          accessCount: (entry.accessCount ?? 0) + 1,
+          lastAccessed: now,
+          // updatedAt is NOT changed here — content hasn't been modified
+        };
+        return this.atomicWrite(filePath, updated);
+      })
+    );
+
     return results;
   }
 
   /**
-   * Loads all non-expired procedural and experiential entries sorted by createdAt ascending.
-   * Used to inject persistent context into the system prompt at session start.
+   * Loads entries to inject into the system prompt at session start:
+   *   - All non-expired preference entries (sorted by createdAt ascending)
+   *   - Up to SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT non-expired episodic entries,
+   *     sorted by updatedAt descending (most recent first)
    *
-   * @returns procedural + experiential entries in creation order
+   * Other kinds (experiential, semantic) are retrieved on demand via search_memory.
    */
   async loadForSystemPrompt(): Promise<readonly MemoryEntry[]> {
     await this.ensureDirs();
-    const entries: MemoryEntry[] = [];
-    for (const kind of SYSTEM_PROMPT_KINDS) {
-      const kindEntries = await this.scanKind(kind, true);
-      entries.push(...kindEntries);
-    }
-    return entries.slice().sort((a, b) => a.createdAt - b.createdAt);
+
+    const preferenceEntries = await this.scanKind('preference', true);
+    preferenceEntries.sort((a, b) => a.createdAt - b.createdAt);
+
+    const episodicEntries = await this.scanKind('episodic', true);
+    episodicEntries.sort((a, b) => b.updatedAt - a.updatedAt);
+    const recentEpisodic = episodicEntries.slice(0, SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT);
+
+    return [...preferenceEntries, ...recentEpisodic];
   }
 
   /**
@@ -411,7 +446,7 @@ export class JsonMemoryStore implements MemoryStore {
    *   - Score >= 0.6 (high value): sets pendingKB: true on the entry and re-writes it.
    *   - Score < 0.6 (low value): deletes the entry file from disk.
    *
-   * procedural, experiential, and semantic entries are never touched.
+   * preference, experiential, and semantic entries are never touched.
    * Non-expired episodic entries are never touched.
    */
   async evict(): Promise<void> {

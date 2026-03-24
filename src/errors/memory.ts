@@ -64,7 +64,7 @@ export class MemoryInvalidKindError extends MemoryError {
   constructor(kind: unknown) {
     super(
       'MEMORY_003',
-      `Invalid memory kind: "${String(kind)}". Must be one of: procedural, experiential, semantic, episodic`
+      `Invalid memory kind: "${String(kind)}". Must be one of: preference, experiential, semantic, episodic`
     );
     this.name = 'MemoryInvalidKindError';
     this.kind = kind;

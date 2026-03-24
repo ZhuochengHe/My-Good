@@ -26,7 +26,8 @@ import type { ModelProvider } from '../types/providers.js';
 import { getProvider } from '../providers/registry.js';
 import { ColoredOutput } from './colored-output.js';
 import type { OutputAdapter } from './output-adapter.js';
-import { JsonMemoryStore } from '../memory/index.js';
+import { JsonMemoryStore, JsonEmbeddingIndex } from '../memory/index.js';
+import type { ConsolidationConfig } from '../memory/index.js';
 
 /**
  * Bootstrap options.
@@ -136,9 +137,10 @@ export async function bootstrap(
     }
   }
 
-  // Step 8: Create MemoryStore backed by ~/.my-agent/memory
+  // Step 8: Create MemoryStore + EmbeddingIndex backed by ~/.my-agent/memory
   const memoryDir = join(homedir(), '.my-agent', 'memory');
-  const memoryStore = new JsonMemoryStore(memoryDir);
+  const embeddingIndex = new JsonEmbeddingIndex(memoryDir);
+  const memoryStore = new JsonMemoryStore(memoryDir, undefined, embeddingIndex);
 
   // Step 9 (formerly 8): Create ToolExecutor with memoryStore and register plugin tools
   // Use caller-supplied confirmation callback when provided (e.g. TUI-aware version),
@@ -170,6 +172,14 @@ export async function bootstrap(
   }
 
   // Step 10 (formerly 9): Create ExecutionLoop with tools, working directory, session store, and memory store
+  // Derive OpenAI API key for consolidation: prefer config, fall back to env var.
+  const openAiKey =
+    config.providers['openai']?.apiKey ??
+    process.env['OPENAI_API_KEY'] ??
+    '';
+  const consolidationConfig: ConsolidationConfig | undefined =
+    openAiKey ? { apiKey: openAiKey } : undefined;
+
   const executionLoop = new ExecutionLoop(
     {
       id: config.agent.id,
@@ -182,7 +192,9 @@ export async function bootstrap(
     toolDefinitions,
     workingDirectory,
     sessionStore,
-    memoryStore
+    memoryStore,
+    consolidationConfig,
+    embeddingIndex
   );
 
   // Step 11 (formerly 10): Create tool call bridge

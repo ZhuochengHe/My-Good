@@ -1154,7 +1154,7 @@ describe('ExecutionLoop', () => {
 
   describe('Memory Injection', () => {
     /** Helper to create a MemoryEntry stub with the new kind-based API. */
-    function makeEntry(kind: 'procedural' | 'experiential' | 'semantic' | 'episodic', content: string): MemoryEntry {
+    function makeEntry(kind: 'preference' | 'experiential' | 'semantic' | 'episodic', content: string): MemoryEntry {
       return {
         id: `entry-${content}`,
         kind,
@@ -1179,8 +1179,8 @@ describe('ExecutionLoop', () => {
       };
     }
 
-    it('run() includes procedural entries in system prompt', async () => {
-      const entries = [makeEntry('procedural', 'My name is Agent Alpha')];
+    it('run() includes preference entries in system prompt', async () => {
+      const entries = [makeEntry('preference', 'My name is Agent Alpha')];
       const memoryStore = createMemoryStore(entries);
 
       let capturedSystemPrompt = '';
@@ -1271,8 +1271,8 @@ describe('ExecutionLoop', () => {
       expect(memoryStore.loadForSystemPrompt).toHaveBeenCalledTimes(1);
     });
 
-    it('stream() includes procedural entries in system prompt', async () => {
-      const entries = [makeEntry('procedural', 'Streaming identity fact')];
+    it('stream() includes preference entries in system prompt', async () => {
+      const entries = [makeEntry('preference', 'Streaming identity fact')];
       const memoryStore = createMemoryStore(entries);
 
       let capturedSystemPrompt = '';

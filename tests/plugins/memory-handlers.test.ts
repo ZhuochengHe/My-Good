@@ -24,7 +24,7 @@ let list_memories: any;
 function makeMockEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
     id: 'abc12345-0000-4000-8000-000000000001',
-    kind: 'procedural',
+    kind: 'preference',
     content: 'Test memory content',
     tags: ['test'],
     createdAt: 1700000000000,
@@ -72,25 +72,25 @@ describe('memory plugin handlers', () => {
   describe('save_memory', () => {
     it('saves entry and returns formatted string with id and kind', async () => {
       const result = await save_memory(
-        { content: 'I prefer dark mode', kind: 'procedural', tags: ['preferences'] },
+        { content: 'I prefer dark mode', kind: 'preference', tags: ['preferences'] },
         mockContext
       );
 
       expect(mockMemoryStore.save).toHaveBeenCalledOnce();
       expect(result.output).toMatch(/Memory saved/);
-      expect(result.output).toMatch(/kind: procedural/);
+      expect(result.output).toMatch(/kind: preference/);
       expect(result.output).toMatch(/id:/);
     });
 
     it('saves entry without optional tags', async () => {
       const result = await save_memory(
-        { content: 'Core behavioral rule', kind: 'procedural' },
+        { content: 'Core behavioral rule', kind: 'preference' },
         mockContext
       );
 
       expect(mockMemoryStore.save).toHaveBeenCalledOnce();
       expect(result.output).toMatch(/Memory saved/);
-      expect(result.output).toMatch(/kind: procedural/);
+      expect(result.output).toMatch(/kind: preference/);
     });
 
     it('passes ttlDays when provided', async () => {
@@ -106,7 +106,7 @@ describe('memory plugin handlers', () => {
 
     it('does not set ttlDays when not provided', async () => {
       await save_memory(
-        { content: 'Permanent entry', kind: 'procedural' },
+        { content: 'Permanent entry', kind: 'preference' },
         mockContext
       );
 
@@ -114,19 +114,10 @@ describe('memory plugin handlers', () => {
       expect(savedEntry.ttlDays).toBeUndefined();
     });
 
-    it('passes source field when provided', async () => {
-      await save_memory(
-        { content: 'User said hello', kind: 'semantic', source: 'user' },
-        mockContext
-      );
-
-      const savedEntry = mockMemoryStore.save.mock.calls[0]?.[0];
-      expect(savedEntry.source).toBe('user');
-    });
 
     it('returns error string when content is missing', async () => {
       const result = await save_memory(
-        { kind: 'procedural' },
+        { kind: 'preference' },
         mockContext
       );
 
@@ -136,7 +127,7 @@ describe('memory plugin handlers', () => {
 
     it('returns error string when content is empty string', async () => {
       const result = await save_memory(
-        { content: '', kind: 'procedural' },
+        { content: '', kind: 'preference' },
         mockContext
       );
 
@@ -156,7 +147,7 @@ describe('memory plugin handlers', () => {
 
     it('returns "Memory store not available." when context.memoryStore is undefined', async () => {
       const result = await save_memory(
-        { content: 'test', kind: 'procedural' },
+        { content: 'test', kind: 'preference' },
         { ...mockContext, memoryStore: undefined }
       );
 
@@ -172,7 +163,7 @@ describe('memory plugin handlers', () => {
     it('returns formatted results when entries are found', async () => {
       const entry = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000001',
-        kind: 'procedural',
+        kind: 'preference',
         content: 'I prefer dark mode',
         tags: ['preferences', 'ui'],
       });
@@ -187,7 +178,7 @@ describe('memory plugin handlers', () => {
         expect.objectContaining({ query: 'dark mode' })
       );
       expect(result.output).toContain('abc12345-0000-4000-8000-000000000001');
-      expect(result.output).toContain('procedural');
+      expect(result.output).toContain('preference');
       expect(result.output).toContain('I prefer dark mode');
     });
 
@@ -235,7 +226,7 @@ describe('memory plugin handlers', () => {
       const e1 = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000001',
         content: 'First memory',
-        kind: 'procedural',
+        kind: 'preference',
         tags: [],
       });
       const e2 = makeMockEntry({
@@ -408,16 +399,16 @@ describe('memory plugin handlers', () => {
     it('returns formatted entries when memories exist', async () => {
       const entry = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000001',
-        kind: 'procedural',
+        kind: 'preference',
         content: 'Core behavioral rule',
         tags: ['behavior'],
       });
       mockMemoryStore.search.mockResolvedValue([entry]);
 
-      const result = await list_memories({ kind: 'procedural' }, mockContext);
+      const result = await list_memories({ kind: 'preference' }, mockContext);
 
       expect(result.output).toContain('abc12345-0000-4000-8000-000000000001');
-      expect(result.output).toContain('procedural');
+      expect(result.output).toContain('preference');
       expect(result.output).toContain('Core behavioral rule');
     });
 
@@ -430,7 +421,7 @@ describe('memory plugin handlers', () => {
     });
 
     it('lists all kinds when kind is omitted', async () => {
-      const e1 = makeMockEntry({ kind: 'procedural', content: 'Procedural entry' });
+      const e1 = makeMockEntry({ kind: 'preference', content: 'Procedural entry' });
       const e2 = makeMockEntry({
         id: 'abc12345-0000-4000-8000-000000000002',
         kind: 'episodic',
@@ -446,7 +437,7 @@ describe('memory plugin handlers', () => {
 
     it('returns "Memory store not available." when context.memoryStore is undefined', async () => {
       const result = await list_memories(
-        { kind: 'procedural' },
+        { kind: 'preference' },
         { ...mockContext, memoryStore: undefined }
       );
 

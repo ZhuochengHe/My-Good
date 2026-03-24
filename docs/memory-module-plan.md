@@ -18,16 +18,16 @@
 
 `kind` replaces the old `layer 1/2/3` distinction. It is semantically meaningful and drives lifecycle policy automatically.
 
-| Kind | What it stores | TTL | System prompt injection | Example |
-|------|---------------|-----|------------------------|---------|
-| `procedural` | How to treat the user — preferences, response style, persistent behavioral rules | None (update when changed) | Yes — injected at every session start | "User prefers concise answers without bullet points" |
-| `experiential` | How to do tasks effectively — workflows, patterns, project-specific techniques learned from past work | None (domain-scoped; degrades when project changes) | Yes — injected at every session start | "To debug this project: run `npm run typecheck` before looking at test output" |
-| `semantic` | Objective facts — project architecture, tech stack decisions, domain knowledge | None (overwritten when superseded) | No — retrieved on demand | "phoenix project uses hexagonal architecture with PostgreSQL 15" |
-| `episodic` | Time-bound events — active tasks, recent decisions, sprint goals, current bugs | Yes — set by consolidation LLM (7–90 days) | No — retrieved on demand | "User is currently building the memory consolidation pipeline" |
+| Kind| What it stores | TTL |System prompt injection  | Example |
+| -- | -- | -- | -- | -- |
+| `preference`| How to treat the user — preferences, response style, persistent behavioral rules  | None (update when changed)  | Yes — all entries injected at bootstrap | "User prefers concise answers without bullet points" |
+| `experiential` | How to do tasks effectively — workflows, patterns, project-specific techniques learned from past work | None (domain-scoped; degrades when project changes) | No — retrieved on demand | "To debug this project: run `npm run typecheck` before looking at test output" |
+| `semantic` | Objective facts — project architecture, tech stack decisions, domain knowledge | None (overwritten when superseded) | No — retrieved on demand | "phoenix project uses hexagonal architecture with PostgreSQL 15"   |
+| `episodic` | Time-bound events — active tasks, recent decisions, sprint goals, current bugs  | Yes — set by consolidation LLM (7–90 days) | Partial — top 5 most recently updated entries injected at bootstrap | "User is currently building the memory consolidation pipeline" |
 
 **Classification rule for consolidation LLM:**
 > Ask: will this memory be useful 6 months from now?
-> - Yes, about how the user wants to be treated → `procedural`
+> - Yes, about how the user wants to be treated → `preference`
 > - Yes, about how to do a category of work → `experiential`
 > - Yes, objective fact about a project or domain → `semantic`
 > - No, or depends on current context → `episodic` (set appropriate ttlDays)
@@ -37,7 +37,7 @@
 ## Type Definitions (`src/types/memory.ts`)
 
 ```typescript
-export type MemoryKind = 'episodic' | 'semantic' | 'procedural' | 'experiential';
+export type MemoryKind = 'preference' | 'experiential' | 'semantic' | 'episodic';
 
 export interface MemoryEntry {
   readonly id: string;                // UUID v4
@@ -49,10 +49,10 @@ export interface MemoryEntry {
   readonly sourceRef?: string;        // Opaque reference to origin (e.g. MemBench step ID)
   readonly ttlDays?: number;          // episodic only; set by consolidation LLM
   readonly createdAt: number;         // Unix ms
-  readonly updatedAt: number;         // Unix ms
+  readonly updatedAt: number;         // Unix ms; only updated when content changes
   readonly accessCount?: number;      // Incremented on every search hit; used in eviction scoring
+  readonly lastAccessed?: number;     // Unix ms of last search retrieval; initialized to createdAt
   readonly ttlRenewals?: number;      // Number of explicit TTL refreshes; used in eviction scoring
-  readonly source?: string;           // "user" | "agent" | "consolidation"
 }
 ```
 
@@ -72,7 +72,7 @@ export interface MemoryEntry {
 ~/.my-agent/memory/
   episodic/        ← <uuid>.json per entry
   semantic/        ← <uuid>.json per entry
-  procedural/      ← <uuid>.json per entry
+  preference/      ← <uuid>.json per entry
   experiential/    ← <uuid>.json per entry
   embeddings.json  ← { [id: string]: number[] } — flat embedding index
 ```
@@ -135,7 +135,7 @@ export interface MemoryStore {
   update(id: string, input: MemoryUpdateInput): Promise<MemoryEntry>;
   delete(id: string): Promise<void>;
   search(options: MemorySearchOptions): Promise<readonly MemoryEntry[]>;
-  loadForSystemPrompt(): Promise<readonly MemoryEntry[]>; // procedural + experiential, sorted by createdAt
+  loadForSystemPrompt(): Promise<readonly MemoryEntry[]>; // all preference (createdAt asc) + top 5 episodic (updatedAt desc)
 }
 ```
 
@@ -212,12 +212,13 @@ Called once before the agent loop begins (in `execution-loop.ts`):
 
 ```typescript
 const injected = await memoryStore.loadForSystemPrompt();
-// Returns all procedural + experiential entries, sorted by createdAt asc
-// Injected as a "## What I know about you" section in the system prompt
+// Returns: all preference entries (sorted by createdAt asc)
+//        + top 5 most recently updated episodic entries
 ```
 
-Only `procedural` and `experiential` entries are injected — they are stable and always relevant.
-`semantic` and `episodic` entries are retrieved on demand.
+`preference` entries are always injected (persistent behavioral rules).
+The top 5 most recently updated `episodic` entries are also injected for immediate session context.
+`experiential` and `semantic` entries are never injected — only retrieved on demand via `search_memory`.
 
 ### On-demand search
 
@@ -228,17 +229,17 @@ Search also increments `accessCount` on returned entries, feeding the eviction s
 
 ---
 
-## Eviction Policy (L3 / episodic only)
+## Eviction Policy (episodic only)
 
 Runs at `initialize()` (startup sweep). Episodic entries past their TTL are scored:
 
-| Factor | Signal | Weight |
-|--------|--------|--------|
-| `accessCount` | Read frequently → valuable | High |
-| Tags | `architecture`, `decision`, `convention` → keep; `sprint-goal`, `active-bug` → drop | High |
-| `ttlRenewals` | Explicitly refreshed → strong keep signal | Medium |
-| Content length | Longer, more detailed → more valuable | Low |
-| Age at expiry | Survived multiple TTL periods without renewal → less relevant | Low (negative) |
+| Factor             | Signal                                                                               | Weight         |
+| ------------------ | ------------------------------------------------------------------------------------ | -------------- |
+| `accessCount`      | Read frequently → valuable                                                           | High (+0.25)   |
+| Tags               | `architecture`, `decision`, `convention` → keep; `sprint-goal`, `active-bug` → drop | High (+0.4)    |
+| `ttlRenewals`      | Explicitly refreshed → strong keep signal                                            | Medium (+0.2)  |
+| Content length     | Longer, more detailed → more valuable                                                | Low (+0.1)     |
+| `lastAccessed` age | Not retrieved within 2× ttlDays after expiry → user never found this useful          | Low (−0.1)     |
 
 Score ≥ 0.6 → promote: mark `pendingKB: true`, keep on disk for future Knowledge Base ingestion.
 Score < 0.6 → delete from disk.
@@ -288,7 +289,7 @@ src/cli/bootstrap.ts             # Construct JsonMemoryStore + wire providers fo
 - Tests: set/get/delete/search, concurrent writes, empty index
 
 ### Phase 3 — JsonMemoryStore (updated)
-- Replace `layer{1,2,3}/` directories with `episodic/`, `semantic/`, `procedural/`, `experiential/`
+- Replace `layer{1,2,3}/` directories with `episodic/`, `semantic/`, `preference/`, `experiential/`
 - Integrate `EmbeddingIndex`: `save()` stores embedding if provided, `delete()` removes from index
 - Update `search()`: embed query → cosine search → tag post-filter
 - Implement `loadForSystemPrompt()`
@@ -302,7 +303,7 @@ src/cli/bootstrap.ts             # Construct JsonMemoryStore + wire providers fo
 ### Phase 5 — Execution Loop Integration
 - `loadForSystemPrompt()` injection at session start
 - Session-end consolidation hook (non-blocking, errors logged but not thrown)
-- Tests: system prompt contains procedural/experiential, consolidation called on session end
+- Tests: system prompt contains preference + recent episodic entries, consolidation called on session end
 
 ### Phase 6 — Bootstrap Wiring
 - Wire `OpenAIProvider` client for embedding calls
@@ -321,7 +322,7 @@ embedding similarity alone. Implementation: add `expandRelated(ids, depth)` to `
 ### Knowledge Base (Phase N)
 High-scoring expired episodic entries (marked `pendingKB: true`) are ingested into a
 separate append-only JSONL knowledge base with full-text + embedding search. Distinct from
-L1/L2/L3 because it stores durable project/domain facts extracted from many sessions.
+the four memory kinds because it stores durable project/domain facts extracted from many sessions.
 
 ### HNSW index (Phase N)
 When entry count exceeds ~10k, replace `JsonEmbeddingIndex` with an HNSW implementation
