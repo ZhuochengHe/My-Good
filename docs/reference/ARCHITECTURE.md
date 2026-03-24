@@ -10,7 +10,7 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
                 SessionStore (JSONL) + MemoryStore (JSON files)
 ```
 
-**Stack:** TypeScript (strict, ESM) · Node.js ≥18 · Vitest · Commander.js · chalk · ora
+**Stack:** TypeScript (strict, ESM) · Node.js ≥18 · Vitest · Commander.js · chalk · ora · js-tiktoken
 
 ## Implemented Stages
 
@@ -23,9 +23,10 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
 | 5 | JsonlSessionStore (atomic, hardened), SessionManager (lifecycle, AI tags/descriptions, search) |
 | 6 | Full CLI (Commander.js) — chat, session, plugin, config, settings, model commands |
 | 7 | Event persistence — `turn_metadata` + `error_log` records in session JSONL; `SessionStoreWithTrace` |
-| 8 | Three-layer persistent memory module with TTL enforcement and eviction scoring |
+| 8 | Kind-based persistent memory module — 4 kinds, TTL, eviction scoring, embedding index |
+| 9 | LLM consolidation pipeline — session-end extraction, embedding dedup, cosine merge |
 
-**Test coverage:** 1275+ tests across 68 files, ≥80% coverage
+**Test coverage:** 1435+ tests across 55 files, ≥80% coverage
 
 ## Source Layout
 
@@ -36,7 +37,7 @@ src/
 ├── session/     # JsonlSessionStore, SessionManager
 ├── providers/   # Anthropic + OpenAI SDK clients; registry-based discovery
 ├── plugins/     # PluginManager, ToolExecutor, manifest validation
-├── memory/      # Three-layer JsonMemoryStore, eviction scorer, index
+├── memory/      # JsonMemoryStore (kind-based), EmbeddingIndex, consolidation pipeline, eviction scorer
 ├── config/      # YAML loader + Zod validation (config.yaml, settings.yaml)
 ├── events/      # EventEmitter, subscribers (logging, persistence)
 ├── errors/      # Structured error classes per domain (memory, agent, session, etc.)
@@ -61,10 +62,12 @@ plugins/         # Default plugins (plugin.json manifests)
 | `src/providers/anthropic.ts` | Anthropic SDK client |
 | `src/providers/openai.ts` | OpenAI SDK client (also used for Kimi) |
 | `src/providers/registry.ts` | Provider registry from `providers.json` |
-| `src/memory/memory-store.ts` | JsonMemoryStore — three-layer file-backed store |
-| `src/memory/eviction-scorer.ts` | Weighted scoring for L3 eviction decisions |
-| `src/types/memory.ts` | MemoryEntry, MemoryStore interfaces, createMemoryEntry |
-| `src/errors/memory.ts` | Memory error hierarchy (MEMORY_001–006) |
+| `src/memory/memory-store.ts` | JsonMemoryStore — kind-based file-backed store with embedding search |
+| `src/memory/embedding-index.ts` | JsonEmbeddingIndex — flat embeddings.json with cosine search and write queue |
+| `src/memory/consolidation.ts` | Session-end LLM extraction pipeline (gpt-4o-mini + text-embedding-3-small) |
+| `src/memory/eviction-scorer.ts` | Weighted scoring for episodic eviction decisions |
+| `src/types/memory.ts` | MemoryEntry, MemoryKind, MemoryStore, EmbeddingIndex interfaces |
+| `src/errors/memory.ts` | Memory error hierarchy (MEMORY_001–005) |
 | `src/cli/bootstrap.ts` | Dependency wiring — config → session → plugins → memory → loop |
 | `src/cli/commands/chat.ts` | Interactive REPL and single-message mode |
 | `src/cli/colored-output.ts` | Chalk + ora output adapter (active) |
@@ -80,75 +83,108 @@ plugins/         # Default plugins (plugin.json manifests)
 5. Initialize `JsonlSessionStore` at `~/.my-agent/sessions/`
 6. Instantiate provider (Anthropic or OpenAI) from registry
 7. Load plugins from directories
-8. Initialize `JsonMemoryStore` at `~/.my-agent/memory/`
-9. Create `ToolExecutor` with memory store
-10. Create `ExecutionLoop` with tools, working dir, session store, memory store
-11. Create tool-call bridge
-12. Initialize `SessionManager` with `ExecutionLoop`
-13. Create `ColoredOutput` adapter
-14. Return `BootstrapResult`
+8. Create `JsonEmbeddingIndex` at `~/.my-agent/memory/embeddings.json`
+9. Initialize `JsonMemoryStore` at `~/.my-agent/memory/` with embedding index
+10. Build `ConsolidationConfig` from OpenAI provider API key
+11. Create `ToolExecutor` with memory store
+12. Create `ExecutionLoop` with tools, working dir, session store, memory store, consolidation config, embedding index
+13. Create tool-call bridge
+14. Initialize `SessionManager` with `ExecutionLoop`
+15. Create `ColoredOutput` adapter
+16. Return `BootstrapResult`
 
-## Memory Module (Stage 8)
+## Memory Module (Stages 8–9)
 
-### Three-Layer Architecture
+### Kind-Based Architecture
 
-| Layer | Purpose | TTL | Location |
+| Kind | Purpose | TTL | System prompt injection |
 |---|---|---|---|
-| L1 | Always-loaded core memories | None | `~/.my-agent/memory/layer1/<uuid>.json` |
-| L2 | Persistent on-demand lookup | Optional (`expiresAt`) | `~/.my-agent/memory/layer2/<uuid>.json` |
-| L3 | Ephemeral / session-scoped | Required (`ttlDays`) | `~/.my-agent/memory/layer3/<uuid>.json` |
+| `preference` | How to treat the user — response style, behavioral rules | None | Always injected (all entries, sorted by createdAt) |
+| `experiential` | How to do tasks — workflows, patterns, project techniques | None | On-demand via `search_memory` |
+| `semantic` | Objective facts — architecture, tech stack, domain knowledge | None | On-demand via `search_memory` |
+| `episodic` | Time-bound context — active tasks, decisions, current bugs | Yes (`ttlDays`) | Top 5 most recently updated entries injected |
+
+Storage layout: `~/.my-agent/memory/<kind>/<uuid>.json` + `embeddings.json`
 
 ### MemoryEntry Schema
 
 ```typescript
 interface MemoryEntry {
-  readonly id: string;           // UUID
-  readonly layer: 1 | 2 | 3;
-  readonly content: string;
-  readonly tags: readonly string[];
-  readonly source: string;       // origin identifier
-  readonly createdAt: number;    // Unix ms
-  readonly updatedAt: number;
-  readonly expiresAt?: number;   // absolute expiry (L2)
-  readonly ttlDays?: number;     // relative expiry in days (L3)
-  readonly accessCount: number;  // read tracking for eviction scoring
-  readonly ttlRenewals: number;  // TTL refresh count for eviction scoring
-  readonly pendingKB?: boolean;  // marked for KB promotion by eviction sweep
+  readonly id: string;                    // UUID v4
+  readonly kind: MemoryKind;             // drives lifecycle and injection policy
+  readonly content: string;              // factual text, max 10,000 chars
+  readonly tags: readonly string[];      // free-form, LLM-generated
+  readonly embedding?: readonly number[]; // text-embedding-3-small (1536-dim)
+  readonly relatedTo?: readonly string[]; // IDs of related entries (stub, not traversed)
+  readonly sourceRef?: string;           // opaque origin reference (e.g. MemBench step ID)
+  readonly ttlDays?: number;             // episodic only; set by consolidation LLM
+  readonly createdAt: number;            // Unix ms
+  readonly updatedAt: number;            // Unix ms; only updated when content changes
+  readonly accessCount?: number;         // incremented on every search hit
+  readonly lastAccessed?: number;        // Unix ms of last search retrieval
+  readonly ttlRenewals?: number;         // explicit TTL refreshes; used in eviction scoring
+  readonly pendingKB?: boolean;          // marked for KB promotion by eviction sweep
 }
 ```
 
-### TTL Enforcement
+### Retrieval
 
-- **`expiresAt`** (absolute): checked at read-time; throws `MemoryExpiredError` — entry stays on disk, must be evicted explicitly
-- **`ttlDays`** (relative): checked at read-time; returns `null` silently — entry stays on disk for eviction sweep to handle
-- L1 and L2 entries never expire via `ttlDays` even if the field is set
+`search()` accepts a pre-computed `queryEmbedding` vector for cosine ranking, or falls back
+to case-insensitive substring match + recency sort when no embedding is provided.
+`search()` increments `accessCount` and updates `lastAccessed` on every returned entry
+(but does NOT change `updatedAt` — that only changes on content edits).
+
+### Consolidation Pipeline
+
+Runs fire-and-forget after every session ends (`agent_end`). Failures are silently swallowed.
+
+```
+session messages
+    │
+    ▼  sliding window (CHUNK_MAX_TOKENS=3000, CHUNK_OVERLAP_TOKENS=500, token-exact via js-tiktoken)
+    ▼  for each chunk:
+extractMemories() ── gpt-4o-mini structured output ──► [{content, kind, tags, ttlDays}]
+    │
+    ▼  for each candidate:
+embedText() ── text-embedding-3-small ──► number[]
+    │
+    ▼  against EmbeddingIndex:
+cosine > 0.9   → merge: LLM call → update existing entry
+0.8–0.9        → save new entry + relatedTo: [existing.id]
+≤ 0.8          → save new entry
+```
 
 ### Eviction Sweep
 
-Runs at `initialize()` and when expired L3 count exceeds a configurable threshold (default: 100 entries).
+Runs at `initialize()` on expired episodic entries when count exceeds threshold (default: 100).
 
 Scoring factors (weighted sum → 0.0–1.0):
 
 | Factor | Weight | Condition |
 |---|---|---|
-| High-value tags (`important`, `critical`, `permanent`) | +0.4 | tag match |
-| High access | +0.25 | `accessCount >= 3` |
-| Renewed TTL | +0.2 | `ttlRenewals > 0` |
+| High-value tags (`architecture`, `decision`, `convention`) | +0.4 | tag match |
+| High access frequency | +0.25 | `accessCount >= 3` |
+| Renewed TTL | +0.2 | `ttlRenewals >= 1` |
 | Substantial content | +0.1 | `content.length > 200` |
-| Old and unrenewed | -0.1 | age > 7 days && `ttlRenewals === 0` |
+| Stale access | −0.1 | `lastAccessed` older than 2× `ttlDays` |
 
-Decision: score ≥ 0.6 → set `pendingKB = true` (retain for KB promotion); score < 0.6 → delete file.
+Score ≥ 0.6 → set `pendingKB: true` (retain for future KB ingestion); score < 0.6 → delete.
+
+### EmbeddingIndex
+
+`JsonEmbeddingIndex` stores a flat `{ id → number[] }` map in `embeddings.json`.
+All write operations (`set`, `delete`, `clear`) are serialized via a promise-chain write queue
+to prevent concurrent rename races on `embeddings.json.tmp`.
 
 ### Memory Error Codes
 
 | Code | Class | Meaning |
 |---|---|---|
 | MEMORY_001 | `MemoryNotFoundError` | Entry does not exist |
-| MEMORY_002 | `MemoryExpiredError` | `expiresAt` exceeded |
-| MEMORY_003 | `MemoryStorageError` | File I/O failure |
-| MEMORY_004 | `MemoryValidationError` | Invalid entry data |
-| MEMORY_005 | `MemoryLayerError` | Wrong layer operation |
-| MEMORY_006 | `MemoryCapacityError` | Store capacity exceeded |
+| MEMORY_002 | `MemoryInvalidIdError` | Non-UUID ID supplied |
+| MEMORY_003 | `MemoryInvalidKindError` | Unknown kind value |
+| MEMORY_004 | `MemoryInvalidContentError` | Empty or oversized content |
+| MEMORY_005 | `MemoryStorageError` | File I/O failure |
 
 ## Key Design Decisions
 
@@ -160,7 +196,9 @@ Decision: score ≥ 0.6 → set `pendingKB = true` (retain for KB promotion); sc
 | Plugin system | `plugin.json` manifests with JSON Schema tool definitions |
 | Session storage | Append-only JSONL — human-readable, corruption-resistant |
 | Event persistence | `turn_metadata` + `error_log` records in session JSONL |
-| Memory storage | Per-entry JSON files, atomic writes (tmp + rename), mode 0o600 |
+| Memory storage | Per-entry JSON files, atomic writes (tmp + rename), mode 0o600; embeddings in flat JSON map |
+| Memory consolidation | Session-end LLM extraction (gpt-4o-mini) + embedding dedup (text-embedding-3-small) |
+| Token counting | `js-tiktoken` (cl100k_base) for exact chunking across languages and emoji |
 | Output adapter | `OutputAdapter` interface — swap `PlainTextOutput` ↔ `ColoredOutput` |
 | Config | `~/.my-agent/config.yaml` (credentials) + `settings.yaml` (behavior) |
 | Immutability | `readonly` on all message/session/memory types |
@@ -237,12 +275,21 @@ interface SessionStoreWithTrace extends SessionStore {
 
 interface MemoryStore {
   get(id: string): Promise<MemoryEntry | null>;
-  set(entry: MemoryEntry): Promise<void>;
+  save(entry: MemoryEntry): Promise<void>;
+  update(id: string, input: MemoryUpdateInput): Promise<MemoryEntry>;
   delete(id: string): Promise<void>;
-  scanLayer(layer: 1 | 2 | 3): Promise<readonly MemoryEntry[]>;
-  search(query: string, layer?: 1 | 2 | 3): Promise<readonly MemoryEntry[]>;
+  search(options: MemorySearchOptions): Promise<readonly MemoryEntry[]>;
+  loadForSystemPrompt(): Promise<readonly MemoryEntry[]>; // preference + top-5 episodic
   initialize(): Promise<void>;
   evict(): Promise<void>;
+}
+
+interface EmbeddingIndex {
+  get(id: string): number[] | null;
+  set(id: string, embedding: number[]): Promise<void>;
+  delete(id: string): Promise<void>;
+  searchByCosine(query: number[], topK: number): Promise<Array<{ id: string; score: number }>>;
+  clear(): Promise<void>;
 }
 
 interface OutputAdapter {
@@ -273,7 +320,7 @@ interface PluginManifest {
 | Tool execution error | Return error to model as tool result |
 | Session corrupted | Backup file, create new session |
 | Config invalid | Abort startup with clear message |
-| Memory expiry (`expiresAt`) | Throw `MemoryExpiredError` — entry retained on disk |
-| Memory expiry (`ttlDays`) | Return `null` silently — eviction sweep handles cleanup |
+| Memory TTL expiry | Return `null` silently — eviction sweep handles cleanup at startup |
+| Consolidation failure | Silently swallowed (`.catch(() => undefined)`) — never crashes a session |
 
-Error codes: `AGENT_001`–`007`, `PROVIDER_001`–`007`, `PLUGIN_001`–`006`, `SESSION_001`–`007`, `MEMORY_001`–`006`
+Error codes: `AGENT_001`–`007`, `PROVIDER_001`–`007`, `PLUGIN_001`–`006`, `SESSION_001`–`007`, `MEMORY_001`–`005`

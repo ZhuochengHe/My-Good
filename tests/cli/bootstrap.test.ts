@@ -236,7 +236,7 @@ session:
   describe('Memory Module Integration (Phase 6)', () => {
     it('creates JsonMemoryStore with ~/.my-agent/memory path', async () => {
       const { JsonMemoryStore } = await import('../../src/memory/index.js');
-      const constructorSpy = vi.spyOn(JsonMemoryStore.prototype, 'loadLayer1');
+      const constructorSpy = vi.spyOn(JsonMemoryStore.prototype, 'loadForSystemPrompt');
 
       await bootstrap({ configPath });
 
@@ -275,9 +275,8 @@ session:
 
     it('passes memoryStore to ExecutionLoop constructor', async () => {
       // Verify that bootstrap completes successfully with memoryStore wired to ExecutionLoop.
-      // The ExecutionLoop.buildSystemPrompt() calls memoryStore.loadLayer1() and
-      // memoryStore.search({layer: 2}) when running — if memoryStore is undefined the
-      // sections are silently skipped, but if it IS wired the store is invoked.
+      // The ExecutionLoop.buildSystemPrompt() calls memoryStore.loadForSystemPrompt() when
+      // running — if memoryStore is undefined the sections are silently skipped.
       // We verify wiring by confirming bootstrap succeeds without errors.
       const result = await bootstrap({ configPath });
 

@@ -1,17 +1,33 @@
 /**
  * JSON file-based implementation of MemoryStore.
- * Each entry is stored as an individual JSON file under baseDir/layer{1,2,3}/<uuid>.json.
+ *
+ * Each entry is stored as an individual JSON file under baseDir/<kind>/<uuid>.json.
  * Writes are atomic: data is written to a .tmp file then renamed into place.
+ *
+ * Directory layout:
+ *   baseDir/
+ *     preference/    ← always injected into system prompt
+ *     experiential/  ← always injected into system prompt
+ *     semantic/      ← retrieved on demand
+ *     episodic/      ← retrieved on demand; supports TTL eviction
+ *     embeddings.json
  */
 
-import type { MemoryEntry, MemoryStore, MemoryUpdateInput, MemorySearchOptions } from '../types/memory.js';
+import type {
+  MemoryEntry,
+  MemoryStore,
+  MemoryUpdateInput,
+  MemorySearchOptions,
+  MemoryKind,
+  EmbeddingIndex,
+} from '../types/memory.js';
+import { VALID_KINDS } from '../types/memory.js';
 import {
   MemoryNotFoundError,
   MemoryInvalidIdError,
-  MemoryInvalidLayerError,
+  MemoryInvalidKindError,
   MemoryInvalidContentError,
   MemoryStorageError,
-  MemoryExpiredError,
 } from '../errors/memory.js';
 import { scoreMemory } from './eviction-scorer.js';
 import * as fs from 'fs/promises';
@@ -20,18 +36,18 @@ import * as path from 'path';
 /** Maximum allowed content length in characters. */
 const MAX_CONTENT_LENGTH = 10000;
 
-/** Default eviction threshold: max L3 entries before a sweep is triggered. */
+/** Default eviction threshold: max episodic entries before a sweep is triggered. */
 const DEFAULT_EVICTION_THRESHOLD = 100;
 
 /** Score threshold: entries >= this value are promoted (pendingKB); below are deleted. */
 const HIGH_VALUE_SCORE_THRESHOLD = 0.6;
 
-/** Valid layer values. */
-const VALID_LAYERS = new Set<number>([1, 2, 3]);
-
 /** UUID v4 validation regex. */
 const UUID_V4_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Max number of recent episodic entries to inject into the system prompt. */
+const SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT = 5;
 
 /**
  * Returns true if the string is a valid UUID v4.
@@ -43,24 +59,14 @@ function isValidUuid(id: string): boolean {
 }
 
 /**
- * Returns true if the entry has expired via its absolute expiresAt timestamp.
- *
- * @param entry - Entry to check
- */
-function isExpiredByTimestamp(entry: MemoryEntry): boolean {
-  return entry.expiresAt !== undefined && entry.expiresAt <= Date.now();
-}
-
-/**
  * Returns true if the entry has expired via its ttlDays duration.
- * Only applies to layer 3 entries that have a ttlDays value set.
- * Expired entries are silently excluded from results but remain on disk.
+ * Only applies to episodic entries that have a ttlDays value set.
  *
  * @param entry - Entry to check
  */
 function isExpiredByTtlDays(entry: MemoryEntry): boolean {
   return (
-    entry.layer === 3 &&
+    entry.kind === 'episodic' &&
     entry.ttlDays !== undefined &&
     Date.now() > entry.createdAt + entry.ttlDays * 86400000
   );
@@ -68,33 +74,35 @@ function isExpiredByTtlDays(entry: MemoryEntry): boolean {
 
 /**
  * JSON file-based MemoryStore.
- * Files are stored at baseDir/layer{1,2,3}/<id>.json.
+ * Files are stored at baseDir/<kind>/<id>.json.
  * All writes are atomic (tmp + rename) with mode 0o600.
  */
 export class JsonMemoryStore implements MemoryStore {
   private readonly evictionThreshold: number;
 
   /**
-   * @param baseDir - Root directory for all memory layer subdirectories
-   * @param evictionThreshold - Max L3 entry count before eviction sweep runs (default 100)
+   * @param baseDir - Root directory for all memory kind subdirectories
+   * @param evictionThreshold - Max episodic entry count before eviction sweep runs (default 100)
+   * @param embeddingIndex - Optional EmbeddingIndex for similarity search
    */
   constructor(
     private readonly baseDir: string,
-    evictionThreshold: number = DEFAULT_EVICTION_THRESHOLD
+    evictionThreshold: number = DEFAULT_EVICTION_THRESHOLD,
+    private readonly embeddingIndex?: EmbeddingIndex
   ) {
     this.evictionThreshold = evictionThreshold;
   }
 
   /**
-   * Ensures the layer subdirectories exist.
+   * Ensures all kind subdirectories exist.
    */
   private async ensureDirs(): Promise<void> {
     try {
-      await Promise.all([
-        fs.mkdir(path.join(this.baseDir, 'layer1'), { recursive: true }),
-        fs.mkdir(path.join(this.baseDir, 'layer2'), { recursive: true }),
-        fs.mkdir(path.join(this.baseDir, 'layer3'), { recursive: true }),
-      ]);
+      await Promise.all(
+        Array.from(VALID_KINDS).map(kind =>
+          fs.mkdir(path.join(this.baseDir, kind), { recursive: true })
+        )
+      );
     } catch (err) {
       throw new MemoryStorageError('ensureDirs', err);
     }
@@ -103,11 +111,11 @@ export class JsonMemoryStore implements MemoryStore {
   /**
    * Resolves the absolute file path for an entry.
    *
-   * @param layer - Memory layer
+   * @param kind - Memory kind
    * @param id - Entry UUID
    */
-  private entryPath(layer: 1 | 2 | 3, id: string): string {
-    return path.join(this.baseDir, `layer${layer}`, `${id}.json`);
+  private entryPath(kind: MemoryKind, id: string): string {
+    return path.join(this.baseDir, kind, `${id}.json`);
   }
 
   /**
@@ -122,7 +130,6 @@ export class JsonMemoryStore implements MemoryStore {
       await fs.writeFile(tmp, JSON.stringify(entry, null, 2), { mode: 0o600 });
       await fs.rename(tmp, filePath);
     } catch (err) {
-      // Best-effort cleanup of temp file
       await fs.unlink(tmp).catch(() => undefined);
       throw new MemoryStorageError(`write ${filePath}`, err);
     }
@@ -147,17 +154,14 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   /**
-   * Scans a layer directory and returns all parseable entries.
-   * Expired entries are silently excluded.
+   * Scans a kind directory and returns all parseable entries.
+   * Expired entries are silently excluded unless excludeExpired is false.
    *
-   * @param layer - Layer to scan
+   * @param kind - Kind to scan
    * @param excludeExpired - Whether to filter out expired entries (default true)
    */
-  private async scanLayer(
-    layer: 1 | 2 | 3,
-    excludeExpired = true
-  ): Promise<MemoryEntry[]> {
-    const dir = path.join(this.baseDir, `layer${layer}`);
+  private async scanKind(kind: MemoryKind, excludeExpired = true): Promise<MemoryEntry[]> {
+    const dir = path.join(this.baseDir, kind);
     let names: string[];
     try {
       names = await fs.readdir(dir);
@@ -165,7 +169,7 @@ export class JsonMemoryStore implements MemoryStore {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return [];
       }
-      throw new MemoryStorageError(`readdir layer${layer}`, err);
+      throw new MemoryStorageError(`readdir ${kind}`, err);
     }
 
     const jsonNames = names.filter(n => n.endsWith('.json') && !n.endsWith('.tmp.json'));
@@ -176,7 +180,7 @@ export class JsonMemoryStore implements MemoryStore {
     const valid: MemoryEntry[] = [];
     for (const e of entries) {
       if (e === null) continue;
-      if (excludeExpired && (isExpiredByTimestamp(e) || isExpiredByTtlDays(e))) continue;
+      if (excludeExpired && isExpiredByTtlDays(e)) continue;
       valid.push(e);
     }
     return valid;
@@ -199,8 +203,8 @@ export class JsonMemoryStore implements MemoryStore {
    * @param entry - Entry to validate
    */
   private assertValidEntry(entry: MemoryEntry): void {
-    if (!VALID_LAYERS.has(entry.layer)) {
-      throw new MemoryInvalidLayerError(entry.layer);
+    if (!VALID_KINDS.has(entry.kind)) {
+      throw new MemoryInvalidKindError(entry.kind);
     }
     if (!entry.content || entry.content.length === 0) {
       throw new MemoryInvalidContentError('content must not be empty');
@@ -214,9 +218,8 @@ export class JsonMemoryStore implements MemoryStore {
 
   /**
    * Retrieves a memory entry by UUID.
-   * Returns null if no entry with that ID exists.
+   * Returns null if no entry with that ID exists, or if the entry is expired.
    * Throws MemoryInvalidIdError for non-UUID input.
-   * Throws MemoryExpiredError if the entry has expired.
    *
    * @param id - UUID v4 of the entry to retrieve
    */
@@ -224,14 +227,10 @@ export class JsonMemoryStore implements MemoryStore {
     this.assertValidId(id);
     await this.ensureDirs();
 
-    // Scan all layers since we do not know the layer from the id alone
-    for (const layer of [1, 2, 3] as const) {
-      const filePath = this.entryPath(layer, id);
+    for (const kind of VALID_KINDS as Set<MemoryKind>) {
+      const filePath = this.entryPath(kind, id);
       const entry = await this.readFile(filePath);
       if (entry !== null) {
-        if (isExpiredByTimestamp(entry)) {
-          throw new MemoryExpiredError(id, entry.expiresAt as number);
-        }
         if (isExpiredByTtlDays(entry)) {
           return null;
         }
@@ -243,15 +242,20 @@ export class JsonMemoryStore implements MemoryStore {
 
   /**
    * Persists a memory entry to storage.
-   * Validates content and layer before writing.
+   * Validates content and kind before writing.
+   * If the entry has an embedding and an embeddingIndex is configured, stores the vector.
    *
    * @param entry - Entry to store
    */
   async save(entry: MemoryEntry): Promise<void> {
     this.assertValidEntry(entry);
     await this.ensureDirs();
-    const filePath = this.entryPath(entry.layer, entry.id);
+    const filePath = this.entryPath(entry.kind, entry.id);
     await this.atomicWrite(filePath, entry);
+
+    if (entry.embedding && this.embeddingIndex) {
+      await this.embeddingIndex.set(entry.id, entry.embedding as number[]);
+    }
   }
 
   /**
@@ -266,21 +270,20 @@ export class JsonMemoryStore implements MemoryStore {
     this.assertValidId(id);
     await this.ensureDirs();
 
-    // Find the entry across all layers
     let existing: MemoryEntry | null = null;
-    let foundLayer: 1 | 2 | 3 | null = null;
+    let foundKind: MemoryKind | null = null;
 
-    for (const layer of [1, 2, 3] as const) {
-      const filePath = this.entryPath(layer, id);
+    for (const kind of VALID_KINDS as Set<MemoryKind>) {
+      const filePath = this.entryPath(kind, id);
       const entry = await this.readFile(filePath);
       if (entry !== null) {
         existing = entry;
-        foundLayer = layer;
+        foundKind = kind;
         break;
       }
     }
 
-    if (existing === null || foundLayer === null) {
+    if (existing === null || foundKind === null) {
       throw new MemoryNotFoundError(id);
     }
 
@@ -288,17 +291,19 @@ export class JsonMemoryStore implements MemoryStore {
       ...existing,
       ...(input.content !== undefined ? { content: input.content } : {}),
       ...(input.tags !== undefined ? { tags: input.tags } : {}),
-      ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
+      ...(input.ttlDays !== undefined ? { ttlDays: input.ttlDays } : {}),
+      ...(input.relatedTo !== undefined ? { relatedTo: input.relatedTo } : {}),
       updatedAt: Date.now(),
     };
 
-    const filePath = this.entryPath(foundLayer, id);
+    const filePath = this.entryPath(foundKind, id);
     await this.atomicWrite(filePath, updated);
     return updated;
   }
 
   /**
    * Removes a memory entry from storage.
+   * Also removes its embedding from the index if present.
    * Throws MemoryNotFoundError if the entry does not exist.
    *
    * @param id - UUID of the entry to delete
@@ -307,10 +312,13 @@ export class JsonMemoryStore implements MemoryStore {
     this.assertValidId(id);
     await this.ensureDirs();
 
-    for (const layer of [1, 2, 3] as const) {
-      const filePath = this.entryPath(layer, id);
+    for (const kind of VALID_KINDS as Set<MemoryKind>) {
+      const filePath = this.entryPath(kind, id);
       try {
         await fs.unlink(filePath);
+        if (this.embeddingIndex) {
+          await this.embeddingIndex.delete(id);
+        }
         return;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -325,52 +333,99 @@ export class JsonMemoryStore implements MemoryStore {
   /**
    * Searches memory entries with optional filters.
    * Expired entries are silently excluded.
-   * Results are sorted by updatedAt descending.
+   * When query is provided and an embeddingIndex is configured, uses cosine similarity.
+   * Otherwise falls back to recency sort (updatedAt descending).
    *
-   * @param options - Layer, query, tags, and limit filters
+   * @param options - Kind, query, tags, limit, and minScore filters
    */
   async search(options: MemorySearchOptions): Promise<readonly MemoryEntry[]> {
     await this.ensureDirs();
 
-    const layers: Array<1 | 2 | 3> =
-      options.layer !== undefined ? [options.layer] : [1, 2, 3];
+    const kinds: MemoryKind[] = options.kind !== undefined
+      ? [options.kind]
+      : Array.from(VALID_KINDS) as MemoryKind[];
 
     const all: MemoryEntry[] = [];
-    for (const layer of layers) {
-      const entries = await this.scanLayer(layer, true);
+    for (const kind of kinds) {
+      const entries = await this.scanKind(kind, true);
       all.push(...entries);
     }
 
     let results = all;
 
-    if (options.query !== undefined && options.query.length > 0) {
-      const lower = options.query.toLowerCase();
-      results = results.filter(e => e.content.toLowerCase().includes(lower));
-    }
-
+    // Tag post-filter
     if (options.tags !== undefined && options.tags.length > 0) {
       const tagSet = new Set(options.tags);
       results = results.filter(e => e.tags.some(t => tagSet.has(t)));
     }
 
-    results.sort((a, b) => b.updatedAt - a.updatedAt);
+    // Embedding search: if a pre-computed query vector is provided and an embeddingIndex
+    // is available, rank by cosine similarity and apply optional minScore threshold.
+    // Falls back to substring + recency when either condition is absent.
+    if (options.queryEmbedding !== undefined && this.embeddingIndex) {
+      const limit = options.limit !== undefined && options.limit > 0 ? options.limit : results.length;
+      const minScore = options.minScore ?? 0;
+      const idSet = new Set(results.map(e => e.id));
+      const ranked = await this.embeddingIndex.searchByCosine(
+        options.queryEmbedding as number[],
+        limit
+      );
+      const orderedIds = ranked
+        .filter(r => r.score >= minScore && idSet.has(r.id))
+        .map(r => r.id);
+      const byId = new Map(results.map(e => [e.id, e]));
+      results = orderedIds.map(id => byId.get(id)!).filter(Boolean);
+    } else {
+      // Substring search fallback
+      if (options.query !== undefined && options.query.length > 0) {
+        const lower = options.query.toLowerCase();
+        results = results.filter(e => e.content.toLowerCase().includes(lower));
+      }
+      results.sort((a, b) => b.updatedAt - a.updatedAt);
+    }
 
     if (options.limit !== undefined && options.limit > 0) {
       results = results.slice(0, options.limit);
     }
 
+    // Increment accessCount on every returned entry so the eviction scorer can
+    // distinguish frequently-read entries from stale ones.
+    const now = Date.now();
+    await Promise.all(
+      results.map(entry => {
+        const filePath = this.entryPath(entry.kind, entry.id);
+        const updated: MemoryEntry = {
+          ...entry,
+          accessCount: (entry.accessCount ?? 0) + 1,
+          lastAccessed: now,
+          // updatedAt is NOT changed here — content hasn't been modified
+        };
+        return this.atomicWrite(filePath, updated);
+      })
+    );
+
     return results;
   }
 
   /**
-   * Loads all non-expired layer 1 entries sorted by createdAt ascending.
+   * Loads entries to inject into the system prompt at session start:
+   *   - All non-expired preference entries (sorted by createdAt ascending)
+   *   - Up to SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT non-expired episodic entries,
+   *     sorted by updatedAt descending (most recent first)
    *
-   * @returns Layer 1 entries in creation order
+   * Other kinds (experiential, semantic) are retrieved on demand via search_memory.
    */
-  async loadLayer1(): Promise<readonly MemoryEntry[]> {
+  async loadForSystemPrompt(): Promise<readonly MemoryEntry[]> {
     await this.ensureDirs();
-    const entries = await this.scanLayer(1, true);
-    return entries.slice().sort((a, b) => a.createdAt - b.createdAt);
+
+    const preferenceEntries = await this.scanKind('preference', true);
+    preferenceEntries.sort((a, b) => a.createdAt - b.createdAt);
+
+    const episodicEntries = await this.scanKind('episodic', true);
+    episodicEntries.sort((a, b) => b.updatedAt - a.updatedAt);
+    const recentEpisodic = episodicEntries.slice(0, SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT);
+
+    return [...preferenceEntries, ...recentEpisodic];
   }
 
   /**
@@ -383,40 +438,33 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   /**
-   * Eviction sweep for L3 entries.
+   * Eviction sweep for episodic entries.
    *
-   * Scans all L3 files (including expired ones). If the total number of expired L3
-   * entries does not exceed evictionThreshold, returns early without changes.
-   * Otherwise, scores each expired L3 entry:
+   * Scans all episodic files (including expired ones). If the total number of expired
+   * episodic entries does not exceed evictionThreshold, returns early without changes.
+   * Otherwise, scores each expired episodic entry:
    *   - Score >= 0.6 (high value): sets pendingKB: true on the entry and re-writes it.
    *   - Score < 0.6 (low value): deletes the entry file from disk.
    *
-   * L1, L2, and non-expired L3 entries are never touched.
+   * preference, experiential, and semantic entries are never touched.
+   * Non-expired episodic entries are never touched.
    */
   async evict(): Promise<void> {
     await this.ensureDirs();
 
-    // Scan all L3 files, including expired ones
-    const allL3 = await this.scanLayer(3, false);
+    const allEpisodic = await this.scanKind('episodic', false);
+    const expiredEpisodic = allEpisodic.filter(e => isExpiredByTtlDays(e));
 
-    // Separate expired from non-expired
-    const expiredL3 = allL3.filter(
-      e => isExpiredByTtlDays(e) || isExpiredByTimestamp(e)
-    );
-
-    // Early exit: below threshold
-    if (expiredL3.length <= this.evictionThreshold) {
+    if (expiredEpisodic.length <= this.evictionThreshold) {
       return;
     }
 
-    // Score and process each expired entry
     await Promise.all(
-      expiredL3.map(async entry => {
+      expiredEpisodic.map(async entry => {
         const score = scoreMemory(entry);
-        const filePath = this.entryPath(entry.layer as 1 | 2 | 3, entry.id);
+        const filePath = this.entryPath('episodic', entry.id);
 
         if (score >= HIGH_VALUE_SCORE_THRESHOLD) {
-          // Mark as pending KB promotion and keep on disk
           const marked = { ...entry, pendingKB: true };
           const tmp = `${filePath}.tmp`;
           try {
@@ -427,9 +475,11 @@ export class JsonMemoryStore implements MemoryStore {
             throw new MemoryStorageError(`evict write ${filePath}`, err);
           }
         } else {
-          // Low value — remove from disk
           try {
             await fs.unlink(filePath);
+            if (this.embeddingIndex) {
+              await this.embeddingIndex.delete(entry.id);
+            }
           } catch (err) {
             if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
               throw new MemoryStorageError(`evict delete ${filePath}`, err);

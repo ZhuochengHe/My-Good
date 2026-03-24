@@ -23,7 +23,9 @@ import type { ModelProvider, TokenUsage } from '../types/providers.js';
 import type { AgentEvent } from '../types/events.js';
 import type { Session, SessionStore } from '../types/sessions.js';
 import type { AgentSettings } from '../types/settings.js';
-import type { MemoryStore } from '../types/memory.js';
+import type { MemoryStore, EmbeddingIndex } from '../types/memory.js';
+import { consolidate } from '../memory/consolidation.js';
+import type { ConsolidationConfig } from '../memory/consolidation.js';
 import { ContextBuilder } from './context-builder.js';
 import { randomUUID } from 'crypto';
 
@@ -71,6 +73,8 @@ export class ExecutionLoop implements Agent {
   private readonly workingDirectory: string;
   private readonly sessionStore: SessionStore | undefined;
   private readonly memoryStore: MemoryStore | undefined;
+  private readonly embeddingIndex: EmbeddingIndex | undefined;
+  private readonly consolidationConfig: ConsolidationConfig | undefined;
 
   constructor(
     config: AgentConfig,
@@ -79,7 +83,9 @@ export class ExecutionLoop implements Agent {
     toolDefinitions?: readonly ToolDefinition[],
     workingDirectory?: string,
     sessionStore?: SessionStore,
-    memoryStore?: MemoryStore
+    memoryStore?: MemoryStore,
+    consolidationConfig?: ConsolidationConfig,
+    embeddingIndex?: EmbeddingIndex
   ) {
     this.config = config;
     this.settings = settings;
@@ -89,6 +95,8 @@ export class ExecutionLoop implements Agent {
     this.workingDirectory = workingDirectory ?? process.cwd();
     this.sessionStore = sessionStore;
     this.memoryStore = memoryStore;
+    this.consolidationConfig = consolidationConfig;
+    this.embeddingIndex = embeddingIndex;
   }
 
   /**
@@ -346,6 +354,10 @@ export class ExecutionLoop implements Agent {
       },
       onEvent
     );
+
+    // Run consolidation after the session ends (fire-and-forget).
+    // Failures are silently swallowed — consolidation must never crash a session.
+    this.runConsolidation(messages).catch(() => undefined);
 
     return result;
   }
@@ -613,6 +625,9 @@ export class ExecutionLoop implements Agent {
       timestamp: Date.now(),
     };
 
+    // Run consolidation after the session ends (fire-and-forget).
+    this.runConsolidation(messages).catch(() => undefined);
+
     return result;
   }
 
@@ -638,25 +653,32 @@ export class ExecutionLoop implements Agent {
   }
 
   /**
-   * Build the system prompt, injecting layer-1 and layer-2 memory entries when
-   * a MemoryStore is present. Layer-3 entries are NOT injected here; they are
-   * retrieved on-demand via the search_memory tool.
+   * Runs the memory consolidation pipeline on the session messages.
+   * No-op when memoryStore or consolidationConfig is absent.
+   *
+   * @param messages - All messages from the completed session
+   */
+  private async runConsolidation(messages: ConversationMessage[]): Promise<void> {
+    if (!this.memoryStore || !this.consolidationConfig) return;
+    await consolidate(messages, this.memoryStore, this.consolidationConfig, this.embeddingIndex);
+  }
+
+  /**
+   * Build the system prompt, injecting preference entries and recent episodic entries when
+   * a MemoryStore is present. Experiential and semantic entries are NOT injected here; they
+   * are retrieved on-demand via the search_memory tool.
    */
   private async buildSystemPrompt(compactSummary?: string): Promise<string> {
-    const layer1 = this.memoryStore ? await this.memoryStore.loadLayer1() : [];
-    const layer2 = this.memoryStore
-      ? await this.memoryStore.search({ layer: 2 })
+    const injectedMemories = this.memoryStore
+      ? await this.memoryStore.loadForSystemPrompt()
       : [];
 
     const identitySection =
-      layer1.length > 0
-        ? `\n\n## Persistent Identity\n${layer1.map((m) => `- ${m.content}`).join('\n')}`
+      injectedMemories.length > 0
+        ? `\n\n## What I Know About You\n${injectedMemories.map((m) => `- ${m.content}`).join('\n')}`
         : '';
 
-    const preferencesSection =
-      layer2.length > 0
-        ? `\n\n## User Preferences & Skills\n${layer2.map((m) => `- ${m.content}`).join('\n')}`
-        : '';
+    const preferencesSection = '';
 
     const summarySection =
       compactSummary !== undefined && compactSummary.length > 0

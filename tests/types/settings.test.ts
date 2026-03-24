@@ -26,31 +26,25 @@ describe('DEFAULT_SETTINGS', () => {
       );
     });
 
-    it('includes Layer 1 Identity guidance', () => {
-      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain(
-        'Layer 1 (Identity)'
-      );
+    it('includes preference kind guidance', () => {
+      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain('preference');
     });
 
-    it('includes Layer 2 Preferences and Skills guidance', () => {
-      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain(
-        'Layer 2 (Preferences & Skills)'
-      );
+    it('includes experiential kind guidance', () => {
+      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain('experiential');
     });
 
-    it('includes Layer 3 Episodic guidance', () => {
-      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain(
-        'Layer 3 (Episodic)'
-      );
+    it('includes semantic kind guidance', () => {
+      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain('semantic');
     });
 
-    it('includes ttlDays guidance for episodic layer', () => {
-      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain('ttlDays');
+    it('includes episodic kind guidance', () => {
+      expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain('episodic');
     });
 
-    it('includes guidance on when to save a memory', () => {
+    it('instructs agent to read memory proactively, not write', () => {
       expect(DEFAULT_SETTINGS.behavior.systemPrompt).toContain(
-        'When to save a memory'
+        'Memories are written automatically'
       );
     });
 

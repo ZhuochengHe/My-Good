@@ -38,6 +38,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { parseArgs } from 'node:util';
 import { JsonMemoryStore } from '../../src/memory/memory-store.js';
+import { JsonEmbeddingIndex } from '../../src/memory/embedding-index.js';
 import { MemBenchAdapter } from './membench-adapter.js';
 import OpenAI from 'openai';
 import { tmpdir } from 'os';
@@ -252,8 +253,9 @@ async function main(): Promise<void> {
   const client = new OpenAI({ apiKey });
   const baseDir = path.join(tmpdir(), `membench-${randomUUID()}`);
   await fs.mkdir(baseDir, { recursive: true });
-  const store = new JsonMemoryStore(baseDir);
-  const adapter = new MemBenchAdapter(store);
+  const embeddingIndex = new JsonEmbeddingIndex(baseDir);
+  const store = new JsonMemoryStore(baseDir, undefined, embeddingIndex);
+  const adapter = new MemBenchAdapter(store, baseDir, client, embeddingIndex);
 
   let correct = 0;
   let total = 0;
@@ -267,11 +269,9 @@ async function main(): Promise<void> {
       // Fresh memory state for each trajectory
       await adapter.reset();
 
-      // Store phase
+      // Store phase — batch embed all messages in one API call, then save concurrently
       const steps = extractSteps(traj);
-      for (const { message, stepId } of steps) {
-        await adapter.store(message, stepId);
-      }
+      await adapter.storeBatch(steps);
 
       // Query phase
       const { question, choices, ground_truth, target_step_id } = traj.QA;

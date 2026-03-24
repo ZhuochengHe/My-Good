@@ -9,6 +9,7 @@ Built from scratch in TypeScript with a custom agent loop. No frameworks, full c
 - Executes multi-step tasks autonomously using tool calling
 - Works with Claude (Anthropic), GPT (OpenAI), and Kimi (Moonshot AI)
 - Persists conversation history across restarts
+- **Persistent memory across sessions** — at session end, a consolidation pipeline extracts structured facts via `gpt-4o-mini`, embeds them with `text-embedding-3-small`, deduplicates by cosine similarity, and stores them. Future sessions inject relevant memories and retrieve more on demand via embedding search.
 - Streams responses in real time with typewriter effect
 - Collapsible tool call history — see what the agent did, expand for full args and output
 - Dangerous tool confirmation prompt built into the TUI (no readline conflicts)
@@ -59,11 +60,12 @@ my-agent model update                   # fetch latest models from provider APIs
 | `file-ops` | `read_file`, `write_file`, `list_directory` |
 | `shell` | `shell_exec` (linux/darwin) |
 | `web-search` | `web_search`, `fetch_url` |
+| `memory` | `save_memory`, `search_memory`, `update_memory`, `delete_memory`, `list_memories` |
 
 ## Development
 
 ```bash
-npm test              # 1200+ tests across 68 files
+npm test              # 1435+ tests across 55 files
 npm run test:coverage
 npm run build
 npm run lint

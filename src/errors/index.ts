@@ -53,7 +53,7 @@ export {
   MemoryError,
   MemoryNotFoundError,
   MemoryInvalidIdError,
-  MemoryInvalidLayerError,
+  MemoryInvalidKindError,
   MemoryInvalidContentError,
   MemoryStorageError,
   MemoryExpiredError,
