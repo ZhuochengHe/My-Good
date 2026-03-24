@@ -224,18 +224,25 @@ describe('JsonMemoryStore', () => {
       expect(results[0]?.id).toBe(e1.id);
     });
 
-    it('filters by tags using any-match semantics', async () => {
-      const e1 = makeEntry({ tags: ['alpha', 'beta'] });
-      const e2 = makeEntry({ tags: ['gamma'] });
-      const e3 = makeEntry({ tags: ['delta'] });
+    it('boosts tag-matching entries to the top via overlap ratio', async () => {
+      // Tags are now a reranking boost (overlap ratio), not a hard filter.
+      // Entries with matching tags rank above non-matching ones; all entries
+      // are still returned.
+      const e1 = makeEntry({ tags: ['alpha', 'beta'] });  // overlap 1/2 = 0.5
+      const e2 = makeEntry({ tags: ['gamma'] });           // overlap 1/2 = 0.5
+      const e3 = makeEntry({ tags: ['delta'] });           // overlap 0/2 = 0
       await store.save(e1);
       await store.save(e2);
       await store.save(e3);
       const results = await store.search({ tags: ['beta', 'gamma'] });
       const ids = results.map(r => r.id);
+      // All entries are present (no hard filter)
       expect(ids).toContain(e1.id);
       expect(ids).toContain(e2.id);
-      expect(ids).not.toContain(e3.id);
+      expect(ids).toContain(e3.id);
+      // Tag-matching entries rank before non-matching entry
+      expect(ids.indexOf(e3.id)).toBeGreaterThan(ids.indexOf(e1.id));
+      expect(ids.indexOf(e3.id)).toBeGreaterThan(ids.indexOf(e2.id));
     });
 
     it('excludes expired episodic entries silently', async () => {

@@ -120,8 +120,10 @@ export async function search_memory(args, context) {
   if (typeof args.query === 'string') {
     searchOptions.query = args.query;
   }
-  if (Array.isArray(args.tags)) {
-    searchOptions.tags = args.tags;
+  if (Array.isArray(args.tags) && args.tags.length > 0) {
+    // Cap at 5 tags — overlap ratio = hits / query_tag_count, so more tags
+    // dilute the boost and make it unstable when LLM generates many tags.
+    searchOptions.tags = args.tags.slice(0, 5);
   }
   if (typeof args.kind === 'string' && VALID_KINDS.has(args.kind)) {
     searchOptions.kind = args.kind;
