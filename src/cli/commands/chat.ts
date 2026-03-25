@@ -146,6 +146,9 @@ async function runSingleMessage(
           options.output.updateLoading?.(LOADING_MESSAGE);
         }
       },
+      onPlanningProgress: (message) => {
+        options.output.updateLoading?.(`[Planning] ${message}`);
+      },
     });
     options.output.stopLoading?.();
 
@@ -237,6 +240,9 @@ async function runInteractive(
             } else if (event.type === 'tool_call_end') {
               options.output.updateLoading?.(LOADING_MESSAGE);
             }
+          },
+          onPlanningProgress: (message) => {
+            options.output.updateLoading?.(`[Planning] ${message}`);
           },
         });
         options.output.stopLoading?.();
@@ -420,8 +426,11 @@ async function runStreaming(
         pendingText += event.delta;
       }
     } else if (event.type === 'tool_call_start') {
-      // Discard any buffered pre-tool thinking text
-      pendingText = '';
+      // Show any buffered pre-tool thinking text before the spinner
+      if (pendingText) {
+        enqueueText(pendingText);
+        pendingText = '';
+      }
       flushNow();
       inToolCall = true;
       const toolName = (event).toolCall?.name ?? 'tool';

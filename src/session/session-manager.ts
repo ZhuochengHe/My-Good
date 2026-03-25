@@ -52,6 +52,13 @@ export interface RunOptions {
    * @param event - Agent event emitted during execution
    */
   readonly onEvent?: (event: AgentEvent) => void;
+  /**
+   * Optional callback to receive human-readable planning progress updates.
+   * Only called when the PlanningLoop is active for a given request.
+   *
+   * @param message - Progress message describing the current planning phase
+   */
+  readonly onPlanningProgress?: (message: string) => void;
 }
 
 /** Result from agent run */
@@ -483,9 +490,14 @@ export class SessionManager implements EventSubscriber {
   private async runWithPlanningLoop(
     sessionId: string,
     input: string,
-    _options?: RunOptions
+    options?: RunOptions
   ): Promise<RunResult> {
-    const result = await this.planningLoop!.run(input, sessionId);
+    const result = await this.planningLoop!.run(
+      input,
+      sessionId,
+      undefined,
+      options?.onPlanningProgress
+    );
 
     // Save a minimal session message for the input
     const userMessage: UserMessage = {

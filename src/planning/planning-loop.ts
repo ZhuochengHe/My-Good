@@ -43,6 +43,8 @@ export interface PlanningLoopConfig {
   readonly complexityThreshold: 'auto' | 'always' | 'never';
   /** Path to the plan.json backing file (used only for PlanStore construction externally). */
   readonly planStorePath: string;
+  /** Optional callback to receive human-readable progress updates during planning. */
+  readonly onProgress?: (message: string) => void;
 }
 
 export interface PlanningRunResult {
@@ -57,6 +59,9 @@ export interface PlanningRunResult {
 // ── Class ─────────────────────────────────────────────────────────────────────
 
 export class PlanningLoop {
+  /** Per-invocation progress callback set at the start of each run(). */
+  private runtimeProgress: ((message: string) => void) | undefined;
+
   constructor(
     private executionLoop: Agent,
     private planStore: PlanStore,
@@ -68,11 +73,24 @@ export class PlanningLoop {
 
   // ── Public entry point ────────────────────────────────────────────────────
 
-  async run(goal: string, sessionId: string, signal?: AbortSignal): Promise<PlanningRunResult> {
+  async run(
+    goal: string,
+    sessionId: string,
+    signal?: AbortSignal,
+    onProgress?: (message: string) => void
+  ): Promise<PlanningRunResult> {
+    // Per-call onProgress overrides the config-level one for this invocation
+    if (onProgress !== undefined) {
+      this.runtimeProgress = onProgress;
+    } else {
+      this.runtimeProgress = undefined;
+    }
     try {
       // Phase A: Complexity check
+      this.progress('Checking task complexity...');
       const complex = await this.isComplex(goal);
       if (!complex) {
+        this.progress('Simple task — running directly.');
         const result = await this.executionLoop.run(goal, {
         sessionId,
         ...(signal !== undefined && { signal }),
@@ -85,21 +103,28 @@ export class PlanningLoop {
       }
 
       // Phase A: Generate initial plan
+      this.progress('Complex task detected — generating plan...');
       let plan = await this.generateInitialPlan(goal, sessionId);
+      this.progress(`Plan ready: ${plan.subgoals.length} subgoals.`);
       const conversationHistory: ConversationMessage[] = [];
       let subgoalsCompleted = 0;
 
       // Phase B + C + D: Per-subgoal loop
       for (const subgoal of plan.subgoals) {
+        const sgLabel = `[${subgoal.index}/${plan.subgoals.length}] ${subgoal.title}`;
+
         // Phase B: Plan verification method + tasks lazily
+        this.progress(`Planning subgoal ${sgLabel}...`);
         const verificationMethod = await this.planSubgoalVerification(subgoal, plan);
         await this.planStore.updateSubgoal(subgoal.id, { verificationMethod, status: 'planning' });
 
         const tasks = await this.planSubgoalTasks(subgoal, plan);
         // planSubgoalTasks already calls updateSubgoal with tasks + 'in_progress'
         void tasks; // tasks stored in plan store; reference suppresses unused-var warning
+        this.progress(`Subgoal ${sgLabel} — ${tasks.length} tasks planned.`);
 
         // Phase C: Execute
+        this.progress(`Executing subgoal ${sgLabel}...`);
         await this.planStore.updateSubgoal(subgoal.id, {
           status: 'in_progress',
           startedAt: Date.now(),
@@ -122,12 +147,14 @@ export class PlanningLoop {
           (r) => r.subgoalId === subgoal.id && r.triggerReplan
         );
         if (replanReflection) {
+          this.progress(`Replanning subgoal ${sgLabel}...`);
           await this.replanSubgoalTasks(updatedSubgoal, plan, replanReflection.nextAction);
         }
 
         await this.planStore.updateSubgoal(subgoal.id, { status: 'awaiting_verification' });
 
         // Phase D: Verify
+        this.progress(`Verifying subgoal ${sgLabel}...`);
         let verificationPassed = false;
         let attempts = 0;
         const maxAttempts = this.config.maxVerificationAttempts;
@@ -143,6 +170,7 @@ export class PlanningLoop {
           );
 
           if (escalateToHuman || (!passed && attempts >= maxAttempts)) {
+            this.progress(`Subgoal ${sgLabel} — waiting for human review...`);
             // Human review
             const reviewResult = await this.onHumanReview({
               subgoal: updatedSubgoal,
@@ -157,6 +185,7 @@ export class PlanningLoop {
               verificationPassed = true;
             } else if (reviewResult.instructions) {
               // Re-execute with revised tasks
+              this.progress(`Re-executing subgoal ${sgLabel} after human feedback...`);
               await this.replanSubgoalTasks(updatedSubgoal, plan, reviewResult.instructions);
               const reExec = await this.executeSubgoal(
                 updatedSubgoal,
@@ -179,6 +208,11 @@ export class PlanningLoop {
           completedAt: Date.now(),
         });
 
+        this.progress(
+          verificationPassed
+            ? `Subgoal ${sgLabel} — done.`
+            : `Subgoal ${sgLabel} — failed verification.`
+        );
         subgoalsCompleted++;
 
         // Reload plan for next iteration
@@ -187,6 +221,7 @@ export class PlanningLoop {
 
       // Phase E: Goal completion
       await this.planStore.patch({ status: 'completed' });
+      this.progress(`All done — ${subgoalsCompleted}/${plan.subgoals.length} subgoals completed.`);
 
       return {
         success: true,
@@ -202,6 +237,12 @@ export class PlanningLoop {
         error: err instanceof Error ? err.message : 'Unknown error',
       };
     }
+  }
+
+  // ── Progress helper ───────────────────────────────────────────────────────
+
+  private progress(message: string): void {
+    (this.runtimeProgress ?? this.config.onProgress)?.(message);
   }
 
   // ── Phase A helpers ───────────────────────────────────────────────────────
