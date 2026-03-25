@@ -1,0 +1,218 @@
+{
+  "id": "planning",
+  "name": "planning",
+  "version": "1.0.0",
+  "description": "Structured planning layer for the agent — create plans, track subgoals, record reflections",
+  "tools": [
+    {
+      "name": "create_plan",
+      "description": "Create a new plan with goal and subgoals. Call this before executing any complex multi-step task.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "The overall goal to accomplish"
+          },
+          "subgoals": {
+            "type": "array",
+            "description": "Ordered list of subgoals. Each has title (string) and description (string).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string" },
+                "description": { "type": "string" }
+              }
+            }
+          },
+          "goalVerification": {
+            "type": "object",
+            "description": "How to verify the overall goal is complete",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["automated", "llm_judge", "human"]
+              },
+              "description": { "type": "string" },
+              "expectedArtifact": { "type": "string" }
+            }
+          }
+        },
+        "required": ["goal", "subgoals"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "plan_subgoal_tasks",
+      "description": "Lazily populate tasks for a subgoal just before executing it.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subgoalId": {
+            "type": "string",
+            "description": "ID of the subgoal (e.g. 'sg-1')"
+          },
+          "tasks": {
+            "type": "array",
+            "description": "Ordered atomic tasks for this subgoal",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string" }
+              }
+            }
+          },
+          "verificationMethod": {
+            "type": "object",
+            "description": "How to verify this subgoal",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["automated", "llm_judge", "human"]
+              },
+              "description": { "type": "string" },
+              "expectedArtifact": { "type": "string" }
+            }
+          }
+        },
+        "required": ["subgoalId", "tasks"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "update_task",
+      "description": "Update a task's status and record what actually happened.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subgoalId": {
+            "type": "string",
+            "description": "Parent subgoal ID"
+          },
+          "taskId": {
+            "type": "string",
+            "description": "Task ID (e.g. 'sg-1-t-1')"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "in_progress", "completed", "failed"],
+            "description": "New task status"
+          },
+          "resultProcess": {
+            "type": "string",
+            "description": "What actually happened — surprises matter"
+          }
+        },
+        "required": ["subgoalId", "taskId", "status"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "reflect",
+      "description": "Record an observation about the current state. Call after significant state changes, not after every tool call.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subgoalId": {
+            "type": "string",
+            "description": "Current subgoal ID"
+          },
+          "taskId": {
+            "type": "string",
+            "description": "Current task ID if applicable"
+          },
+          "observation": {
+            "type": "string",
+            "description": "What actually happened or was discovered"
+          },
+          "next_action": {
+            "type": "string",
+            "description": "What to do next"
+          },
+          "trigger_replan": {
+            "type": "boolean",
+            "description": "Set true if current plan is invalid and tasks need replanning",
+            "default": false
+          }
+        },
+        "required": ["subgoalId", "observation", "next_action"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "revise_remaining_tasks",
+      "description": "Backtrack: clear all pending tasks in current subgoal and replace with new tasks.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subgoalId": {
+            "type": "string",
+            "description": "Subgoal to revise"
+          },
+          "newTasks": {
+            "type": "array",
+            "description": "Replacement tasks",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string" }
+              }
+            }
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the current plan needs revision"
+          }
+        },
+        "required": ["subgoalId", "newTasks", "reason"]
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "get_plan",
+      "description": "Get the current plan as formatted markdown. Use to review progress.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "include_reflections": {
+            "type": "boolean",
+            "description": "Include reflection log in output",
+            "default": false
+          }
+        },
+        "required": []
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "request_human_review",
+      "description": "Request human review of the current subgoal result. Pauses execution until human responds.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "subgoalId": {
+            "type": "string",
+            "description": "Subgoal to review"
+          },
+          "context": {
+            "type": "string",
+            "description": "Summary of what was accomplished"
+          },
+          "question": {
+            "type": "string",
+            "description": "Specific question for the human reviewer"
+          }
+        },
+        "required": ["subgoalId", "context", "question"]
+      },
+      "handler": "handlers.js"
+    }
+  ]
+}
