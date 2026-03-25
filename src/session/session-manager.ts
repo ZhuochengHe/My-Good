@@ -23,6 +23,7 @@ import type {
 } from '../types/events.js';
 import type { Agent } from '../types/agent.js';
 import type { OnToolCallCallback } from '../agent/execution-loop.js';
+import { PlanningLoop } from '../planning/index.js';
 import { SessionNotFoundError } from '../errors/session.js';
 import { randomUUID } from 'crypto';
 import { readFile } from 'node:fs/promises';
@@ -129,6 +130,7 @@ export class SessionManager implements EventSubscriber {
   private readonly groupStore: SessionGroupStore | null;
   private readonly executionLoop: Agent | null;
   private readonly onToolCall: OnToolCallCallback | null;
+  private readonly planningLoop: PlanningLoop | null;
 
   // Event tracking state
   private currentSessionId: string | null = null;
@@ -153,6 +155,7 @@ export class SessionManager implements EventSubscriber {
    * @param groupStore - Optional group store for session organization
    * @param executionLoop - Optional execution loop for tool-enabled execution
    * @param onToolCall - Optional tool call handler
+   * @param planningLoop - Optional planning loop for multi-phase plan execution
    */
   constructor(
     store: SessionStore,
@@ -160,7 +163,8 @@ export class SessionManager implements EventSubscriber {
     config: SessionManagerConfig,
     groupStore?: SessionGroupStore,
     executionLoop?: Agent,
-    onToolCall?: OnToolCallCallback
+    onToolCall?: OnToolCallCallback,
+    planningLoop?: PlanningLoop
   ) {
     this.store = store;
     this.provider = provider;
@@ -168,6 +172,7 @@ export class SessionManager implements EventSubscriber {
     this.groupStore = groupStore ?? null;
     this.executionLoop = executionLoop ?? null;
     this.onToolCall = onToolCall ?? null;
+    this.planningLoop = planningLoop ?? null;
   }
 
   /**
@@ -268,6 +273,11 @@ export class SessionManager implements EventSubscriber {
     input: string,
     options?: RunOptions
   ): Promise<RunResult> {
+    // Dispatch to PlanningLoop if configured
+    if (this.planningLoop) {
+      return this.runWithPlanningLoop(sessionId, input, options);
+    }
+
     // Dual-path: use ExecutionLoop if available, otherwise legacy path
     if (this.executionLoop) {
       return this.runWithExecutionLoop(sessionId, input, options);
@@ -456,6 +466,55 @@ export class SessionManager implements EventSubscriber {
 
       yield event;
     }
+  }
+
+  /**
+   * Run with PlanningLoop.
+   *
+   * Delegates execution to the PlanningLoop, which orchestrates multi-phase
+   * plan generation, per-subgoal task expansion, and verification.
+   * Persists a minimal user + assistant message pair to the session store.
+   *
+   * @param sessionId - Session ID to run
+   * @param input - User input message
+   * @param _options - Run options (unused in planning path)
+   * @returns Run result derived from PlanningRunResult
+   */
+  private async runWithPlanningLoop(
+    sessionId: string,
+    input: string,
+    _options?: RunOptions
+  ): Promise<RunResult> {
+    const result = await this.planningLoop!.run(input, sessionId);
+
+    // Save a minimal session message for the input
+    const userMessage: UserMessage = {
+      id: randomUUID(),
+      role: 'user',
+      content: input,
+      timestamp: Date.now(),
+    };
+    await this.store.appendMessage(sessionId, userMessage);
+
+    const responseText = result.finalSummary ??
+      (result.success
+        ? `Plan completed: ${result.subgoalsCompleted}/${result.totalSubgoals} subgoals done.`
+        : `Plan failed: ${result.error ?? 'Unknown error'}`);
+
+    const assistantMessage: AssistantMessage = {
+      id: randomUUID(),
+      role: 'assistant',
+      content: responseText,
+      stopReason: result.success ? 'end_turn' : 'error',
+      timestamp: Date.now(),
+    };
+    await this.store.appendMessage(sessionId, assistantMessage);
+
+    return {
+      success: result.success,
+      response: responseText,
+      ...(result.error !== undefined && { error: result.error }),
+    };
   }
 
   /**
