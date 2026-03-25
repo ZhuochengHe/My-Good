@@ -28,6 +28,7 @@ import { ColoredOutput } from './colored-output.js';
 import type { OutputAdapter } from './output-adapter.js';
 import { JsonMemoryStore, JsonEmbeddingIndex } from '../memory/index.js';
 import type { ConsolidationConfig } from '../memory/index.js';
+import { PlanStore } from '../planning/index.js';
 
 /**
  * Bootstrap options.
@@ -142,6 +143,10 @@ export async function bootstrap(
   const embeddingIndex = new JsonEmbeddingIndex(memoryDir);
   const memoryStore = new JsonMemoryStore(memoryDir, undefined, embeddingIndex);
 
+  // Step 8b: Create PlanStore backed by ~/.my-agent/plan.json
+  const planStorePath = join(homedir(), '.my-agent', 'plan.json');
+  const planStore = new PlanStore(planStorePath);
+
   // Step 9 (formerly 8): Create ToolExecutor with memoryStore and register plugin tools
   // Use caller-supplied confirmation callback when provided (e.g. TUI-aware version),
   // otherwise fall back to a plain readline prompt.
@@ -160,7 +165,7 @@ export async function bootstrap(
   };
   const confirmFn = options.onDangerousToolCall ?? defaultConfirm;
 
-  const toolExecutor = new ToolExecutor(memoryStore, confirmFn);
+  const toolExecutor = new ToolExecutor(memoryStore, confirmFn, planStore);
   const toolDefinitions = pluginManager.getToolDefinitions();
 
   for (const toolDef of toolDefinitions) {
