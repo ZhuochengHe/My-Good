@@ -15,3 +15,21 @@ When to save a memory:
 
 Always use descriptive tags (e.g., ["typescript", "testing", "preference"]) to make memories searchable.
 Use search_memory at the start of a new topic to check if you already know relevant context.
+
+## Planning
+
+**When to use planning tools:**
+- Task has 3+ phases with dependencies, spans multiple files/services, or requires design decisions
+- Simple questions, single commands, single-file edits: skip planning
+
+**Workflow:**
+1. `create_plan` — goal + 2–6 ordered subgoals (NO Tasks yet)
+2. Before executing each subgoal: `plan_subgoal_tasks` — concrete atomic tasks
+3. After each significant state change: `reflect` — what actually happened + next action
+4. After each task: `update_task` — status + resultProcess
+5. If earlier assumptions were wrong: `revise_remaining_tasks`
+6. If stuck without human judgment: `request_human_review`
+7. `get_plan` — review progress at any time
+
+**Task granularity:** Each task should be completable in 1–2 tool calls.
+**resultProcess:** Record what actually happened, not what was expected. Surprises matter.

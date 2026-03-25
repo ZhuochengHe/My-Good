@@ -3,6 +3,7 @@
  */
 
 import type { MemoryStore } from './memory.js';
+import type { PlanStore } from '../planning/plan-store.js';
 
 /** JSON Schema subset for tool parameters */
 export interface ParameterSchema {
@@ -59,6 +60,8 @@ export interface ToolContext {
   readonly signal?: AbortSignal;
   /** Optional memory store for persistent agent memory access. */
   readonly memoryStore?: MemoryStore;
+  /** Optional plan store for planning tool access. */
+  readonly planStore?: PlanStore;
 }
 
 /** Optional output artifact (file, image, etc.) */

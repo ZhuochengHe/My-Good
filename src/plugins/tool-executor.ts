@@ -55,6 +55,7 @@ import type {
 } from '../types/tools.js';
 import type { ToolCall } from '../types/messages.js';
 import type { MemoryStore } from '../types/memory.js';
+import type { PlanStore } from '../planning/plan-store.js';
 
 /**
  * Options for tool execution.
@@ -107,6 +108,7 @@ export class ToolExecutor {
   private readonly tools: Map<string, ToolEntry>;
   private readonly memoryStore?: MemoryStore;
   private readonly onDangerousToolCall?: DangerousToolConfirm;
+  private readonly planStore?: PlanStore;
 
   /**
    * Creates a new ToolExecutor.
@@ -117,13 +119,16 @@ export class ToolExecutor {
    *   to allow execution or `false` to deny it with a PERMISSION_DENIED result.
    *   When omitted, dangerous tools execute without any confirmation.
    */
-  constructor(memoryStore?: MemoryStore, onDangerousToolCall?: DangerousToolConfirm) {
+  constructor(memoryStore?: MemoryStore, onDangerousToolCall?: DangerousToolConfirm, planStore?: PlanStore) {
     this.tools = new Map();
     if (memoryStore !== undefined) {
       this.memoryStore = memoryStore;
     }
     if (onDangerousToolCall !== undefined) {
       this.onDangerousToolCall = onDangerousToolCall;
+    }
+    if (planStore !== undefined) {
+      this.planStore = planStore;
     }
   }
 
@@ -228,11 +233,12 @@ export class ToolExecutor {
       }
     }
 
-    // Build handler context, merging in the executor's memoryStore when set.
+    // Build handler context, merging in the executor's memoryStore and planStore when set.
     // The conditional spread is required by exactOptionalPropertyTypes.
     const handlerContext: ToolContext = {
       ...context,
       ...(this.memoryStore !== undefined && { memoryStore: this.memoryStore }),
+      ...(this.planStore !== undefined && { planStore: this.planStore }),
     };
 
     // Execute handler with timeout
