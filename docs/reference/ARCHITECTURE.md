@@ -3,11 +3,11 @@
 ## Overview
 
 ```
-User Input → CLI → ExecutionLoop → Provider (LLM API)
-                        ↑                   ↓
-                 Tool Results ←── PluginManager ←── Tool Calls
-                        ↓
-                SessionStore (JSONL) + MemoryStore (JSON files)
+User Input → CLI → PlanningLoop (optional) → ExecutionLoop → Provider (LLM API)
+                         ↓                        ↑                   ↓
+                   PlanStore (plan.json)    Tool Results ←── PluginManager ←── Tool Calls
+                                                  ↓
+                                     SessionStore (JSONL) + MemoryStore (JSON files)
 ```
 
 **Stack:** TypeScript (strict, ESM) · Node.js ≥18 · Vitest · Commander.js · chalk · ora · js-tiktoken
@@ -25,19 +25,22 @@ User Input → CLI → ExecutionLoop → Provider (LLM API)
 | 7 | Event persistence — `turn_metadata` + `error_log` records in session JSONL; `SessionStoreWithTrace` |
 | 8 | Kind-based persistent memory module — 4 kinds, TTL, eviction scoring, embedding index |
 | 9 | LLM consolidation pipeline — session-end extraction, embedding dedup, cosine merge |
+| 10 | Hybrid reranking — cosine + BM25-TF + tag overlap boost replaces hard tag pre-filter |
+| 11 | Planning layer — Goal→Subgoal→Task tree with lazy planning, 3-mode verification, human escalation |
 
-**Test coverage:** 1435+ tests across 55 files, ≥80% coverage
+**Test coverage:** 1481+ tests across 58 files, ≥80% coverage
 
 ## Source Layout
 
 ```
 src/
-├── types/       # Core interfaces (Message, Tool, Plugin, Provider, Session, Agent, Memory)
+├── types/       # Core interfaces (Message, Tool, Plugin, Provider, Session, Agent, Memory, Planning)
 ├── agent/       # ExecutionLoop, ContextBuilder, tool-call bridge
 ├── session/     # JsonlSessionStore, SessionManager
 ├── providers/   # Anthropic + OpenAI SDK clients; registry-based discovery
 ├── plugins/     # PluginManager, ToolExecutor, manifest validation
 ├── memory/      # JsonMemoryStore (kind-based), EmbeddingIndex, consolidation pipeline, eviction scorer
+├── planning/    # PlanStore (atomic JSON), PlanningLoop (5-phase orchestrator)
 ├── config/      # YAML loader + Zod validation (config.yaml, settings.yaml)
 ├── events/      # EventEmitter, subscribers (logging, persistence)
 ├── errors/      # Structured error classes per domain (memory, agent, session, etc.)
@@ -47,7 +50,10 @@ src/
 plugins/         # Default plugins (plugin.json manifests)
 ├── file-ops/    # read_file, write_file, list_directory
 ├── shell/       # shell_exec (linux/darwin)
-└── web-search/  # web_search, fetch_url
+├── web-search/  # web_search, fetch_url
+├── memory/      # save_memory, search_memory, update_memory, delete_memory, list_memories
+└── planning/    # create_plan, plan_subgoal_tasks, update_task, reflect,
+                 # revise_remaining_tasks, get_plan, request_human_review
 ```
 
 ## Key Files
@@ -55,23 +61,25 @@ plugins/         # Default plugins (plugin.json manifests)
 | File | Purpose |
 |---|---|
 | `src/agent/execution-loop.ts` | Core agentic loop with tool calling, max 25 turns |
-| `src/agent/session-manager.ts` | Session lifecycle, run(), AI tag generation |
+| `src/session/session-manager.ts` | Session lifecycle, run(), planning dispatch, AI tag generation |
 | `src/session/jsonl-store.ts` | JSONL persistence with atomic writes and backup |
 | `src/plugins/manager.ts` | Plugin discovery and loading |
-| `src/plugins/tool-executor.ts` | Tool dispatch with allow/deny lists |
+| `src/plugins/tool-executor.ts` | Tool dispatch; injects memoryStore + planStore into handler context |
 | `src/providers/anthropic.ts` | Anthropic SDK client |
 | `src/providers/openai.ts` | OpenAI SDK client (also used for Kimi) |
 | `src/providers/registry.ts` | Provider registry from `providers.json` |
-| `src/memory/memory-store.ts` | JsonMemoryStore — kind-based file-backed store with embedding search |
+| `src/memory/memory-store.ts` | JsonMemoryStore — kind-based file-backed store with hybrid search |
 | `src/memory/embedding-index.ts` | JsonEmbeddingIndex — flat embeddings.json with cosine search and write queue |
 | `src/memory/consolidation.ts` | Session-end LLM extraction pipeline (gpt-4o-mini + text-embedding-3-small) |
 | `src/memory/eviction-scorer.ts` | Weighted scoring for episodic eviction decisions |
 | `src/types/memory.ts` | MemoryEntry, MemoryKind, MemoryStore, EmbeddingIndex interfaces |
+| `src/types/planning.ts` | PlanState, Subgoal, PlanTask, ReflectionEntry, VerificationMethod |
+| `src/planning/plan-store.ts` | PlanStore — in-memory singleton + atomic tmp→rename JSON persistence |
+| `src/planning/planning-loop.ts` | PlanningLoop — 5-phase orchestrator wrapping ExecutionLoop |
 | `src/errors/memory.ts` | Memory error hierarchy (MEMORY_001–005) |
-| `src/cli/bootstrap.ts` | Dependency wiring — config → session → plugins → memory → loop |
+| `src/cli/bootstrap.ts` | Dependency wiring — config → session → plugins → memory → plan → loop |
 | `src/cli/commands/chat.ts` | Interactive REPL and single-message mode |
 | `src/cli/colored-output.ts` | Chalk + ora output adapter (active) |
-| `src/cli/plain-text-output.ts` | Plain text output adapter (reference/testing) |
 | `providers.json` | Provider registry manifest |
 
 ## Bootstrap Sequence (`src/cli/bootstrap.ts`)
@@ -79,18 +87,18 @@ plugins/         # Default plugins (plugin.json manifests)
 1. Ensure `~/.my-agent/config.yaml` exists (create default if not)
 2. Load config (YAML + Zod validation)
 3. Load settings (`~/.my-agent/settings.yaml`)
-4. Validate API keys from environment
-5. Initialize `JsonlSessionStore` at `~/.my-agent/sessions/`
-6. Instantiate provider (Anthropic or OpenAI) from registry
-7. Load plugins from directories
-8. Create `JsonEmbeddingIndex` at `~/.my-agent/memory/embeddings.json`
-9. Initialize `JsonMemoryStore` at `~/.my-agent/memory/` with embedding index
-10. Build `ConsolidationConfig` from OpenAI provider API key
-11. Create `ToolExecutor` with memory store
-12. Create `ExecutionLoop` with tools, working dir, session store, memory store, consolidation config, embedding index
-13. Create tool-call bridge
-14. Initialize `SessionManager` with `ExecutionLoop`
-15. Create `ColoredOutput` adapter
+4. Override system prompt from bundled `src/cli/prompts/system-prompt.md`
+5. Validate API keys from environment
+6. Initialize `JsonlSessionStore` at `~/.my-agent/sessions/`
+7. Instantiate provider (Anthropic or OpenAI) from registry
+8. Load plugins from configured directories
+9. Create `JsonEmbeddingIndex` + `JsonMemoryStore` at `~/.my-agent/memory/`
+10. Create `PlanStore` at `~/.my-agent/plan.json`
+11. Create `ToolExecutor` with `memoryStore`, confirmation callback, and `planStore`
+12. Register all plugin tools in `ToolExecutor`
+13. Create `ExecutionLoop` with tools, working dir, session store, memory store, consolidation config, embedding index
+14. Create tool-call bridge
+15. Initialize `SessionManager` with `ExecutionLoop` (and optionally `PlanningLoop`)
 16. Return `BootstrapResult`
 
 ## Memory Module (Stages 8–9)
@@ -127,10 +135,25 @@ interface MemoryEntry {
 }
 ```
 
-### Retrieval
+### Retrieval — Hybrid Reranking
 
-`search()` accepts a pre-computed `queryEmbedding` vector for cosine ranking, or falls back
-to case-insensitive substring match + recency sort when no embedding is provided.
+`search()` uses a three-signal hybrid score when a `queryEmbedding` is provided:
+
+```
+score = 0.75 × cosine_norm + 0.25 × bm25_tf + 0.10 × tag_overlap_ratio
+```
+
+| Signal | Weight | Detail |
+|---|---|---|
+| `cosine_norm` | 0.75 | Cosine similarity normalized from [−1,1] to [0,1] |
+| `bm25_tf` | 0.25 | BM25-TF saturated at k₁=1.2, normalized per query term count |
+| `tag_overlap_ratio` | 0.10 | `matched_tags / query_tag_count`; query tags capped at 5 |
+
+Tags act as an additive boost rather than a hard pre-filter — semantically relevant entries
+are never dropped before scoring runs.
+
+Falls back to case-insensitive substring match + recency sort when no embedding is available.
+
 `search()` increments `accessCount` and updates `lastAccessed` on every returned entry
 (but does NOT change `updatedAt` — that only changes on content edits).
 
@@ -186,22 +209,100 @@ to prevent concurrent rename races on `embeddings.json.tmp`.
 | MEMORY_004 | `MemoryInvalidContentError` | Empty or oversized content |
 | MEMORY_005 | `MemoryStorageError` | File I/O failure |
 
+## Planning Module (Stage 11)
+
+### Goal → Subgoal → Task Tree
+
+```
+PlanningLoop.run(goal)
+  │
+  ├─ Phase A: Complexity check (auto/always/never) → bypass to ExecutionLoop if simple
+  │
+  ├─ Phase A: Generate initial plan (LLM call)
+  │     └─ PlanState: planId, sessionId, originalGoal, subgoals[], reflections[]
+  │
+  ├─ For each Subgoal (Phase B + C + D):
+  │     ├─ Phase B: Plan verification method (LLM call — automated/llm_judge/human)
+  │     ├─ Phase B: Plan Tasks lazily (LLM call — 2–8 atomic tasks)
+  │     ├─ Phase C: Execute via ExecutionLoop.run() with plan markdown as compactSummary
+  │     │     └─ Agent uses create_plan/plan_subgoal_tasks/update_task/reflect tools
+  │     ├─ Phase C: Poll reflections for triggerReplan → replan if needed
+  │     └─ Phase D: Verify (automated/llm_judge/human escalation)
+  │           └─ onHumanReview() callback if maxVerificationAttempts exceeded
+  │
+  └─ Phase E: Patch plan to 'completed', return PlanningRunResult
+```
+
+### Data Model
+
+```typescript
+PlanState       planId, sessionId, originalGoal, status, subgoals[], reflections[]
+Subgoal         id ("sg-1"), index, title, description, status, verificationMethod?,
+                tasks[], verificationAttempts, result?, startedAt?, completedAt?
+PlanTask        id ("sg-1-t-1"), index, title, status, resultProcess?, startedAt?, completedAt?
+ReflectionEntry id, subgoalId, taskId?, timestamp, observation, nextAction, triggerReplan
+VerificationMethod  mode (automated|llm_judge|human), description, expectedArtifact?
+```
+
+### PlanStore
+
+- In-memory singleton (`this.state`) avoids disk reads on hot path
+- All disk writes are atomic: write to `plan.json.tmp`, then `rename()` to `plan.json`
+- Node.js single-thread model ensures handler writes and loop writes are never concurrent
+- `clear()` resets in-memory state and unlinks `plan.json`
+
+### Verification Modes
+
+| Mode | Behavior |
+|---|---|
+| `automated` | Check all tasks have status `'completed'` |
+| `llm_judge` | `verificationProvider.complete()` returns `{ passed, confidence, reasoning }`; `confidence === 'low'` escalates to human |
+| `human` | Always calls `onHumanReview()`; user can approve or provide revision instructions |
+
+Human escalation also triggers when `verificationAttempts >= maxVerificationAttempts` (default: 2).
+
+### Planning Plugin Tools
+
+| Tool | Purpose |
+|---|---|
+| `create_plan` | Write initial PlanState with subgoals (no Tasks yet) |
+| `plan_subgoal_tasks` | Lazily populate Tasks for one Subgoal before execution |
+| `update_task` | Update Task status + record `resultProcess` |
+| `reflect` | Append ReflectionEntry; `triggerReplan=true` signals PlanningLoop to replan |
+| `revise_remaining_tasks` | Clear pending Tasks, push revised ones (keeps completed Tasks) |
+| `get_plan` | Return formatted plan markdown with subgoal/task tree |
+| `request_human_review` | Set module-level review flag; PlanningLoop polls and pauses |
+
+### Persistence
+
+```
+~/.my-agent/
+├── plan.json          # Active plan (cleared after completion)
+├── memory/            # MemoryStore entries
+└── sessions/          # Session JSONL files
+```
+
 ## Key Design Decisions
 
 | Concern | Approach |
 |---|---|
 | Agent loop | Custom (no LangGraph) |
+| Planning | `PlanningLoop` wraps `ExecutionLoop`; `SessionManager` dispatches optionally |
+| Plan state | In-memory singleton + atomic `tmp→rename` JSON; Node.js single-thread eliminates race conditions |
+| Lazy task planning | Tasks planned per-subgoal just before execution, not upfront — later subgoals benefit from earlier findings |
+| Human review signaling | Module-level variable in `handlers.js`; `PlanningLoop` polls after each subgoal (Node.js module singleton) |
 | Provider registry | `providers.json` manifest — add providers without code changes |
 | SDK abstraction | Two SDKs (Anthropic, OpenAI); multiple providers share same SDK |
 | Plugin system | `plugin.json` manifests with JSON Schema tool definitions |
 | Session storage | Append-only JSONL — human-readable, corruption-resistant |
 | Event persistence | `turn_metadata` + `error_log` records in session JSONL |
 | Memory storage | Per-entry JSON files, atomic writes (tmp + rename), mode 0o600; embeddings in flat JSON map |
+| Memory search | Hybrid reranking: cosine (0.75) + BM25-TF (0.25) + tag overlap boost (0.10) |
 | Memory consolidation | Session-end LLM extraction (gpt-4o-mini) + embedding dedup (text-embedding-3-small) |
 | Token counting | `js-tiktoken` (cl100k_base) for exact chunking across languages and emoji |
 | Output adapter | `OutputAdapter` interface — swap `PlainTextOutput` ↔ `ColoredOutput` |
 | Config | `~/.my-agent/config.yaml` (credentials) + `settings.yaml` (behavior) |
-| Immutability | `readonly` on all message/session/memory types |
+| Immutability | `readonly` on all message/session/memory/planning types |
 
 ## Providers
 
