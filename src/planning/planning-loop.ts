@@ -19,7 +19,7 @@ import type {
   PlanTask,
   VerificationMethod,
 } from '../types/planning.js';
-import { PlanStore } from './plan-store.js';
+import type { PlanStore } from './plan-store.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

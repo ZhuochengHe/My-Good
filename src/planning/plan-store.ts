@@ -21,7 +21,7 @@ function deepMerge<T extends object>(base: T, changes: DeepPartial<T>): T {
       !Array.isArray(baseVal)
     ) {
       result[key as string] = deepMerge(
-        baseVal as object,
+        baseVal,
         incomingVal as DeepPartial<object>
       );
     } else {

@@ -23,7 +23,7 @@ import type {
 } from '../types/events.js';
 import type { Agent } from '../types/agent.js';
 import type { OnToolCallCallback } from '../agent/execution-loop.js';
-import { PlanningLoop } from '../planning/index.js';
+import type { PlanningLoop } from '../planning/index.js';
 import { SessionNotFoundError } from '../errors/session.js';
 import { randomUUID } from 'crypto';
 import { readFile } from 'node:fs/promises';
