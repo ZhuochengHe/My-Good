@@ -62,14 +62,6 @@ if [[ -n "$SHELL_RC" && -f "$SHELL_RC" ]]; then
       echo "   Skipped. Add manually: export PATH=\"\$HOME/.local/bin:\$PATH\""
     fi
   fi
-done
-
-if [[ ${#SHELLS_MISSING_PATH[@]} -gt 0 ]]; then
-  echo ""
-  echo "⚠  Add ~/.local/bin to PATH in: ${SHELLS_MISSING_PATH[*]}"
-  echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
-else
-  echo "✓ ~/.local/bin is already in PATH"
 fi
 
 echo ""
