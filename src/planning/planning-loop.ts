@@ -10,6 +10,10 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import type { Agent } from '../types/agent.js';
 import type { ModelProvider } from '../types/providers.js';
 import type { ConversationMessage } from '../types/messages.js';
@@ -245,6 +249,43 @@ export class PlanningLoop {
     (this.runtimeProgress ?? this.config.onProgress)?.(message);
   }
 
+  // ── Planning docs loader ──────────────────────────────────────────────────
+
+  /**
+   * Load the detailed planning prompt modules and concatenate them.
+   * Tries user dir (~/.my-agent/prompts/system-prompts/planning/) first,
+   * then falls back to bundled src/cli/prompts/planning/.
+   * Returns null if no modules found (graceful degradation).
+   */
+  private async loadPlanningDocs(): Promise<string | null> {
+    const modules = [
+      'planning_data_model',
+      'planning_create',
+      'planning_execute',
+      'planning_reflect',
+      'planning_verify',
+    ];
+
+    const userDir = join(homedir(), '.my-agent', 'prompts', 'system-prompts', 'planning');
+    const bundledDir = fileURLToPath(new URL('../../cli/prompts/planning/', import.meta.url));
+
+    const parts: string[] = [];
+    for (const mod of modules) {
+      const filename = `${mod}.md`;
+      for (const dir of [userDir, bundledDir]) {
+        try {
+          const content = await readFile(join(dir, filename), 'utf-8');
+          parts.push(content.trim());
+          break;
+        } catch {
+          // try next candidate
+        }
+      }
+    }
+
+    return parts.length > 0 ? parts.join('\n\n---\n\n') : null;
+  }
+
   // ── Phase A helpers ───────────────────────────────────────────────────────
 
   private async isComplex(goal: string): Promise<boolean> {
@@ -404,16 +445,23 @@ export class PlanningLoop {
     signal?: AbortSignal
   ): Promise<{ messages: ConversationMessage[]; taskResults: string[] }> {
     const planMarkdown = this.serializePlanToMarkdown(plan);
+    const planningDocs = await this.loadPlanningDocs();
 
     const subgoalPrompt =
       `Execute subgoal ${subgoal.index}/${plan.subgoals.length}: ${subgoal.title}\n\n` +
       `${subgoal.description}\n\n` +
       `Use plan_subgoal_tasks to plan your tasks first, then execute them with update_task after each.`;
 
+    // Inject planning docs + current plan state as compactSummary so the agent
+    // has the full planning ruleset and live plan context during execution.
+    const compactSummary = planningDocs
+      ? `${planningDocs}\n\n---\n\n${planMarkdown}`
+      : planMarkdown;
+
     const result = await this.executionLoop.run(subgoalPrompt, {
       sessionId,
       conversationHistory: [...conversationHistory],
-      compactSummary: planMarkdown,
+      compactSummary,
       ...(signal !== undefined && { signal }),
     });
 
