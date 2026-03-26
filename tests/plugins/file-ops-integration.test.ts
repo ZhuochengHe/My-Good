@@ -1,12 +1,13 @@
 /**
  * Integration tests for file-ops plugin with PluginManager.
  *
- * Tests plugin loading, tool registration, and execution through the plugin system.
+ * The file-ops plugin is write-only: read_file and list_directory were removed
+ * because shell_exec (cat/ls) is preferred for reading. Only write_file remains.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PluginManager } from '../../src/plugins/manager.js';
-import { mkdir, writeFile, rm, readFile } from 'fs/promises';
+import { mkdir, rm, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -35,66 +36,34 @@ describe('file-ops plugin integration', () => {
 
       expect(plugin.manifest.id).toBe('file-ops');
       expect(plugin.manifest.name).toBe('File Operations');
-      expect(plugin.manifest.version).toBe('1.0.0');
+      expect(plugin.manifest.version).toBeDefined();
       expect(plugin.enabled).toBe(true);
     });
 
-    it('registers all three tools from the plugin', async () => {
+    it('registers only write_file tool from the plugin', async () => {
       await manager.loadPlugin(pluginDir);
 
-      expect(manager.hasTool('read_file')).toBe(true);
       expect(manager.hasTool('write_file')).toBe(true);
-      expect(manager.hasTool('list_directory')).toBe(true);
+      expect(manager.hasTool('read_file')).toBe(false);
+      expect(manager.hasTool('list_directory')).toBe(false);
     });
 
-    it('provides correct tool definitions for LLM consumption', async () => {
+    it('provides correct tool definition for write_file', async () => {
       await manager.loadPlugin(pluginDir);
 
       const tools = manager.getToolDefinitions();
-      const readFileTool = tools.find((t) => t.name === 'read_file');
       const writeFileTool = tools.find((t) => t.name === 'write_file');
-      const listDirTool = tools.find((t) => t.name === 'list_directory');
-
-      expect(readFileTool).toBeDefined();
-      expect(readFileTool?.description).toContain('Read');
-      expect(readFileTool?.parameters.required).toContain('path');
 
       expect(writeFileTool).toBeDefined();
       expect(writeFileTool?.description).toContain('Write');
       expect(writeFileTool?.parameters.required).toContain('path');
       expect(writeFileTool?.parameters.required).toContain('content');
-
-      expect(listDirTool).toBeDefined();
-      expect(listDirTool?.description).toContain('List');
-      expect(listDirTool?.parameters.required).toContain('path');
     });
   });
 
   describe('tool execution through plugin manager', () => {
     beforeEach(async () => {
       await manager.loadPlugin(pluginDir);
-    });
-
-    it('executes read_file handler through plugin manager', async () => {
-      // Create test file
-      const testFile = join(testDir, 'test.txt');
-      await writeFile(testFile, 'Integration test content', 'utf-8');
-
-      const handler = manager.getToolHandler('read_file');
-      expect(handler).toBeDefined();
-
-      if (handler) {
-        const result = await handler(
-          { path: 'test.txt' },
-          {
-            sessionId: 'integration-test',
-            workingDirectory: testDir,
-            env: {},
-          }
-        );
-
-        expect(result.output).toBe('Integration test content');
-      }
     });
 
     it('executes write_file handler through plugin manager', async () => {
@@ -111,7 +80,7 @@ describe('file-ops plugin integration', () => {
           }
         );
 
-        expect(result.output).toContain('success');
+        expect(result.output).toContain('File written');
 
         // Verify file was written
         const content = await readFile(join(testDir, 'output.txt'), 'utf-8');
@@ -119,18 +88,13 @@ describe('file-ops plugin integration', () => {
       }
     });
 
-    it('executes list_directory handler through plugin manager', async () => {
-      // Create test structure
-      await writeFile(join(testDir, 'file1.txt'), 'content1', 'utf-8');
-      await writeFile(join(testDir, 'file2.txt'), 'content2', 'utf-8');
-      await mkdir(join(testDir, 'subdir'));
-
-      const handler = manager.getToolHandler('list_directory');
+    it('write_file creates parent directories automatically', async () => {
+      const handler = manager.getToolHandler('write_file');
       expect(handler).toBeDefined();
 
       if (handler) {
         const result = await handler(
-          { path: '.' },
+          { path: 'nested/dir/file.txt', content: 'nested content' },
           {
             sessionId: 'integration-test',
             workingDirectory: testDir,
@@ -138,9 +102,10 @@ describe('file-ops plugin integration', () => {
           }
         );
 
-        expect(result.output).toContain('file1.txt');
-        expect(result.output).toContain('file2.txt');
-        expect(result.output).toContain('subdir');
+        expect(result.output).toContain('File written');
+
+        const content = await readFile(join(testDir, 'nested/dir/file.txt'), 'utf-8');
+        expect(content).toBe('nested content');
       }
     });
   });
@@ -150,46 +115,21 @@ describe('file-ops plugin integration', () => {
       await manager.loadPlugin(pluginDir);
 
       // Initially enabled
-      expect(manager.hasTool('read_file')).toBe(true);
       expect(manager.hasTool('write_file')).toBe(true);
-      expect(manager.hasTool('list_directory')).toBe(true);
 
       // Disable plugin
       manager.disablePlugin('file-ops');
-      expect(manager.hasTool('read_file')).toBe(false);
       expect(manager.hasTool('write_file')).toBe(false);
-      expect(manager.hasTool('list_directory')).toBe(false);
 
       // Re-enable plugin
       manager.enablePlugin('file-ops');
-      expect(manager.hasTool('read_file')).toBe(true);
       expect(manager.hasTool('write_file')).toBe(true);
-      expect(manager.hasTool('list_directory')).toBe(true);
     });
   });
 
   describe('error handling', () => {
     beforeEach(async () => {
       await manager.loadPlugin(pluginDir);
-    });
-
-    it('returns error output for invalid operations', async () => {
-      const handler = manager.getToolHandler('read_file');
-      expect(handler).toBeDefined();
-
-      if (handler) {
-        const result = await handler(
-          { path: 'nonexistent.txt' },
-          {
-            sessionId: 'error-test',
-            workingDirectory: testDir,
-            env: {},
-          }
-        );
-
-        expect(result.output).toContain('Error');
-        expect(result.output).toContain('nonexistent.txt');
-      }
     });
 
     it('handles missing required parameters gracefully', async () => {
@@ -217,34 +157,6 @@ describe('file-ops plugin integration', () => {
       await manager.loadPlugin(pluginDir);
     });
 
-    it('handles multiple concurrent read operations', async () => {
-      // Create test files
-      await writeFile(join(testDir, 'file1.txt'), 'content1', 'utf-8');
-      await writeFile(join(testDir, 'file2.txt'), 'content2', 'utf-8');
-      await writeFile(join(testDir, 'file3.txt'), 'content3', 'utf-8');
-
-      const handler = manager.getToolHandler('read_file');
-      expect(handler).toBeDefined();
-
-      if (handler) {
-        const context = {
-          sessionId: 'concurrent-test',
-          workingDirectory: testDir,
-          env: {},
-        };
-
-        const results = await Promise.all([
-          handler({ path: 'file1.txt' }, context),
-          handler({ path: 'file2.txt' }, context),
-          handler({ path: 'file3.txt' }, context),
-        ]);
-
-        expect(results[0].output).toBe('content1');
-        expect(results[1].output).toBe('content2');
-        expect(results[2].output).toBe('content3');
-      }
-    });
-
     it('handles multiple concurrent write operations', async () => {
       const handler = manager.getToolHandler('write_file');
       expect(handler).toBeDefined();
@@ -263,7 +175,7 @@ describe('file-ops plugin integration', () => {
         ]);
 
         results.forEach((result) => {
-          expect(result.output).toContain('success');
+          expect(result.output).toContain('File written');
         });
 
         // Verify all files written

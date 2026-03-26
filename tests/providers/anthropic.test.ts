@@ -28,7 +28,7 @@ const mockClient = {
 // Mock the Anthropic SDK
 vi.mock('@anthropic-ai/sdk', () => {
   return {
-    default: vi.fn(() => mockClient),
+    default: vi.fn(function () { return mockClient; }),
   };
 });
 

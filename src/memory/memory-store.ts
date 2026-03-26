@@ -125,7 +125,7 @@ export class JsonMemoryStore implements MemoryStore {
    * @param entry - Entry to serialise
    */
   private async atomicWrite(filePath: string, entry: MemoryEntry): Promise<void> {
-    const tmp = `${filePath}.tmp`;
+    const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
     try {
       await fs.writeFile(tmp, JSON.stringify(entry, null, 2), { mode: 0o600 });
       await fs.rename(tmp, filePath);
