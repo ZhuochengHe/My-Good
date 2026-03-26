@@ -28,6 +28,10 @@ import { consolidate } from '../memory/consolidation.js';
 import type { ConsolidationConfig } from '../memory/consolidation.js';
 import { ContextBuilder } from './context-builder.js';
 import { randomUUID } from 'crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Tool call context passed to onToolCall handler.
@@ -680,10 +684,24 @@ export class ExecutionLoop implements Agent {
 
     const preferencesSection = '';
 
-    const summarySection =
-      compactSummary !== undefined && compactSummary.length > 0
-        ? `\n\n## Previous Conversation Summary\n${compactSummary}`
-        : '';
+    let summarySection = '';
+    if (compactSummary !== undefined && compactSummary.length > 0) {
+      let resumeTemplate: string;
+      try {
+        const userPath = join(homedir(), '.my-agent', 'prompts', 'compact', 'compact_resume.md');
+        resumeTemplate = await readFile(userPath, 'utf-8');
+      } catch {
+        try {
+          const bundledPath = fileURLToPath(
+            new URL('../../cli/prompts/compact_resume.md', import.meta.url)
+          );
+          resumeTemplate = await readFile(bundledPath, 'utf-8');
+        } catch {
+          resumeTemplate = '## Previous Conversation Summary\n\n{summary}';
+        }
+      }
+      summarySection = '\n\n' + resumeTemplate.replace('{summary}', compactSummary);
+    }
 
     return (
       `${this.settings.behavior.systemPrompt}` +

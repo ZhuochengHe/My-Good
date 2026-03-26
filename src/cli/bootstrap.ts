@@ -96,19 +96,43 @@ export async function bootstrap(
   // Step 3: Load agent settings
   const settings = await loadSettings();
 
-  // Step 3a: Override systemPrompt from the bundled prompt file when available
+  // Step 3a: Build systemPrompt by assembling modular prompt files.
+  // Priority: ~/.my-agent/prompts/system-prompts/ (user-installed) > bundled src/cli/prompts/
+  // Modules are loaded in order: core → memory → tools → planning → soul
+  const MODULE_ORDER = ['system_core', 'system_memory', 'system_tools', 'system_planning', 'soul'];
   let effectiveSettings = settings;
   try {
-    const promptPath = fileURLToPath(
-      new URL('../../cli/prompts/system-prompt.md', import.meta.url)
-    );
-    const promptContent = await readFile(promptPath, 'utf-8');
-    effectiveSettings = {
-      ...settings,
-      behavior: { ...settings.behavior, systemPrompt: promptContent },
-    };
+    const userPromptsDir = join(homedir(), '.my-agent', 'prompts', 'system-prompts');
+    const bundledPromptsUrl = new URL('../../cli/prompts/', import.meta.url);
+    const bundledPromptsDir = fileURLToPath(bundledPromptsUrl);
+
+    const parts: string[] = [];
+    for (const module of MODULE_ORDER) {
+      const filename = `${module}.md`;
+      // Try user dir first, then bundled
+      const candidates = [
+        join(userPromptsDir, filename),
+        join(bundledPromptsDir, filename),
+      ];
+      for (const candidate of candidates) {
+        try {
+          const content = await readFile(candidate, 'utf-8');
+          parts.push(content.trim());
+          break;
+        } catch {
+          // try next candidate
+        }
+      }
+    }
+
+    if (parts.length > 0) {
+      effectiveSettings = {
+        ...settings,
+        behavior: { ...settings.behavior, systemPrompt: parts.join('\n\n---\n\n') },
+      };
+    }
   } catch {
-    // File not found or unreadable; keep existing settings.behavior.systemPrompt
+    // Failed to load modular prompts; keep existing settings.behavior.systemPrompt
   }
 
   // Step 4: Check for API keys in environment
