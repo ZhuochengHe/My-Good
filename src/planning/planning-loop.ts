@@ -258,24 +258,24 @@ export class PlanningLoop {
    * Returns null if no modules found (graceful degradation).
    */
   private async loadPlanningDocs(): Promise<string | null> {
-    const modules = [
-      'planning_data_model',
-      'planning_create',
-      'planning_execute',
-      'planning_reflect',
-      'planning_verify',
+    const modules: Array<{ name: string; label: string }> = [
+      { name: 'planning_data_model', label: 'Planning: Data Model'   },
+      { name: 'planning_create',     label: 'Planning: Create Plan'  },
+      { name: 'planning_execute',    label: 'Planning: Execute'      },
+      { name: 'planning_reflect',    label: 'Planning: Reflect'      },
+      { name: 'planning_verify',     label: 'Planning: Verify'       },
     ];
 
     const userDir = join(homedir(), '.my-agent', 'prompts', 'system-prompts', 'planning');
     const bundledDir = fileURLToPath(new URL('../../cli/prompts/planning/', import.meta.url));
 
     const parts: string[] = [];
-    for (const mod of modules) {
-      const filename = `${mod}.md`;
+    for (const { name, label } of modules) {
+      const filename = `${name}.md`;
       for (const dir of [userDir, bundledDir]) {
         try {
           const content = await readFile(join(dir, filename), 'utf-8');
-          parts.push(content.trim());
+          parts.push(`# [${label}]\n\n${content.trim()}`);
           break;
         } catch {
           // try next candidate
@@ -283,7 +283,7 @@ export class PlanningLoop {
       }
     }
 
-    return parts.length > 0 ? parts.join('\n\n---\n\n') : null;
+    return parts.length > 0 ? parts.join('\n\n') : null;
   }
 
   // ── Phase A helpers ───────────────────────────────────────────────────────
