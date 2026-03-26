@@ -64,6 +64,46 @@ if [[ -n "$SHELL_RC" && -f "$SHELL_RC" ]]; then
   fi
 fi
 
+# Install default system prompts to ~/.my-agent/prompts/system-prompts/
+PROMPTS_SRC="$SCRIPT_DIR/src/cli/prompts"
+PROMPTS_TARGET="$HOME/.my-agent/prompts/system-prompts"
+
+if [[ -d "$PROMPTS_SRC" ]]; then
+  mkdir -p "$PROMPTS_TARGET"
+  for prompt_file in "$PROMPTS_SRC"/system_*.md "$PROMPTS_SRC/soul.md"; do
+    [[ -f "$prompt_file" ]] || continue
+    target_file="$PROMPTS_TARGET/$(basename "$prompt_file")"
+    # Never overwrite soul.md — it's the agent's own evolving file
+    if [[ "$(basename "$prompt_file")" == "soul.md" && -f "$target_file" ]]; then
+      echo "✓ soul.md already exists, skipping (keeping your version)"
+    else
+      cp "$prompt_file" "$target_file"
+      echo "✓ prompt installed: $(basename "$prompt_file") → $target_file"
+    fi
+  done
+  # Install planning sub-modules
+  if [[ -d "$PROMPTS_SRC/planning" ]]; then
+    mkdir -p "$PROMPTS_TARGET/planning"
+    for prompt_file in "$PROMPTS_SRC/planning"/planning_*.md; do
+      [[ -f "$prompt_file" ]] || continue
+      cp "$prompt_file" "$PROMPTS_TARGET/planning/$(basename "$prompt_file")"
+      echo "✓ planning prompt installed: $(basename "$prompt_file") → $PROMPTS_TARGET/planning/"
+    done
+  fi
+fi
+
+# Install compact prompts to ~/.my-agent/prompts/compact/
+COMPACT_TARGET="$HOME/.my-agent/prompts/compact"
+
+if [[ -d "$PROMPTS_SRC" ]]; then
+  mkdir -p "$COMPACT_TARGET"
+  for prompt_file in "$PROMPTS_SRC"/compact_*.md; do
+    [[ -f "$prompt_file" ]] || continue
+    cp "$prompt_file" "$COMPACT_TARGET/$(basename "$prompt_file")"
+    echo "✓ compact prompt installed: $(basename "$prompt_file") → $COMPACT_TARGET"
+  done
+fi
+
 echo ""
 echo "Run: my-agent setup"
 echo ""
