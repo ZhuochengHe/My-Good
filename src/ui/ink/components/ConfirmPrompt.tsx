@@ -167,11 +167,12 @@ function WriteFileDiff({ path, content }: WriteFileDiffProps): React.ReactElemen
         }
         const lineNumStr = String(line.lineNo).padStart(4, ' ');
         const prefix = line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ';
-        const color = line.type === 'added' ? 'green' : line.type === 'removed' ? 'red' : undefined;
-        return (
-          <Text key={i} color={color}>
-            {lineNumStr} {prefix} {line.content}
-          </Text>
+        return line.type === 'added' ? (
+          <Text key={i} color="green">{lineNumStr} {prefix} {line.content}</Text>
+        ) : line.type === 'removed' ? (
+          <Text key={i} color="red">{lineNumStr} {prefix} {line.content}</Text>
+        ) : (
+          <Text key={i}>{lineNumStr} {prefix} {line.content}</Text>
         );
       })}
       {visibleLines.length === 0 && (
