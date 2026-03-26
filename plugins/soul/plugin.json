@@ -17,7 +17,7 @@
     },
     {
       "name": "update_soul",
-      "description": "Update soul.md with new content. This is your character file — update it when you learn something meaningful about who you are or how you work. Always tell the user when you update it.",
+      "description": "Update soul.md with new content. Call read_soul first. Update at end of session when: you learned how to work better with this user, made a mistake worth recording, formed a persistent opinion, or have something new for 'What I'm Still Learning'. Do not update every session — only when genuinely new. Always tell the user what changed.",
       "dangerous": false,
       "parameters": {
         "type": "object",
