@@ -30,7 +30,7 @@ const mockClient = {
 // Mock the OpenAI SDK
 vi.mock('openai', () => {
   return {
-    default: vi.fn(() => mockClient),
+    default: vi.fn(function () { return mockClient; }),
   };
 });
 

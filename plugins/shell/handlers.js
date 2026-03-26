@@ -69,6 +69,31 @@ function sanitizeEnv(env) {
  * @param {import('../../src/types/tools.js').ToolContext} context - Tool context.
  * @returns {Promise<import('../../src/types/tools.js').ToolHandlerResult>} Handler result.
  */
+/**
+ * Patterns that indicate a shell command is writing to a file.
+ * These are blocked — use write_file instead so content is visible to the user.
+ */
+const WRITE_PATTERNS = [
+  /\s>\s/,           // redirect: cmd > file
+  /\s>>/,            // append: cmd >> file
+  /^\s*>/,           // redirect at start: > file
+  /\btee\b/,         // tee: cmd | tee file
+  /\bdd\s/,          // dd: dd if=... of=...
+  /\btruncate\b/,    // truncate: truncate -s 0 file
+];
+
+/**
+ * Check if a command attempts to write to a file.
+ *
+ * @param {string} command - The shell command to check.
+ * @returns {boolean} True if the command writes to a file.
+ */
+function isFileWriteCommand(command) {
+  // Allow heredoc-free redirections used for reading (e.g. < file)
+  // but block output redirections
+  return WRITE_PATTERNS.some((pattern) => pattern.test(command));
+}
+
 export async function execCommand(args, context) {
   try {
     // Validate required parameters
@@ -81,6 +106,15 @@ export async function execCommand(args, context) {
     if (args.command.trim() === '') {
       return {
         output: 'Error: Command parameter cannot be empty',
+      };
+    }
+
+    // Block file write operations — use write_file tool instead
+    if (isFileWriteCommand(args.command)) {
+      return {
+        output:
+          'Error: Shell file write operations are not allowed (>, >>, tee, dd, truncate).\n' +
+          'Use the write_file tool instead — it shows the full content diff before writing.',
       };
     }
 

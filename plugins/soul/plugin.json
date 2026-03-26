@@ -1,0 +1,35 @@
+{
+  "id": "soul",
+  "name": "Soul",
+  "version": "1.0.0",
+  "description": "Read and update the agent's soul.md — its evolving self-description and character",
+  "tools": [
+    {
+      "name": "read_soul",
+      "description": "Read the current soul.md file. Use this before updating to understand the current content.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "handler": "handlers.js"
+    },
+    {
+      "name": "update_soul",
+      "description": "Update soul.md with new content. Call read_soul first. Update at end of session when: you learned how to work better with this user, made a mistake worth recording, formed a persistent opinion, or have something new for 'What I'm Still Learning'. Do not update every session — only when genuinely new. Always tell the user what changed.",
+      "dangerous": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The full new content of soul.md"
+          }
+        },
+        "required": ["content"]
+      },
+      "handler": "handlers.js"
+    }
+  ]
+}

@@ -28,6 +28,8 @@ import { SessionNotFoundError } from '../errors/session.js';
 import { randomUUID } from 'crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { JsonlSessionStore } from './jsonl-store.js';
 import { TokenCounter } from '../agent/token-counter.js';
 
@@ -691,16 +693,21 @@ export class SessionManager implements EventSubscriber {
       throw new SessionNotFoundError(sessionId);
     }
 
-    // Build compact summary prompt from file
+    // Build compact summary prompt — try user dir first, then bundled
     let promptTemplate: string;
     try {
-      const promptPath = fileURLToPath(
-        new URL('../../cli/prompts/compact-summary.md', import.meta.url)
-      );
-      promptTemplate = await readFile(promptPath, 'utf-8');
+      const userPath = join(homedir(), '.my-agent', 'prompts', 'compact', 'compact_summary.md');
+      promptTemplate = await readFile(userPath, 'utf-8');
     } catch {
-      promptTemplate =
-        'Summarize the conversation.${COMPACT_INSTRUCTIONS} Wrap output in <summary></summary> tags.';
+      try {
+        const bundledPath = fileURLToPath(
+          new URL('../../cli/prompts/compact_summary.md', import.meta.url)
+        );
+        promptTemplate = await readFile(bundledPath, 'utf-8');
+      } catch {
+        promptTemplate =
+          'Summarize the conversation.${COMPACT_INSTRUCTIONS} Wrap output in <summary></summary> tags.';
+      }
     }
 
     // Inject optional instructions

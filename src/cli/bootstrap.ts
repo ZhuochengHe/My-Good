@@ -96,19 +96,50 @@ export async function bootstrap(
   // Step 3: Load agent settings
   const settings = await loadSettings();
 
-  // Step 3a: Override systemPrompt from the bundled prompt file when available
+  // Step 3a: Build systemPrompt by assembling modular prompt files.
+  // Priority: ~/.my-agent/prompts/system-prompts/ (user-installed) > bundled src/cli/prompts/
+  // Modules are loaded in order: core → memory → tools → planning → soul
+  // Modules loaded in order; each becomes a labelled section in the final prompt.
+  // soul is always loaded from user dir (their personal evolving file); the bundled
+  // soul.md serves as the first-time default when the user dir doesn't exist yet.
+  const MODULE_ORDER: Array<{ name: string; label: string }> = [
+    { name: 'system_core',     label: 'Core'     },
+    { name: 'system_memory',   label: 'Memory'   },
+    { name: 'system_tools',    label: 'Tools'    },
+    { name: 'system_planning', label: 'Planning' },
+    { name: 'soul',            label: 'Soul'     },
+  ];
   let effectiveSettings = settings;
   try {
-    const promptPath = fileURLToPath(
-      new URL('../../cli/prompts/system-prompt.md', import.meta.url)
-    );
-    const promptContent = await readFile(promptPath, 'utf-8');
-    effectiveSettings = {
-      ...settings,
-      behavior: { ...settings.behavior, systemPrompt: promptContent },
-    };
+    const userPromptsDir = join(homedir(), '.my-agent', 'prompts', 'system-prompts');
+    const bundledPromptsDir = fileURLToPath(new URL('../../cli/prompts/', import.meta.url));
+
+    const parts: string[] = [];
+    for (const { name, label } of MODULE_ORDER) {
+      const filename = `${name}.md`;
+      const candidates = [
+        join(userPromptsDir, filename),
+        join(bundledPromptsDir, filename),
+      ];
+      for (const candidate of candidates) {
+        try {
+          const content = await readFile(candidate, 'utf-8');
+          parts.push(`# [${label}]\n\n${content.trim()}`);
+          break;
+        } catch {
+          // try next candidate
+        }
+      }
+    }
+
+    if (parts.length > 0) {
+      effectiveSettings = {
+        ...settings,
+        behavior: { ...settings.behavior, systemPrompt: parts.join('\n\n') },
+      };
+    }
   } catch {
-    // File not found or unreadable; keep existing settings.behavior.systemPrompt
+    // Failed to load modular prompts; keep existing settings.behavior.systemPrompt
   }
 
   // Step 4: Check for API keys in environment

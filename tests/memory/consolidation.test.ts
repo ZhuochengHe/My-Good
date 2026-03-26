@@ -158,10 +158,12 @@ vi.mock('openai', () => {
   const mockChatCreate = vi.fn();
   const mockEmbeddingsCreate = vi.fn();
   return {
-    default: vi.fn().mockImplementation(() => ({
-      chat: { completions: { create: mockChatCreate } },
-      embeddings: { create: mockEmbeddingsCreate },
-    })),
+    default: vi.fn().mockImplementation(function () {
+      return {
+        chat: { completions: { create: mockChatCreate } },
+        embeddings: { create: mockEmbeddingsCreate },
+      };
+    }),
     __mockChatCreate: mockChatCreate,
     __mockEmbeddingsCreate: mockEmbeddingsCreate,
   };
