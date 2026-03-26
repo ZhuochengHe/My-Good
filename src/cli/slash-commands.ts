@@ -7,6 +7,8 @@
 import type { OutputAdapter } from './output-adapter.js';
 import type { SessionManager, SearchFilters } from '../session/session-manager.js';
 import type { AppConfig } from '../types/config.js';
+import type { MemoryStore, MemoryKind } from '../types/memory.js';
+import type { InputReader } from './input-reader.js';
 
 /**
  * Context provided to slash command handlers.
@@ -20,6 +22,10 @@ export interface SlashCommandContext {
   readonly sessionId: string;
   /** Full application config (optional). */
   readonly config?: AppConfig;
+  /** Memory store for /memory command (optional). */
+  readonly memoryStore?: MemoryStore;
+  /** Input reader for interactive prompts in /memory command (optional). */
+  readonly input?: InputReader;
 }
 
 /**
@@ -85,6 +91,10 @@ export async function handleSlashCommand(
       await handleCompact(args, context);
       return { handled: true, shouldExit: false };
 
+    case 'memory':
+      await handleMemory(args, context);
+      return { handled: true, shouldExit: false };
+
     default:
       context.output.writeError(
         `Unknown command: /${command}. Type /help for available commands.`,
@@ -106,6 +116,8 @@ function writeHelp(output: OutputAdapter): void {
   output.write('  /session <id>      Show session details');
   output.write('  /model             Show current model');
   output.write('  /compact [hint]    Summarize and reset conversation context');
+  output.write('  /memory            Browse and delete memory entries');
+  output.write('  /memory clear-all  Delete ALL memories (prompts for confirmation)');
   output.write('  /clear             Clear the terminal');
   output.write('  /exit, /quit       Exit the chat');
   output.write('');
@@ -211,6 +223,137 @@ async function handleSession(
   } catch {
     context.output.writeError('Failed to list sessions.');
   }
+}
+
+/**
+ * Handle the /memory [clear-all] command.
+ *
+ * With no arguments: interactive flow — choose kind → pick entry → confirm delete.
+ * With "clear-all": prompt once then delete every memory entry.
+ *
+ * @param args - Remaining command arguments after "memory"
+ * @param context - Slash command context (requires memoryStore and input)
+ */
+async function handleMemory(
+  args: string[],
+  context: SlashCommandContext,
+): Promise<void> {
+  const { output, memoryStore, input } = context;
+
+  if (!memoryStore || !input) {
+    output.writeError('Memory management is not available in this mode.');
+    return;
+  }
+
+  // /memory clear-all — delete everything after a single confirmation
+  if (args[0]?.toLowerCase() === 'clear-all') {
+    output.write('');
+    output.write('This will permanently delete ALL memory entries.');
+    const confirm = await input.prompt('Type "yes" to confirm: ');
+    if (confirm.trim().toLowerCase() !== 'yes') {
+      output.write('Cancelled.');
+      output.write('');
+      return;
+    }
+    const all = await memoryStore.search({});
+    let deleted = 0;
+    for (const entry of all) {
+      await memoryStore.delete(entry.id);
+      deleted++;
+    }
+    output.write('');
+    output.writeSuccess(`Deleted ${deleted} memory ${deleted === 1 ? 'entry' : 'entries'}.`);
+    output.write('');
+    return;
+  }
+
+  // /memory — interactive browse and delete
+  const KINDS: MemoryKind[] = ['preference', 'experiential', 'semantic', 'episodic'];
+
+  output.write('');
+  output.write('Memory kinds:');
+  output.write('  [1] preference');
+  output.write('  [2] experiential');
+  output.write('  [3] semantic');
+  output.write('  [4] episodic');
+  output.write('  [5] all');
+  output.write('');
+
+  const kindChoice = await input.prompt('Select kind (1–5, or Enter to cancel): ');
+  const kindTrimmed = kindChoice.trim();
+  if (kindTrimmed === '') {
+    output.write('Cancelled.');
+    output.write('');
+    return;
+  }
+
+  const kindIndex = parseInt(kindTrimmed, 10);
+  if (isNaN(kindIndex) || kindIndex < 1 || kindIndex > 5) {
+    output.writeError('Invalid choice.');
+    output.write('');
+    return;
+  }
+
+  const selectedKind: MemoryKind | undefined = kindIndex <= 4 ? KINDS[kindIndex - 1] : undefined;
+  const entries = await memoryStore.search(selectedKind ? { kind: selectedKind } : {});
+
+  if (entries.length === 0) {
+    output.write('No memory entries found.');
+    output.write('');
+    return;
+  }
+
+  output.write('');
+  output.write(`Found ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}:`);
+  output.write('');
+
+  entries.forEach((entry, i) => {
+    const preview = entry.content.length > 80
+      ? entry.content.slice(0, 77) + '...'
+      : entry.content;
+    const kindLabel = `[${entry.kind}]`.padEnd(14);
+    output.write(`  [${i + 1}] ${kindLabel} ${preview}`);
+  });
+  output.write('');
+
+  const entryChoice = await input.prompt('Select entry to view/delete (number, or Enter to cancel): ');
+  const entryTrimmed = entryChoice.trim();
+  if (entryTrimmed === '') {
+    output.write('Cancelled.');
+    output.write('');
+    return;
+  }
+
+  const entryIndex = parseInt(entryTrimmed, 10);
+  if (isNaN(entryIndex) || entryIndex < 1 || entryIndex > entries.length) {
+    output.writeError('Invalid selection.');
+    output.write('');
+    return;
+  }
+
+  const selected = entries[entryIndex - 1]!;
+  const createdAt = new Date(selected.createdAt).toLocaleDateString();
+
+  output.write('');
+  output.write('─'.repeat(60));
+  output.write(`Kind:    ${selected.kind}`);
+  output.write(`Created: ${createdAt}`);
+  output.write(`Tags:    ${selected.tags.join(', ') || '(none)'}`);
+  output.write('');
+  output.write(selected.content);
+  output.write('─'.repeat(60));
+  output.write('');
+
+  const deleteChoice = await input.prompt('Delete this entry? [y/N]: ');
+  if (deleteChoice.trim().toLowerCase() !== 'y') {
+    output.write('Not deleted.');
+    output.write('');
+    return;
+  }
+
+  await memoryStore.delete(selected.id);
+  output.writeSuccess('Entry deleted.');
+  output.write('');
 }
 
 /**

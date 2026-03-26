@@ -28,6 +28,7 @@ import { ColoredOutput } from './colored-output.js';
 import type { OutputAdapter } from './output-adapter.js';
 import { JsonMemoryStore, JsonEmbeddingIndex } from '../memory/index.js';
 import type { ConsolidationConfig } from '../memory/index.js';
+import type { MemoryStore } from '../types/memory.js';
 import { PlanStore } from '../planning/index.js';
 
 /**
@@ -65,6 +66,8 @@ export interface BootstrapResult {
   readonly warnings: readonly string[];
   /** Total number of non-expired memory entries across all layers at startup */
   readonly memoryEntryCount: number;
+  /** Memory store instance for direct manipulation (e.g. /memory slash command) */
+  readonly memoryStore: MemoryStore;
 }
 
 /**
@@ -265,6 +268,7 @@ export async function bootstrap(
     output,
     warnings,
     memoryEntryCount,
+    memoryStore,
   };
 }
 

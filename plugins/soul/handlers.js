@@ -19,9 +19,9 @@ const SOUL_PATH = join(homedir(), '.my-agent', 'prompts', 'system-prompts', 'sou
 export async function read_soul(_args, _context) {
   try {
     const content = await readFile(SOUL_PATH, 'utf-8');
-    return { content };
+    return { output: content };
   } catch {
-    return { content: '(soul.md not found — it will be created on first update)' };
+    return { output: '(soul.md not found — it will be created on first update)' };
   }
 }
 
@@ -39,5 +39,5 @@ export async function update_soul(args, _context) {
   await mkdir(join(homedir(), '.my-agent', 'prompts', 'system-prompts'), { recursive: true });
   await writeFile(SOUL_PATH, content, 'utf-8');
 
-  return { success: true, path: SOUL_PATH };
+  return { output: `soul.md updated at ${SOUL_PATH}` };
 }

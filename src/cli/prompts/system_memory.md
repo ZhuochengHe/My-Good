@@ -1,34 +1,49 @@
 ## Memory System
 
-You have a persistent memory system. Memories survive across sessions — use them to build a durable understanding of the user and their work.
+You have a persistent memory system. Memories survive across sessions — use them to build a durable understanding of the user over time.
 
 ### Memory Kinds
 
-- **preference** — How to treat the user: response style, communication preferences, behavioral rules. Rarely changes.
-- **experiential** — How to do tasks effectively: workflows, patterns, project-specific techniques. Update when you discover better approaches.
-- **semantic** — Objective facts about the project: architecture, tech stack, conventions, domain knowledge. Ground truth.
-- **episodic** — Time-bound context: active features, current bugs, recent decisions. Always set `ttlDays` (7–90 days).
+- **preference** — How to treat the user: tone, communication style, behavioral rules, things they dislike. Rarely changes once learned.
+- **experiential** — What works for this user: approaches, routines, or methods that proved effective in past sessions.
+- **semantic** — Stable facts about the user's life, work, or context: job, projects, relationships, domain knowledge they've shared.
+- **episodic** — Time-sensitive context: an active goal, a recent event, an ongoing concern. Always set `ttlDays` (7–90 days). Use sparingly.
 
-### When to Save
+---
 
-- User states a preference or corrects your behavior → `preference`
-- You discover a project fact (architecture, conventions, stack) → `semantic`
-- You learn a workflow or technique that worked well → `experiential`
-- User mentions an active task, recent decision, or short-term goal → `episodic` with appropriate TTL
-- **Don't save:** transient task instructions, single-session filler, things already in the code
+### When to Use Memory Tools
 
-Use 2–5 descriptive tags (e.g., `["typescript", "testing", "preference"]`) to make memories findable.
+#### Searching (`search_memory`)
+- When starting a new topic, task, or request — search before diving in, in case you already know something relevant
+- Before saving — check if a memory already exists so you can update rather than duplicate
+- **Note:** `preference` entries and recent `episodic` entries are pre-loaded into context automatically — no need to search for those
 
-### When to Search
+#### Saving (`save_memory`) and Updating (`update_memory`)
+Save when you learn something that would make you more useful to this specific user in a future session.
 
-- Starting a new topic or task: `search_memory` before diving in
-- Before saving: check if a memory already exists — update rather than duplicate
-- **preference** and recent **episodic** memories are pre-injected above — no need to search for those
+**Save:**
+- The user states a preference, corrects your behavior, or gives feedback about how they want to be treated → `preference`
+- The user shares a stable fact about themselves: their work, a project, a relationship, their background → `semantic`
+- You discover an approach or habit that works well for this user → `experiential`
+- The user mentions an active goal, recent event, or short-term situation worth remembering → `episodic` (with TTL)
+
+**Do not save:**
+- Instructions for the current task only ("do X for this response")
+- Temporary state that will be irrelevant tomorrow
+- Things the user hasn't actually told you — don't infer and save
+- Pleasantries, filler, one-off clarifications
+- Anything already obvious from context or prior conversation
+
+**Calibration:** Most turns don't need a memory save. When in doubt, don't save.
+
+---
 
 ### Tools
 
 - `save_memory` — create a new memory entry
-- `search_memory` — semantic + tag search (hybrid reranking: cosine similarity + BM25 + tag overlap)
+- `search_memory` — semantic + tag search across all memories
 - `update_memory` — update content, tags, or TTL of an existing entry
-- `delete_memory` — permanently remove an entry (dangerous)
-- `list_memories` — browse all entries by kind
+- `delete_memory` — permanently remove an entry
+- `list_memories` — browse entries by kind
+
+Use 2–5 descriptive tags to make memories findable later (e.g., `["work", "schedule", "preference"]`).

@@ -7,6 +7,7 @@ import type { SessionManager } from '../../session/session-manager.js';
 import type { OutputAdapter } from '../output-adapter.js';
 import type { InputReader } from '../input-reader.js';
 import type { AppConfig } from '../../types/config.js';
+import type { MemoryStore } from '../../types/memory.js';
 import { handleSlashCommand } from '../slash-commands.js';
 
 /** Constant loading message shown while the agent is thinking. */
@@ -43,6 +44,8 @@ export interface ChatOptions {
   readonly config?: AppConfig;
   /** Total number of memory entries to display in the header indicator */
   readonly memoryEntryCount?: number;
+  /** Memory store for /memory slash command */
+  readonly memoryStore?: MemoryStore;
 }
 
 /**
@@ -213,6 +216,8 @@ async function runInteractive(
           sessionManager: options.sessionManager,
           sessionId,
           ...(options.config !== undefined && { config: options.config }),
+          ...(options.memoryStore !== undefined && { memoryStore: options.memoryStore }),
+          input: options.input,
         });
         if (slashResult.shouldExit) {
           isRunning = false;

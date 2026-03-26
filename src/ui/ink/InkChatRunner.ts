@@ -10,6 +10,7 @@ import { render } from 'ink';
 import type { SessionManager } from '../../session/session-manager.js';
 import type { AppConfig } from '../../types/config.js';
 import type { DangerousToolConfirm } from '../../plugins/tool-executor.js';
+import type { MemoryStore } from '../../types/memory.js';
 import { App } from './components/App.js';
 
 /**
@@ -22,6 +23,8 @@ export interface InkChatOptions {
   readonly config: AppConfig;
   /** Total memory entries for header display. */
   readonly memoryEntryCount?: number;
+  /** Memory store for /memory slash command. */
+  readonly memoryStore?: MemoryStore;
   /** Existing session ID to resume (optional — creates new session if omitted). */
   readonly sessionId?: string;
   /** Warnings to display at startup. */
@@ -42,7 +45,7 @@ export interface InkChatOptions {
  * @param options - Chat runner options.
  */
 export async function runInkChat(options: InkChatOptions): Promise<void> {
-  const { sessionManager, config, memoryEntryCount, sessionId: existingSessionId, warnings } = options;
+  const { sessionManager, config, memoryEntryCount, memoryStore, sessionId: existingSessionId, warnings } = options;
 
   // Create or resume session
   let sessionId: string;
@@ -60,6 +63,7 @@ export async function runInkChat(options: InkChatOptions): Promise<void> {
     sessionId,
     config,
     ...(memoryEntryCount !== undefined && { memoryEntryCount }),
+    ...(memoryStore !== undefined && { memoryStore }),
     ...(warnings !== undefined && { warnings }),
     ...(onConfirmReady !== undefined && { onConfirmReady }),
   };

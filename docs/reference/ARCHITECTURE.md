@@ -1,6 +1,12 @@
 # Architecture
 
-## Overview
+## What This Agent Is
+
+my-good is a **living personal assistant** — general-purpose by design, but shaped over time by the specific person who uses it.
+
+Most AI assistants are stateless tools: each session starts from zero. This agent accumulates. It remembers user preferences, past mistakes, domain knowledge, and ongoing context across sessions. It also maintains a `soul.md` — a character file it writes and edits itself, recording what it has learned about how to work best with its user. The soul evolves; the agent gets better at being *this person's* assistant, not just a capable assistant in the abstract.
+
+The core premise: an assistant that knows you is more useful than a smarter assistant that doesn't.
 
 ```
 User Input → CLI → PlanningLoop (optional) → ExecutionLoop → Provider (LLM API)
@@ -8,6 +14,8 @@ User Input → CLI → PlanningLoop (optional) → ExecutionLoop → Provider (L
                    PlanStore (plan.json)    Tool Results ←── PluginManager ←── Tool Calls
                                                   ↓
                                      SessionStore (JSONL) + MemoryStore (JSON files)
+                                                  ↓
+                                         soul.md (agent-owned character)
 ```
 
 **Stack:** TypeScript (strict, ESM) · Node.js ≥18 · Vitest · Commander.js · chalk · ora · js-tiktoken
@@ -48,10 +56,11 @@ src/
 └── utils/       # Logger, retry, ID generation
 
 plugins/         # Default plugins (plugin.json manifests)
-├── file-ops/    # read_file, write_file, list_directory
-├── shell/       # shell_exec (linux/darwin)
+├── file-ops/    # write_file only (read/list via shell_exec — read_file and list_directory removed)
+├── shell/       # shell_exec (linux/darwin); blocks shell file-write operators (>, >>, tee)
 ├── web-search/  # web_search, fetch_url
 ├── memory/      # save_memory, search_memory, update_memory, delete_memory, list_memories
+├── soul/        # read_soul, update_soul — agent's character file
 └── planning/    # create_plan, plan_subgoal_tasks, update_task, reflect,
                  # revise_remaining_tasks, get_plan, request_human_review
 ```
@@ -87,7 +96,7 @@ plugins/         # Default plugins (plugin.json manifests)
 1. Ensure `~/.my-agent/config.yaml` exists (create default if not)
 2. Load config (YAML + Zod validation)
 3. Load settings (`~/.my-agent/settings.yaml`)
-4. Override system prompt from bundled `src/cli/prompts/system-prompt.md`
+4. Assemble modular system prompt (see Prompt System below)
 5. Validate API keys from environment
 6. Initialize `JsonlSessionStore` at `~/.my-agent/sessions/`
 7. Instantiate provider (Anthropic or OpenAI) from registry
@@ -100,6 +109,104 @@ plugins/         # Default plugins (plugin.json manifests)
 14. Create tool-call bridge
 15. Initialize `SessionManager` with `ExecutionLoop` (and optionally `PlanningLoop`)
 16. Return `BootstrapResult`
+
+## Prompt System
+
+The agent's behavior is defined by a set of modular prompt files assembled at startup. They are split by concern so each can be edited, overridden, or extended independently.
+
+### Prompt Assembly
+
+Bootstrap assembles the system prompt from modules in this order, each wrapped with a semantic section label (`# [Label]`) so the LLM can orient itself:
+
+| Module | Label | Purpose |
+|---|---|---|
+| `system_core.md` | `[Core]` | Role, behavioral defaults, response style |
+| `system_memory.md` | `[Memory]` | When and how to use the memory system |
+| `system_tools.md` | `[Tools]` | Tool selection heuristic; `write_file` vs `shell_exec` policy |
+| `system_planning.md` | `[Planning]` | When to activate planning; signals that detailed rules will be injected |
+| `soul.md` | `[Soul]` | Agent's own character file (see Soul section below) |
+
+Modules are joined with `\n\n`. The result is stored as `settings.behavior.systemPrompt`.
+
+### User-Dir Override
+
+Every module is looked up with **user-dir-first** priority:
+
+```
+~/.my-agent/prompts/system-prompts/<module>.md   ← checked first
+src/cli/prompts/<module>.md                       ← bundled fallback
+```
+
+This allows users to customize any module without modifying source. `install.sh` copies the bundled defaults to `~/.my-agent/` on first install but never overwrites `soul.md` (to protect the agent's evolved character).
+
+### Compact Prompts
+
+Two additional prompts are injected only around context compaction (not persisted in the system prompt):
+
+| File | Used when |
+|---|---|
+| `compact_summary.md` | Injected before compaction; instructs the LLM how to produce the summary |
+| `compact_resume.md` | Injected after compaction as the new system prompt preamble; has a `{summary}` placeholder substituted at runtime |
+
+Compact prompts also follow user-dir-first loading, from `~/.my-agent/prompts/compact/`.
+
+### Planning Detail Injection
+
+The `system_planning.md` module is intentionally minimal — it only signals that planning is available. The detailed planning rules (data model, create semantics, execution policy, reflect triggers, verification modes) live in five sub-modules under `src/cli/prompts/planning/`:
+
+```
+planning_data_model.md   ← PlanState/Subgoal/Task hierarchy and status machine
+planning_create.md       ← When to plan, subgoal granularity, goal verification
+planning_execute.md      ← Task granularity rules, update_task transitions
+planning_reflect.md      ← When to reflect, triggerReplan semantics
+planning_verify.md       ← Three verification modes in detail
+```
+
+These are loaded and prepended to `compactSummary` by `PlanningLoop.executeSubgoal()` just before each subgoal's `ExecutionLoop.run()` call — so the LLM receives full planning context only when it is actively executing a plan, not on every turn.
+
+### Soul
+
+`soul.md` is the agent's own character file. It is not a system instruction — it is a document the agent reads (`read_soul`) and edits (`update_soul`) to record what it has learned about itself and its user.
+
+The agent updates `soul.md` at the end of a session when:
+- It discovered something about how it works best with the user
+- It made a mistake and learned from it
+- It formed an opinion or preference that should persist
+- The "What I'm Still Learning" section has something new
+
+The soul file is never overwritten by `install.sh` after first install. It accumulates across all sessions and is the primary mechanism by which the agent develops a stable, personal character over time.
+
+**Storage:** `~/.my-agent/prompts/system-prompts/soul.md`
+
+**Tools:** `read_soul` (no params), `update_soul` (content: string) — provided by `plugins/soul/`.
+
+### File Layout
+
+```
+src/cli/prompts/              ← bundled defaults (shipped with source)
+├── system_core.md
+├── system_memory.md
+├── system_tools.md
+├── system_planning.md
+├── soul.md                   ← starter soul; never overwrites user's evolved version
+├── compact_summary.md
+├── compact_resume.md
+└── planning/
+    ├── planning_data_model.md
+    ├── planning_create.md
+    ├── planning_execute.md
+    ├── planning_reflect.md
+    └── planning_verify.md
+
+~/.my-agent/prompts/          ← user-installed; takes priority over bundled
+├── system-prompts/
+│   ├── system_core.md        ← override any module here
+│   ├── soul.md               ← the agent's evolved character (never auto-overwritten)
+│   └── planning/
+└── compact/
+    ├── compact_summary.md
+    └── compact_resume.md
+```
 
 ## Memory Module (Stages 8–9)
 
@@ -287,6 +394,10 @@ Human escalation also triggers when `verificationAttempts >= maxVerificationAtte
 | Concern | Approach |
 |---|---|
 | Agent loop | Custom (no LangGraph) |
+| System prompt | Assembled from 5 modular files at bootstrap; user-dir overrides bundled defaults |
+| Agent character | `soul.md` — agent-owned file updated via `update_soul` tool; never auto-overwritten |
+| Planning prompt | Minimal in system prompt; full detail injected per-subgoal into `compactSummary` |
+| File writes | `write_file` tool only (shows diff to user); shell `>`, `>>`, `tee` blocked in `shell_exec` |
 | Planning | `PlanningLoop` wraps `ExecutionLoop`; `SessionManager` dispatches optionally |
 | Plan state | In-memory singleton + atomic `tmp→rename` JSON; Node.js single-thread eliminates race conditions |
 | Lazy task planning | Tasks planned per-subgoal just before execution, not upfront — later subgoals benefit from earlier findings |

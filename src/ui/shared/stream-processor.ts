@@ -43,7 +43,7 @@ export function agentEventToAction(event: AgentEvent): ChatAction | null {
     case 'tool_call_end':
       return {
         type: 'tool_end',
-        output: event.result.output,
+        output: event.result.output ?? '',
         success: event.result.success,
       };
 
