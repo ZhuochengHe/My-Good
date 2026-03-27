@@ -7,7 +7,7 @@
 **你的个人AI终端助手** 💬✨
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-严格模式-3178c6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-≥18-339933?style=flat-square&logo=node.js)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-≥20-339933?style=flat-square&logo=node.js)](https://nodejs.org/)
 [![Vitest](https://img.shields.io/badge/测试-Vitest-6E9F18?style=flat-square)](https://vitest.dev/)
 
 *会聊天、能干活、记得你 —— 完全用TypeScript从零构建的AI助手*

@@ -166,7 +166,7 @@ export async function bootstrap(
     const resolvedDir = resolvePath(directory);
     try {
       await pluginManager.loadFromDirectory(resolvedDir);
-    } catch (error) {
+    } catch (_error) {
       // Gracefully handle missing plugin directories
       warnings.push(`Failed to load plugins from ${resolvedDir}`);
     }

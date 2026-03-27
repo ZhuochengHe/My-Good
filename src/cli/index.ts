@@ -5,7 +5,6 @@
  */
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
 import { Command } from 'commander';
 import { homedir } from 'node:os';
