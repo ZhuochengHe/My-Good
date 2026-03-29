@@ -143,7 +143,7 @@ class LruCache<V> {
 
   values(): IterableIterator<V> {
     const entries = this.map.values();
-    return (function* () {
+    return (function* (): IterableIterator<V> {
       for (const node of entries) yield node.value;
     })();
   }

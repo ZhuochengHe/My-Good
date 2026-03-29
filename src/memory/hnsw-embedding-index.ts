@@ -35,8 +35,9 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 // hnswlib-node is a CJS-only native module; use createRequire to import it in ESM.
+import type { HierarchicalNSW as HierarchicalNSWType } from 'hnswlib-node';
 const require = createRequire(import.meta.url);
-const { HierarchicalNSW } = require('hnswlib-node') as typeof import('hnswlib-node');
+const { HierarchicalNSW } = require('hnswlib-node') as { HierarchicalNSW: typeof HierarchicalNSWType };
 
 /** File names inside baseDir. */
 const EMBEDDINGS_FILE = 'embeddings.json';
