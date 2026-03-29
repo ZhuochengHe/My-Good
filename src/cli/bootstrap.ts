@@ -26,7 +26,7 @@ import type { ModelProvider } from '../types/providers.js';
 import { getProvider } from '../providers/registry.js';
 import { ColoredOutput } from './colored-output.js';
 import type { OutputAdapter } from './output-adapter.js';
-import { JsonMemoryStore, JsonEmbeddingIndex } from '../memory/index.js';
+import { JsonMemoryStore, HnswEmbeddingIndex } from '../memory/index.js';
 import type { ConsolidationConfig } from '../memory/index.js';
 import type { MemoryStore } from '../types/memory.js';
 import { PlanStore } from '../planning/index.js';
@@ -174,7 +174,7 @@ export async function bootstrap(
 
   // Step 8: Create MemoryStore + EmbeddingIndex backed by ~/.my-agent/memory
   const memoryDir = join(homedir(), '.my-agent', 'memory');
-  const embeddingIndex = new JsonEmbeddingIndex(memoryDir);
+  const embeddingIndex = new HnswEmbeddingIndex(memoryDir);
   const memoryStore = new JsonMemoryStore(memoryDir, undefined, embeddingIndex);
 
   // Step 8b: Create PlanStore backed by ~/.my-agent/plan.json

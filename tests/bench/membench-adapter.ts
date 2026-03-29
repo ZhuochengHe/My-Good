@@ -187,13 +187,19 @@ export class MemBenchAdapter {
   }
 
   /**
-   * Performs embedding or substring search for a question string.
+   * Performs hybrid (HNSW cosine + BM25-TF + tag boost) search when an OpenAI
+   * client is available, or pure substring search as fallback.
+   *
+   * Passing both `queryEmbedding` and `query` activates the full hybrid scoring
+   * path in JsonMemoryStore: HNSW narrows to top-K candidates by cosine, then
+   * BM25-TF re-ranks them using keyword overlap with the question.
+   *
    * Shared by recall() and retri().
    */
   private async searchFor(question: string): Promise<readonly MemoryEntry[]> {
     if (this.openai) {
       const [queryEmbedding] = await embedBatch(this.openai, [question]);
-      return this.memoryStore.search({ queryEmbedding, limit: TOP_K });
+      return this.memoryStore.search({ queryEmbedding, query: question, limit: TOP_K });
     }
     return this.memoryStore.search({ query: question, limit: TOP_K });
   }
