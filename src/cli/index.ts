@@ -5,7 +5,6 @@
  */
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 
 import { Command } from 'commander';
 import { homedir } from 'node:os';
@@ -244,7 +243,7 @@ export async function main(argv: string[]): Promise<void> {
         // 3. When the user responds, handleConfirm resolves the Promise.
         let registeredConfirmHandler: ((toolName: string, args: Record<string, unknown>) => Promise<boolean>) | null = null;
 
-        const { sessionManager, config, warnings, memoryEntryCount } = await bootstrap({
+        const { sessionManager, config, warnings, memoryEntryCount, memoryStore } = await bootstrap({
           configPath,
           onDangerousToolCall: (toolName, args) => {
             if (registeredConfirmHandler) {
@@ -258,6 +257,7 @@ export async function main(argv: string[]): Promise<void> {
         await runInkChat({
           sessionManager,
           config,
+          memoryStore,
           ...(memoryEntryCount !== undefined && { memoryEntryCount }),
           ...(warnings.length > 0 && { warnings }),
           ...(cmdOptions.session && { sessionId: cmdOptions.session }),
@@ -271,7 +271,7 @@ export async function main(argv: string[]): Promise<void> {
       // Non-TTY / single-message fallback — use existing ColoredOutput path
       const tuiOutput = new ColoredOutput();
 
-      const { sessionManager, output, config, warnings, memoryEntryCount } = await bootstrap({
+      const { sessionManager, output, config, warnings, memoryEntryCount, memoryStore } = await bootstrap({
         configPath,
         output: tuiOutput,
         onDangerousToolCall: async (toolName, args) => {
@@ -307,6 +307,7 @@ export async function main(argv: string[]): Promise<void> {
         input,
         config,
         memoryEntryCount,
+        memoryStore,
         ...(cmdOptions.session && { sessionId: cmdOptions.session }),
         ...(cmdOptions.message && { message: cmdOptions.message }),
       });

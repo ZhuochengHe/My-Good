@@ -4,57 +4,63 @@
 
 <div align="center">
 
-**Your Personal AI Terminal Assistant** 💬✨
+**A Personal AI Terminal Assistant — Built from Scratch in TypeScript**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-≥18-339933?style=flat-square&logo=node.js)](https://nodejs.org/)
-[![Vitest](https://img.shields.io/badge/Test-Vitest-6E9F18?style=flat-square)](https://vitest.dev/)
-
-*Chat, Work, Remember — AI Assistant Built from Scratch in TypeScript*
+[![Node.js](https://img.shields.io/badge/Node.js-≥20-339933?style=flat-square&logo=node.js)](https://nodejs.org/)
+[![Tests](https://img.shields.io/badge/Tests-1481%20passing-brightgreen?style=flat-square)](https://vitest.dev/)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
 </div>
 
 ---
 
-## 🌟 Key Features
+my-agent is a fully autonomous AI assistant that runs in your terminal. It can read and write files, execute shell commands, search the web, and build a persistent semantic memory across sessions — all wired through a multi-provider LLM backend with a streaming Ink/React TUI.
 
-### 🛠️ **Multi-Tool Collaboration**
-- 📁 **File Operations** — Read/write files, browse directories
-- 💻 **Command Line** — Execute shell commands (with safety confirmation)
-- 🌐 **Web Search** — DuckDuckGo search, no API key required
-- 🧠 **Intelligent Memory** — Persistent memory across sessions
-- 📋 **Task Planning** — Auto-decompose and execute complex tasks
+---
 
-### 🎯 **Multi-Model Support**
-- 🔥 **Claude** (Anthropic) — Strongest reasoning capabilities
-- 💡 **GPT** (OpenAI) — Stable and reliable
-- 🚀 **Kimi** (Moonshot) — Optimized for Chinese
-- 🔧 **Custom** — Any OpenAI-compatible API
+## ✨ Features
 
-### ⚡ **Smart Experience**
-- 🎬 **Real-time Streaming** — Typewriter effect output
-- 🔒 **Safety Confirmation** — Dangerous operations require confirmation
-- 📊 **Session Management** — Complete session lifecycle
-- 🔌 **Plugin Extension** — Easy to add new features
+### Tools and Capabilities
+
+| Plugin | Tools | Notes |
+|--------|-------|-------|
+| `file-ops` | `read_file`, `write_file` | `write_file` shows a red/green diff and requires confirmation |
+| `shell` | `shell_exec` | Arbitrary shell commands; dangerous by default — requires confirmation |
+| `web-search` | `web_search`, `fetch_page` | DuckDuckGo search, no API key required |
+| `memory` | `save_memory`, `search_memory`, `list_memories`, `delete_memory` | Full CRUD on the persistent memory store |
+| `planning` | `create_plan`, `update_plan` | Used internally by the planning loop |
+| `soul` | `read_soul`, `update_soul` | Agent reads and updates its own `soul.md` character file between sessions |
+
+### Multi-Provider LLM Support
+
+Supports Anthropic (Claude), OpenAI (GPT), and Moonshot (Kimi) out of the box. Any additional OpenAI-compatible endpoint can be added via `providers.json` without code changes.
+
+### Terminal UI
+
+Built with [Ink](https://github.com/vadimdemedes/ink) (React for terminals). Features include:
+- Streaming output with 30ms typewriter cadence
+- Live tool-call status blocks (pending / running / done / error)
+- Token usage display per turn
+- Multi-step slash command state machine (`/memory` browse/delete, `/help`)
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-# 📦 Install dependencies
 npm install
 
-# 🔧 One-click install (recommended)
-./install.sh   # Build and install to ~/.local/bin
+# Build and install to ~/.local/bin (recommended)
+./install.sh
 
-# ⚙️ Initialize configuration
-my-agent setup # Select provider, input API key, choose model
+# Initialize: select provider, enter API key, choose model
+my-agent setup
 ```
 
-> 💡 `install.sh` automatically builds the project, creates symlinks, and checks PATH configuration. Just re-run after code updates!
+After `install.sh`, `my-agent` is available system-wide. Re-run `install.sh` after any code changes.
 
-### 📝 Manual Installation
+**Manual install:**
 ```bash
 npm run build
 # Add ./bin/my-agent to PATH
@@ -62,117 +68,149 @@ npm run build
 
 ---
 
-## 💬 Usage Guide
+## 💬 Usage
 
-### 🎯 Basic Chat
+### Chat
+
 ```bash
-my-agent chat                           # 🔄 Interactive REPL
-my-agent chat -m "Summarize README.md"  # 📋 Single message mode
-my-agent chat -s <session-id>           # 📂 Continue previous session
+my-agent chat                            # Interactive TUI (default)
+my-agent chat -m "Summarize README.md"  # Single-shot mode
+my-agent chat -s <session-id>           # Resume a previous session
 ```
 
-### 📊 Session Management
-```bash
-my-agent session list                   # 📋 List all sessions
-my-agent session list -t debugging      # 🔍 Filter by tags
-my-agent session show <id> --trace      # 📈 View detailed metrics
-my-agent session delete <id>            # 🗑️ Delete session
+**Slash commands (inside TUI):**
+
+```
+/memory           Browse and delete memory entries by kind
+/memory clear     Wipe all entries of a specific kind
+/help             List available slash commands
 ```
 
-### ⚙️ Other Commands
+### Session Management
+
 ```bash
-my-agent plugin list                    # 🔌 View loaded plugins
+my-agent session list                    # List all sessions
+my-agent session list -t debugging       # Filter by tag
+my-agent session show <id> --trace       # Detailed turn-by-turn metrics
+my-agent session delete <id>
+```
+
+### Other
+
+```bash
+my-agent plugin list                     # Show loaded plugins and their tools
 my-agent settings set behavior.maxTurns 30
-my-agent model update                   # 🔄 Get latest model list
+my-agent model update                    # Refresh model list from provider
 ```
 
 ---
 
 ## 🧠 Memory System
 
-> 🎯 **Goal**: Make AI truly remember you, not start over every time
+The memory system gives the agent persistent context across sessions. Entries are stored as individual JSON files under `~/.my-agent/memory/<kind>/<uuid>.json` with atomic writes (`tmp → rename`, mode `0o600`).
 
-my-agent has a **four-layer memory structure** that automatically builds persistent memory:
+### Four Memory Kinds
 
-### 📚 Memory Types
+| Kind | Contents | Persistence | Injection |
+|------|----------|-------------|-----------|
+| `preference` | User preferences, response style, behavior rules | Permanent | Always in system prompt |
+| `experiential` | Workflows, project tips, recurring patterns | Permanent | Retrieved on demand |
+| `semantic` | Technical architecture, domain knowledge, concepts | Permanent | Retrieved on demand |
+| `episodic` | Current tasks, decisions, recent bugs | TTL-based | Most recent 5 entries in prompt |
 
-| 🏷️ Type         | 💾 Storage Content           | ⏰ Validity | 🎯 Use Case |
-| -------------- | ---------------------------- | -------- | ---------- |
-| `preference`   | User preferences, response style, behavior rules | 🚫 Permanent | 💯 Always injected |
-| `experiential` | Workflows, tips, project experience | 🚫 Permanent | 🔍 Search on demand |
-| `semantic`     | Technical architecture, domain knowledge | 🚫 Permanent | 🔍 Search on demand |
-| `episodic`     | Current tasks, decisions, bugs | 📅 With TTL | 🕐 Last 5 entries |
+### Hybrid Retrieval
 
-### 🎯 Intelligent Retrieval
-
-Uses **triple signal hybrid scoring**:
+Retrieval uses a three-signal scoring model:
 
 ```
-📊 Total Score = 0.75×Semantic Similarity + 0.25×Keyword Match + 0.10×Tag Overlap
+score = 0.75 × cosine_similarity
+      + 0.25 × BM25-TF(k₁=1.2)
+      + 0.10 × tag_overlap
 ```
 
-- 🔍 **Semantic Search**: Vector similarity based on `text-embedding-3-small`
-- 🔤 **Keyword Matching**: BM25 algorithm with saturation parameter k₁=1.2
-- 🏷️ **Tag Enhancement**: Smart tag matching, avoiding hard filtering
+**Vector search** uses `text-embedding-3-small` (1536 dimensions) via an HNSW index (`hnswlib-node`, M=16, efConstruction=200). The HNSW graph gives O(log n) approximate nearest-neighbour queries instead of a full O(n×d) cosine scan.
 
-### 📈 Performance
+**Keyword scoring** applies BM25-TF with saturation parameter k₁=1.2 over the top candidates returned by HNSW. This re-ranks entries when keyword overlap is a stronger signal than cosine distance — useful for queries with specific names, identifiers, or exact phrases.
 
-In [MemBench](https://github.com/import-myself/Membench) benchmark tests:
+**Tag boost** adds a soft bonus for tag overlap rather than hard-filtering by tag, so relevant entries without matching tags are still surfaced.
 
-| 📅 Date     | 🔢 Version       | 🎯 Accuracy  | 🔍 Recall@10 | 💡 Improvement |
-| ---------- | ------------ | --------- | ----------- | --------- |
-| 2026-03-23 | v2-baseline  | 49.0%     | 8.0%        | Baseline |
-| 2026-03-24 | v2-embedding | **94.0%** | **100.0%**  | **+45pp** |
+### In-Memory Cache
 
-> 🚀 **45 percentage points** accuracy improvement! Huge leap from lexical matching to semantic search.
+A two-tier write-back cache eliminates O(n) disk I/O on the search hot path:
+
+- **Hot tier** (`Map`): `preference` + `experiential` kinds — full set, always resident, write-through
+- **LRU tier** (`LruCache`, default 500 entries): `semantic` + `episodic` — bounded, write-back with 500ms debounce on `accessCount` updates
+
+Cold start: first search scans all four kind directories once and populates both tiers. All subsequent reads are served from RAM.
+
+### Performance
+
+**Vector index (A1 — `searchByCosine` latency):**
+
+| Index size | Brute-force (before) | HNSW (after) | Speedup |
+|------------|---------------------|--------------|---------|
+| 1 000 entries | 2.56 ms | 0.25 ms | 10× |
+| 5 000 entries | 14.04 ms | 0.40 ms | 36× |
+| 10 000 entries | 28.15 ms | 0.41 ms | **69×** |
+
+**Hybrid search end-to-end (A2 — HNSW + BM25 + LRU cache):**
+
+| Store size | Before (HNSW only, no cache) | After (HNSW + cache) | Speedup |
+|------------|------------------------------|----------------------|---------|
+| 100 entries | 14.73 ms | 0.96 ms | 15× |
+| 1 000 entries | 111.72 ms | 2.37 ms | **47×** |
+| 5 000 entries | 535.24 ms | 3.69 ms | **145×** |
+
+Latency is now dominated by HNSW graph traversal and BM25 CPU scoring — no disk reads after cold start.
+
+### MemBench Evaluation
+
+Evaluated on [MemBench](https://github.com/import-myself/Membench) (`simple.json`, 4-choice MCQ, 100 trajectories):
+
+| Version | Description | Accuracy | Recall@10 |
+|---------|-------------|----------|-----------|
+| v2-baseline | Substring search, recency fallback | 49.0% | 8.0% |
+| v2-embedding | `text-embedding-3-small` cosine search | 94.0% | 100.0% |
+| v3-hnsw-hybrid | HNSW + hybrid search + LRU cache | **94.0%** | **100.0%** |
+
+The jump from v2-baseline to v2-embedding (+45pp accuracy, +92pp Recall@10) was entirely due to resolving vocabulary mismatch — substring search could not handle paraphrased questions (e.g. "When was Landon born?" vs. stored "his birthday is on August 23rd"). v3 maintains the same accuracy with significantly lower latency.
 
 ---
 
-## 📋 Planning System
+## 🗺️ Planning System
 
-### 🎯 When It Activates
+The planning loop activates when the agent classifies a request as requiring multiple distinct stages, cross-file coordination, or design decisions. Simple single-turn requests bypass planning entirely.
 
-Intelligent complexity detection:
-- ✅ **Simple tasks** — Execute directly, no planning needed
-- 🎯 **Complex tasks** — Auto-enable planning mode (3+ stages, multiple files, design decisions)
-
-### 🗺️ Three-Layer Architecture
+### Architecture
 
 ```
-🎯 Goal: "Build REST API with authentication and tests"
-  │
-  ├─ 📝 sg-1: "Design API architecture and routes"
-  │     ├─ ✅ Create OpenAPI spec
-  │     └─ ✅ Define request/response types
-  │
-  ├─ 🔐 sg-2: "Implement authentication middleware"
-  │     ├─ ✅ JWT validation handler
-  │     └─ ✅ Route authentication config
-  │
-  └─ 🧪 sg-3: "Write integration tests"
-        └─ ✅ Authentication failure path coverage
+Goal
+ ├── Subgoal 1
+ │    ├── Task 1.1
+ │    └── Task 1.2
+ ├── Subgoal 2
+ │    └── Task 2.1
+ └── Subgoal 3
+      └── Task 3.1
 ```
 
-### 🔄 Execution Flow
+Tasks within each subgoal are generated lazily — just before execution — so later subgoals can incorporate findings from earlier ones. This avoids planning all tasks upfront when the plan is likely to change.
 
-1. **🎯 Pre-planning** — Goal + subgoals
-2. **📝 Lazy task loading** — Plan specific tasks just before execution
-3. **⚡ Loop execution** — With validation and retry mechanisms
-4. **✅ Result validation** — Automatic/LLM/Human verification
+### Execution Flow
+
+1. **Goal decomposition** — LLM generates subgoals from the top-level goal
+2. **Lazy task planning** — tasks for each subgoal generated just before execution
+3. **Execution loop** — agentic tool-call loop with up to 25 turns per subgoal
+4. **Verification** — three modes: automated rule check / LLM-as-judge / human escalation
+5. **Reflection** — if verification fails, the agent reflects and replans before retrying
 
 ---
 
-## 🔌 Plugin Ecosystem
+## 🔌 Plugin System
 
-| 🔌 Plugin       | 🛠️ Tool Set   | 💡 Description                   |
-| -------------- | ---------- | ------------------------------ |
-| `file-ops`     | 📁 File Operations | Read/write files, directory browsing |
-| `shell`        | 💻 Command Line | Execute shell commands (requires confirmation) |
-| `web-search`   | 🌐 Web Search | DuckDuckGo search, webpage fetching |
-| `memory`       | 🧠 Memory Management | Complete memory CRUD operations |
-| `planning`     | 📋 Task Planning | Planning and execution of complex tasks |
+Plugins are JSON manifests describing tool schemas and pointing to a handler file. The `ToolExecutor` validates parameters against JSON Schema, enforces timeouts (`Promise.race`, 30s default), and routes dangerous tools through a confirmation callback before execution.
 
-### 🚀 Create Plugin
+**Minimal plugin manifest:**
 
 ```json
 {
@@ -180,7 +218,7 @@ Intelligent complexity detection:
   "version": "1.0.0",
   "tools": [{
     "name": "my_tool",
-    "description": "Do useful things",
+    "description": "Does something useful",
     "dangerous": false,
     "parameters": {
       "type": "object",
@@ -192,56 +230,39 @@ Intelligent complexity detection:
 }
 ```
 
+Place the manifest and handler in `~/.my-agent/plugins/my-plugin/` and it will be auto-discovered at startup.
+
 ---
 
-## 🛠️ Development Guide
+## 🛠️ Development
 
 ```bash
-# 🧪 Run tests (1481+ test cases)
-npm test
+npm test                                  # Run all 1481+ tests
+npm run test:coverage                     # Coverage report
+npm run build                             # Compile TypeScript
+npm run lint                              # ESLint (flat config, strict TS rules)
 
-# 📊 Test coverage
-npm run test:coverage
-
-# 🔨 Build project
-npm run build
-
-# 🔍 Code linting
-npm run lint
-
-# 🎯 Module testing
-npx vitest run tests/memory    # Memory module only
-npx vitest run tests/planning  # Planning module only
+npx vitest run tests/memory               # Memory module tests only
+npx vitest run tests/planning             # Planning module tests only
+npx vitest bench                          # Performance benchmarks
 ```
 
 ---
 
-## 🏢 Supported Providers
+## ☁️ Supported Providers
 
-| 🏢 Provider    | 🔗 SDK         | 📝 Notes                    |
-| ----------- | ------------- | ------------------------- |
-| `anthropic` | Anthropic SDK | Claude model series       |
-| `openai`    | OpenAI SDK    | GPT model series          |
-| `kimi`      | OpenAI SDK    | Moonshot AI (OpenAI compatible) |
+| Provider | SDK | Notes |
+|----------|-----|-------|
+| `anthropic` | Anthropic SDK | Claude model series |
+| `openai` | OpenAI SDK | GPT model series |
+| `kimi` | OpenAI SDK (compatible) | Moonshot AI |
 
-> 🔧 **Add custom providers**: Just add configuration in `providers.json`, no code modification needed!
-
----
-
-## 📚 Learn More
-
-- 🏗️ **Architecture Docs** — [`docs/reference/ARCHITECTURE.md`](docs/reference/ARCHITECTURE.md)
-- 📊 **Benchmark Tests** — [`docs/benchmark-adaptation.md`](docs/benchmark-adaptation.md)
-- 📈 **Performance Results** — [`docs/bench-results.md`](docs/bench-results.md)
+Additional providers can be added in `providers.json` without modifying source code.
 
 ---
 
-<div align="center">
+## 📚 Documentation
 
-### 🌟 If this project helps you, please give it a Star!
-
-**[⭐ Click here to star my-agent](https://github.com/ZhuochengHe/my-agent)**
-
-*Made with ❤️ by TypeScript enthusiasts*
-
-</div>
+- [Architecture](docs/reference/ARCHITECTURE.md) — system design, component diagram, key decisions
+- [Performance Benchmarks](docs/bench.md) — A1–A5 benchmark results with before/after comparisons
+- [MemBench Results](docs/membench-results.md) — retrieval accuracy evaluation across versions

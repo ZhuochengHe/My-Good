@@ -283,7 +283,7 @@ export class JsonlSessionStore implements SessionStore {
     try {
       // Try to access the file to check if it exists
       await fs.access(sessionPath);
-    } catch (error) {
+    } catch (_error) {
       // File doesn't exist
       return null;
     }
@@ -602,14 +602,14 @@ export class JsonlSessionStore implements SessionStore {
               messageCount: session.messages.length,
             });
           }
-        } catch (error) {
+        } catch (_error) {
           // Skip corrupted sessions
           continue;
         }
       }
 
       return summaries;
-    } catch (error) {
+    } catch (_error) {
       // If directory doesn't exist, return empty array
       return [];
     }
@@ -798,7 +798,7 @@ export class JsonlSessionStore implements SessionStore {
     try {
       // Try to access the file to check if it exists
       await fs.access(sessionPath);
-    } catch (error) {
+    } catch (_error) {
       // File doesn't exist
       return null;
     }
@@ -941,7 +941,7 @@ export class JsonlSessionStore implements SessionStore {
     try {
       const backupPath = `${sessionPath}.corrupted`;
       await fs.copyFile(sessionPath, backupPath);
-    } catch (error) {
+    } catch (_error) {
       // Ignore backup errors (file might not exist or be inaccessible)
     }
   }

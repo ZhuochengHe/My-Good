@@ -68,7 +68,6 @@ async function selectProvider(
     output.write(`  ${i + 1}. ${p.name}`);
   });
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const input = await prompt('\nSelect provider (number) or "q" to quit: ');
 
@@ -211,7 +210,6 @@ async function selectModel(
     output.write(`     Context: ${(m.contextWindow / 1000).toFixed(0)}K, Max tokens: ${m.maxOutputTokens || 'unknown'}`);
   });
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const input = await prompt('\nSelect model (number) or "back" to choose different provider: ');
 

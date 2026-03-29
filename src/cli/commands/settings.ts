@@ -92,7 +92,7 @@ export async function settingsGet(
         }
       }
     } else {
-      output.write(`${key}: ${String(value)}`);
+      output.write(`${key}: ${JSON.stringify(value)}`);
     }
   } catch (error) {
     output.writeError(

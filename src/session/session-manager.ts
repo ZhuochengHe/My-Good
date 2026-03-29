@@ -352,7 +352,7 @@ export class SessionManager implements EventSubscriber {
             ...updatedMetadata,
             description,
           };
-        } catch (error) {
+        } catch (_error) {
           // If description generation fails, continue with empty description
         }
       }
@@ -380,7 +380,7 @@ export class SessionManager implements EventSubscriber {
               tags,
             };
           }
-        } catch (error) {
+        } catch (_error) {
           // If generation fails, continue with existing values
         }
       }
@@ -618,7 +618,7 @@ export class SessionManager implements EventSubscriber {
             ...updatedMetadata,
             description,
           };
-        } catch (error) {
+        } catch (_error) {
           // Continue with empty description
         }
       }
@@ -642,7 +642,7 @@ export class SessionManager implements EventSubscriber {
               tags,
             };
           }
-        } catch (error) {
+        } catch (_error) {
           // Continue with existing values
         }
       }
@@ -797,7 +797,7 @@ Return ONLY the description, no quotes or extra text.`;
 
       const response = await this.provider.complete(request);
       return response.message.content.trim();
-    } catch (error) {
+    } catch (_error) {
       // Fallback to simple description
       const firstInput = inputs[0] ?? '';
       const truncated = firstInput.length > 50
@@ -845,7 +845,7 @@ Example: coding, typescript, help`;
         .filter(tag => tag.length > 0);
 
       return tags.length > 0 ? tags : ['common'];
-    } catch (error) {
+    } catch (_error) {
       // Fallback to common tag
       return ['common'];
     }
@@ -1322,7 +1322,7 @@ Example: coding, typescript, help`;
     if (this.store instanceof JsonlSessionStore) {
       try {
         await this.store.appendTurnMetadata(this.currentSessionId, metadata);
-      } catch (error) {
+      } catch (_error) {
         // Silently fail - trace data is optional
         // Could add debug logging here
       }
@@ -1357,7 +1357,7 @@ Example: coding, typescript, help`;
     if (this.store instanceof JsonlSessionStore) {
       try {
         await this.store.appendErrorLog(this.currentSessionId, errorLog);
-      } catch (error) {
+      } catch (_error) {
         // Silently fail - trace data is optional
         // Could add debug logging here
       }

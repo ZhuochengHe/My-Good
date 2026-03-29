@@ -11,6 +11,7 @@ import { Box, Text, useApp } from 'ink';
 import type { SessionManager } from '../../../session/session-manager.js';
 import type { AppConfig } from '../../../types/config.js';
 import type { DangerousToolConfirm } from '../../../plugins/tool-executor.js';
+import type { MemoryStore, MemoryEntry, MemoryKind } from '../../../types/memory.js';
 import { useStreamingSession } from '../hooks/useStreamingSession.js';
 import { ChatHeader } from './ChatHeader.js';
 import { MessageList } from './MessageList.js';
@@ -50,12 +51,20 @@ export interface AppProps {
   readonly memoryEntryCount?: number;
   /** Warnings to show on startup. */
   readonly warnings?: readonly string[];
+  /** Memory store for /memory slash command. */
+  readonly memoryStore?: MemoryStore;
   /**
    * Called once on mount with a DangerousToolConfirm handler.
    * Bootstrap uses this to wire the TUI confirmation flow into tool-executor.
    */
   readonly onConfirmReady?: (handler: DangerousToolConfirm) => void;
 }
+
+/** Steps for the multi-step /memory interactive flow. */
+type MemoryFlowStep =
+  | { step: 'kind' }
+  | { step: 'entry'; entries: readonly MemoryEntry[] }
+  | { step: 'confirm'; entry: MemoryEntry };
 
 /** Monotonic counter for system message IDs. */
 let nextSysMsgId = 0;
@@ -70,7 +79,7 @@ let nextSysMsgId = 0;
  * @param props - App configuration.
  */
 export function App(props: AppProps): React.ReactElement {
-  const { sessionManager, sessionId, config, memoryEntryCount, warnings, onConfirmReady } = props;
+  const { sessionManager, sessionId, config, memoryEntryCount, memoryStore, warnings, onConfirmReady } = props;
 
   const { exit } = useApp();
 
@@ -88,6 +97,9 @@ export function App(props: AppProps): React.ReactElement {
 
   // System messages: info/error lines injected by slash commands
   const [sysMessages, setSysMessages] = useState<SystemMessage[]>([]);
+
+  // Multi-step /memory flow state — null when not active
+  const [memoryFlow, setMemoryFlow] = useState<MemoryFlowStep | null>(null);
 
   /**
    * Holds the resolve function of the currently pending dangerous-tool
@@ -135,7 +147,7 @@ export function App(props: AppProps): React.ReactElement {
 
         case 'help':
         case '?':
-          addSys('Commands: /help  /session [id]  /model  /compact [hint]  /clear  /exit');
+          addSys('Commands: /help  /session [id]  /model  /compact [hint]  /memory  /memory clear-all  /clear  /exit');
           break;
 
         case 'clear':
@@ -200,19 +212,113 @@ export function App(props: AppProps): React.ReactElement {
           break;
         }
 
+        case 'memory': {
+          if (!memoryStore) {
+            addSys('Memory is not available.', true);
+            break;
+          }
+          if (args[0]?.toLowerCase() === 'clear-all') {
+            // Reuse confirm flow: step='confirm' with a sentinel entry id=''
+            setMemoryFlow({ step: 'confirm', entry: { id: '__clear_all__', kind: 'preference', content: 'ALL memory entries', tags: [], createdAt: 0, updatedAt: 0 } });
+            addSys('Type "yes" to delete ALL memories, or anything else to cancel.');
+            break;
+          }
+          addSys('Memory kinds: [1] preference  [2] experiential  [3] semantic  [4] episodic  [5] all');
+          addSys('Enter a number to filter, or Enter to cancel.');
+          setMemoryFlow({ step: 'kind' });
+          break;
+        }
+
         default:
           addSys(`Unknown command: /${command}. Type /help for available commands.`, true);
           break;
       }
     },
-    [exit, addSys, config, sessionManager, compact]
+    [exit, addSys, config, sessionManager, compact, memoryStore]
   );
 
   const handleSubmit = useCallback(
     (input: string) => {
+      // If memory flow is active, route input into the flow instead of LLM
+      if (memoryFlow !== null && memoryStore) {
+        const trimmed = input.trim();
+
+        if (memoryFlow.step === 'kind') {
+          if (trimmed === '') {
+            setMemoryFlow(null);
+            addSys('Cancelled.');
+            return;
+          }
+          const KINDS: MemoryKind[] = ['preference', 'experiential', 'semantic', 'episodic'];
+          const idx = parseInt(trimmed, 10);
+          if (isNaN(idx) || idx < 1 || idx > 5) {
+            setMemoryFlow(null);
+            addSys('Invalid choice. /memory cancelled.', true);
+            return;
+          }
+          const selectedKind = idx <= 4 ? KINDS[idx - 1] : undefined;
+          void (async () => {
+            const entries = await memoryStore.search(selectedKind ? { kind: selectedKind } : {});
+            if (entries.length === 0) {
+              setMemoryFlow(null);
+              addSys('No memory entries found.');
+              return;
+            }
+            entries.forEach((e, i) => {
+              const preview = e.content.length > 70 ? e.content.slice(0, 67) + '...' : e.content;
+              addSys(`[${i + 1}] [${e.kind}] ${preview}`);
+            });
+            addSys('Enter a number to view/delete, or Enter to cancel.');
+            setMemoryFlow({ step: 'entry', entries });
+          })();
+          return;
+        }
+
+        if (memoryFlow.step === 'entry') {
+          if (trimmed === '') {
+            setMemoryFlow(null);
+            addSys('Cancelled.');
+            return;
+          }
+          const idx = parseInt(trimmed, 10);
+          if (isNaN(idx) || idx < 1 || idx > memoryFlow.entries.length) {
+            setMemoryFlow(null);
+            addSys('Invalid selection. /memory cancelled.', true);
+            return;
+          }
+          const selected = memoryFlow.entries[idx - 1]!;
+          const date = new Date(selected.createdAt).toLocaleDateString();
+          addSys(`Kind: ${selected.kind}  Created: ${date}  Tags: ${selected.tags.join(', ') || '(none)'}`);
+          addSys(selected.content);
+          addSys('Type "y" to delete, or anything else to cancel.');
+          setMemoryFlow({ step: 'confirm', entry: selected });
+          return;
+        }
+
+        if (memoryFlow.step === 'confirm') {
+          setMemoryFlow(null);
+          if (trimmed.toLowerCase() !== 'y' && trimmed.toLowerCase() !== 'yes') {
+            addSys('Not deleted.');
+            return;
+          }
+          const entry = memoryFlow.entry;
+          void (async () => {
+            if (entry.id === '__clear_all__') {
+              const all = await memoryStore.search({});
+              for (const e of all) await memoryStore.delete(e.id);
+              addSys(`Deleted ${all.length} memory ${all.length === 1 ? 'entry' : 'entries'}.`);
+            } else {
+              await memoryStore.delete(entry.id);
+              addSys('Entry deleted.');
+            }
+          })();
+          return;
+        }
+      }
+
       submit(input);
     },
-    [submit]
+    [submit, memoryFlow, memoryStore, addSys]
   );
 
   const handleConfirm = useCallback(

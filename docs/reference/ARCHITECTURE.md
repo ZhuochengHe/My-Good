@@ -1,16 +1,24 @@
 # Architecture
 
-## Overview
+## What This Agent Is
+
+my-good is a **living personal assistant** — general-purpose by design, but shaped over time by the specific person who uses it.
+
+Most AI assistants are stateless tools: each session starts from zero. This agent accumulates. It remembers user preferences, past mistakes, domain knowledge, and ongoing context across sessions. It also maintains a `soul.md` — a character file it writes and edits itself, recording what it has learned about how to work best with its user. The soul evolves; the agent gets better at being *this person's* assistant, not just a capable assistant in the abstract.
+
+The core premise: an assistant that knows you is more useful than a smarter assistant that doesn't.
 
 ```
 User Input → CLI → PlanningLoop (optional) → ExecutionLoop → Provider (LLM API)
                          ↓                        ↑                   ↓
                    PlanStore (plan.json)    Tool Results ←── PluginManager ←── Tool Calls
                                                   ↓
-                                     SessionStore (JSONL) + MemoryStore (JSON files)
+                                     SessionStore (JSONL) + MemoryStore (LRU cache + JSON files)
+                                                  ↓
+                                         soul.md (agent-owned character)
 ```
 
-**Stack:** TypeScript (strict, ESM) · Node.js ≥18 · Vitest · Commander.js · chalk · ora · js-tiktoken
+**Stack:** TypeScript (strict, ESM) · Node.js ≥20 · Vitest · Commander.js · Ink (React TUI) · chalk · ora · js-tiktoken
 
 ## Implemented Stages
 
@@ -27,6 +35,10 @@ User Input → CLI → PlanningLoop (optional) → ExecutionLoop → Provider (L
 | 9 | LLM consolidation pipeline — session-end extraction, embedding dedup, cosine merge |
 | 10 | Hybrid reranking — cosine + BM25-TF + tag overlap boost replaces hard tag pre-filter |
 | 11 | Planning layer — Goal→Subgoal→Task tree with lazy planning, 3-mode verification, human escalation |
+| 12 | Ink TUI — React/Ink terminal UI as default interactive interface; streaming, tool call blocks, `/memory` command |
+| 13 | Modular prompt system — 5-module assembly (core/memory/tools/planning/soul) with user-dir overrides |
+| 14 | Soul plugin — `read_soul`/`update_soul` tools; agent-owned `soul.md` character file |
+| 15 | HNSW embedding index + write-back LRU entry cache — O(log n) vector search; eliminates O(n) disk reads on search hot path |
 
 **Test coverage:** 1481+ tests across 58 files, ≥80% coverage
 
@@ -39,19 +51,24 @@ src/
 ├── session/     # JsonlSessionStore, SessionManager
 ├── providers/   # Anthropic + OpenAI SDK clients; registry-based discovery
 ├── plugins/     # PluginManager, ToolExecutor, manifest validation
-├── memory/      # JsonMemoryStore (kind-based), EmbeddingIndex, consolidation pipeline, eviction scorer
+├── memory/      # JsonMemoryStore (kind-based, LRU cache), HnswEmbeddingIndex, consolidation pipeline, eviction scorer
 ├── planning/    # PlanStore (atomic JSON), PlanningLoop (5-phase orchestrator)
 ├── config/      # YAML loader + Zod validation (config.yaml, settings.yaml)
 ├── events/      # EventEmitter, subscribers (logging, persistence)
 ├── errors/      # Structured error classes per domain (memory, agent, session, etc.)
 ├── cli/         # Commander commands + I/O adapters (ColoredOutput, StdinInputReader)
+│   └── prompts/ # Modular system prompt files (core/memory/tools/planning/soul + compact)
+├── ui/
+│   ├── ink/     # Ink React TUI — App, MessageList, StreamingMessage, ToolCallBlock, ConfirmPrompt
+│   └── shared/  # stream-processor — shared streaming logic between TUI and REPL
 └── utils/       # Logger, retry, ID generation
 
 plugins/         # Default plugins (plugin.json manifests)
-├── file-ops/    # read_file, write_file, list_directory
-├── shell/       # shell_exec (linux/darwin)
+├── file-ops/    # write_file only (read/list via shell_exec — read_file and list_directory removed)
+├── shell/       # shell_exec (linux/darwin); blocks shell file-write operators (>, >>, tee)
 ├── web-search/  # web_search, fetch_url
 ├── memory/      # save_memory, search_memory, update_memory, delete_memory, list_memories
+├── soul/        # read_soul, update_soul — agent's character file
 └── planning/    # create_plan, plan_subgoal_tasks, update_task, reflect,
                  # revise_remaining_tasks, get_plan, request_human_review
 ```
@@ -68,8 +85,9 @@ plugins/         # Default plugins (plugin.json manifests)
 | `src/providers/anthropic.ts` | Anthropic SDK client |
 | `src/providers/openai.ts` | OpenAI SDK client (also used for Kimi) |
 | `src/providers/registry.ts` | Provider registry from `providers.json` |
-| `src/memory/memory-store.ts` | JsonMemoryStore — kind-based file-backed store with hybrid search |
-| `src/memory/embedding-index.ts` | JsonEmbeddingIndex — flat embeddings.json with cosine search and write queue |
+| `src/memory/memory-store.ts` | JsonMemoryStore — kind-based store; two-tier LRU cache eliminates per-search disk reads |
+| `src/memory/hnsw-embedding-index.ts` | HnswEmbeddingIndex — O(log n) HNSW search via hnswlib-node (default in bootstrap) |
+| `src/memory/embedding-index.ts` | JsonEmbeddingIndex — flat embeddings.json with O(n×d) cosine scan; kept as reference impl |
 | `src/memory/consolidation.ts` | Session-end LLM extraction pipeline (gpt-4o-mini + text-embedding-3-small) |
 | `src/memory/eviction-scorer.ts` | Weighted scoring for episodic eviction decisions |
 | `src/types/memory.ts` | MemoryEntry, MemoryKind, MemoryStore, EmbeddingIndex interfaces |
@@ -80,6 +98,12 @@ plugins/         # Default plugins (plugin.json manifests)
 | `src/cli/bootstrap.ts` | Dependency wiring — config → session → plugins → memory → plan → loop |
 | `src/cli/commands/chat.ts` | Interactive REPL and single-message mode |
 | `src/cli/colored-output.ts` | Chalk + ora output adapter (active) |
+| `src/cli/slash-commands.ts` | Slash command dispatcher (`/memory`, `/help`, etc.) |
+| `src/ui/ink/InkChatRunner.ts` | Entry point for Ink TUI mode — mounts React app |
+| `src/ui/ink/components/App.tsx` | Root Ink component — input, streaming output, slash command state machine |
+| `src/ui/ink/components/ToolCallBlock.tsx` | Renders live tool call progress with expandable detail |
+| `src/ui/shared/stream-processor.ts` | Processes streaming events into typed display records |
+| `plugins/soul/` | `read_soul` / `update_soul` handlers; reads/writes `~/.my-agent/prompts/system-prompts/soul.md` |
 | `providers.json` | Provider registry manifest |
 
 ## Bootstrap Sequence (`src/cli/bootstrap.ts`)
@@ -87,12 +111,12 @@ plugins/         # Default plugins (plugin.json manifests)
 1. Ensure `~/.my-agent/config.yaml` exists (create default if not)
 2. Load config (YAML + Zod validation)
 3. Load settings (`~/.my-agent/settings.yaml`)
-4. Override system prompt from bundled `src/cli/prompts/system-prompt.md`
+4. Assemble modular system prompt (see Prompt System below)
 5. Validate API keys from environment
 6. Initialize `JsonlSessionStore` at `~/.my-agent/sessions/`
 7. Instantiate provider (Anthropic or OpenAI) from registry
 8. Load plugins from configured directories
-9. Create `JsonEmbeddingIndex` + `JsonMemoryStore` at `~/.my-agent/memory/`
+9. Create `HnswEmbeddingIndex` + `JsonMemoryStore` at `~/.my-agent/memory/`
 10. Create `PlanStore` at `~/.my-agent/plan.json`
 11. Create `ToolExecutor` with `memoryStore`, confirmation callback, and `planStore`
 12. Register all plugin tools in `ToolExecutor`
@@ -101,7 +125,141 @@ plugins/         # Default plugins (plugin.json manifests)
 15. Initialize `SessionManager` with `ExecutionLoop` (and optionally `PlanningLoop`)
 16. Return `BootstrapResult`
 
-## Memory Module (Stages 8–9)
+## Prompt System
+
+The agent's behavior is defined by a set of modular prompt files assembled at startup. They are split by concern so each can be edited, overridden, or extended independently.
+
+### Prompt Assembly
+
+Bootstrap assembles the system prompt from modules in this order, each wrapped with a semantic section label (`# [Label]`) so the LLM can orient itself:
+
+| Module | Label | Purpose |
+|---|---|---|
+| `system_core.md` | `[Core]` | Role, behavioral defaults, response style |
+| `system_memory.md` | `[Memory]` | When and how to use the memory system |
+| `system_tools.md` | `[Tools]` | Tool selection heuristic; `write_file` vs `shell_exec` policy |
+| `system_planning.md` | `[Planning]` | When to activate planning; signals that detailed rules will be injected |
+| `soul.md` | `[Soul]` | Agent's own character file (see Soul section below) |
+
+Modules are joined with `\n\n`. The result is stored as `settings.behavior.systemPrompt`.
+
+### User-Dir Override
+
+Every module is looked up with **user-dir-first** priority:
+
+```
+~/.my-agent/prompts/system-prompts/<module>.md   ← checked first
+src/cli/prompts/<module>.md                       ← bundled fallback
+```
+
+This allows users to customize any module without modifying source. `install.sh` copies the bundled defaults to `~/.my-agent/` on first install but never overwrites `soul.md` (to protect the agent's evolved character).
+
+### Compact Prompts
+
+Two additional prompts are injected only around context compaction (not persisted in the system prompt):
+
+| File | Used when |
+|---|---|
+| `compact_summary.md` | Injected before compaction; instructs the LLM how to produce the summary |
+| `compact_resume.md` | Injected after compaction as the new system prompt preamble; has a `{summary}` placeholder substituted at runtime |
+
+Compact prompts also follow user-dir-first loading, from `~/.my-agent/prompts/compact/`.
+
+### Planning Detail Injection
+
+The `system_planning.md` module is intentionally minimal — it only signals that planning is available. The detailed planning rules (data model, create semantics, execution policy, reflect triggers, verification modes) live in five sub-modules under `src/cli/prompts/planning/`:
+
+```
+planning_data_model.md   ← PlanState/Subgoal/Task hierarchy and status machine
+planning_create.md       ← When to plan, subgoal granularity, goal verification
+planning_execute.md      ← Task granularity rules, update_task transitions
+planning_reflect.md      ← When to reflect, triggerReplan semantics
+planning_verify.md       ← Three verification modes in detail
+```
+
+These are loaded and prepended to `compactSummary` by `PlanningLoop.executeSubgoal()` just before each subgoal's `ExecutionLoop.run()` call — so the LLM receives full planning context only when it is actively executing a plan, not on every turn.
+
+### Soul
+
+`soul.md` is the agent's own character file. It is not a system instruction — it is a document the agent reads (`read_soul`) and edits (`update_soul`) to record what it has learned about itself and its user.
+
+The agent updates `soul.md` at the end of a session when:
+- It discovered something about how it works best with the user
+- It made a mistake and learned from it
+- It formed an opinion or preference that should persist
+- The "What I'm Still Learning" section has something new
+
+The soul file is never overwritten by `install.sh` after first install. It accumulates across all sessions and is the primary mechanism by which the agent develops a stable, personal character over time.
+
+**Storage:** `~/.my-agent/prompts/system-prompts/soul.md`
+
+**Tools:** `read_soul` (no params), `update_soul` (content: string) — provided by `plugins/soul/`.
+
+### File Layout
+
+```
+src/cli/prompts/              ← bundled defaults (shipped with source)
+├── system_core.md
+├── system_memory.md
+├── system_tools.md
+├── system_planning.md
+├── soul.md                   ← starter soul; never overwrites user's evolved version
+├── compact_summary.md
+├── compact_resume.md
+└── planning/
+    ├── planning_data_model.md
+    ├── planning_create.md
+    ├── planning_execute.md
+    ├── planning_reflect.md
+    └── planning_verify.md
+
+~/.my-agent/prompts/          ← user-installed; takes priority over bundled
+├── system-prompts/
+│   ├── system_core.md        ← override any module here
+│   ├── soul.md               ← the agent's evolved character (never auto-overwritten)
+│   └── planning/
+└── compact/
+    ├── compact_summary.md
+    └── compact_resume.md
+```
+
+## Ink TUI (Stage 12)
+
+The default interactive chat interface uses [Ink](https://github.com/vadimdemedes/ink) — a React renderer for terminal output. It replaces the plain REPL for interactive sessions while the REPL remains available as a fallback.
+
+### Component Tree
+
+```
+App (manages input, session state, slash command state machine)
+  ├─ ChatHeader         — model name, session ID
+  ├─ MessageList        — scrollable history of all turns
+  │    ├─ StreamingMessage   — live typewriter render of in-progress assistant text
+  │    ├─ ToolCallBlock      — expandable tool call with live status + output
+  │    └─ ToolCallRecord     — completed tool call with collapsed summary
+  ├─ TokenUsageLine     — input/output token counts after each turn
+  ├─ ConfirmPrompt      — y/n confirmation for dangerous tool calls
+  └─ InputLine          — readline-style input box
+```
+
+### Streaming Architecture
+
+`stream-processor.ts` (in `src/ui/shared/`) converts raw `StreamChunk` events from the provider into typed display records (`TextChunk`, `ToolCallStart`, `ToolCallUpdate`, `ToolCallComplete`). Both the Ink TUI and the REPL consume the same processor, keeping rendering logic out of the core streaming path.
+
+### Slash Commands in TUI
+
+`App.tsx` implements a multi-step state machine for slash commands. The `/memory` command drives a sub-interaction flow:
+
+```
+idle → kind_select → entry_list → entry_detail → confirm_delete → idle
+```
+
+All slash commands are registered in `src/cli/slash-commands.ts` and receive a `SlashCommandContext` that includes `memoryStore` and an `inputReader`, enabling commands to prompt the user for further input within the same TUI session.
+
+### write_file Diff UI
+
+When the agent calls `write_file` on an existing file, the confirmation prompt renders a line-numbered red/green diff (removed lines in red, added lines in green) before asking for approval. This makes it easy to review what the agent is about to change without leaving the terminal.
+
+## Memory Module (Stages 8–9, 15)
 
 ### Kind-Based Architecture
 
@@ -195,9 +353,52 @@ Score ≥ 0.6 → set `pendingKB: true` (retain for future KB ingestion); score 
 
 ### EmbeddingIndex
 
-`JsonEmbeddingIndex` stores a flat `{ id → number[] }` map in `embeddings.json`.
-All write operations (`set`, `delete`, `clear`) are serialized via a promise-chain write queue
-to prevent concurrent rename races on `embeddings.json.tmp`.
+**Default: `HnswEmbeddingIndex`** — O(log n) approximate nearest-neighbor search via hnswlib-node (C++ HNSW bindings).
+
+- Stores all vectors in a `Map<string, number[]>` in memory (source of truth: `embeddings.json`)
+- Maintains an in-memory HNSW graph for fast search; graph rebuilt from `embeddings.json` on cold start
+- Parameters: M=16, efConstruction=200, ef=50 → ~98% recall@10 at all tested sizes
+- Integer label mapping: `uuidToLabel` / `labelToUuid` Maps + monotonic `nextLabel` counter
+- Updates: `markDelete(oldLabel)` then `addPoint(newVec, newLabel)` (hnswlib has no in-place update)
+- Resizes graph capacity automatically (doubles when full)
+
+**Measured speedup vs `JsonEmbeddingIndex` (O(n×d) brute-force):**
+
+| Index size | Before | After (HNSW) | Speedup |
+|---|---|---|---|
+| 1 000 entries | 2.56 ms | 0.25 ms | 10× |
+| 5 000 entries | 14.0 ms | 0.40 ms | 36× |
+| 10 000 entries | 28.2 ms | 0.41 ms | 69× |
+
+Both implementations satisfy the same `EmbeddingIndex` interface. `JsonEmbeddingIndex` is retained as a reference/fallback.
+
+All write operations are serialized via a promise-chain write queue to prevent concurrent rename races on `embeddings.json.tmp`.
+
+### Entry Data Cache (JsonMemoryStore)
+
+`JsonMemoryStore.search()` previously called `scanKind()` on every query — `readdir` + N×`readFile` + N×`JSON.parse` on every call. Profiling at n=1k: 229ms total (190ms on `readFile` alone). HNSW solved the vector search but left this O(n) disk scan untouched.
+
+**Fix: write-back two-tier in-memory cache**, populated lazily on first access:
+
+| Tier | Kinds | Capacity | Eviction | Write strategy |
+|---|---|---|---|---|
+| Hot tier (`Map`) | `preference`, `experiential` | Unbounded — typically tens to low hundreds | Never evicted | Write-through: disk write completes before `save()` returns |
+| LRU tier | `semantic`, `episodic` | `lruCapacity` (default 500 entries ≈ ~1 MB) | LRU | Write-back: cache updated immediately; disk flush debounced ~500ms |
+
+**Hot path after cache:**
+
+```
+search(queryEmbedding)
+  → HnswEmbeddingIndex.searchByCosine()  →  [id, score]    <1ms  (in-memory HNSW graph)
+  → ids.map(id => cache.get(id))         →  MemoryEntry[]  <0.1ms (Map / LRU lookup)
+  → BM25 scoring + sort                                     <1ms  (pure CPU)
+  → update accessCount in cache + async flush
+Total: ~2ms  (vs ~110ms before at n=1k)
+```
+
+**Cold start:** first `search()` or `loadForSystemPrompt()` call scans all kind directories once, populates both tiers. Subsequent calls never touch disk for reads.
+
+**Constructor:** `new JsonMemoryStore(baseDir, embeddingIndex, options?)` — new optional `lruCapacity` parameter (default 500). No interface changes; all existing tests pass unchanged.
 
 ### Memory Error Codes
 
@@ -287,6 +488,12 @@ Human escalation also triggers when `verificationAttempts >= maxVerificationAtte
 | Concern | Approach |
 |---|---|
 | Agent loop | Custom (no LangGraph) |
+| Interactive UI | Ink React TUI (default); plain REPL fallback for single-message mode |
+| System prompt | Assembled from 5 modular files at bootstrap; user-dir overrides bundled defaults |
+| Agent character | `soul.md` — agent-owned file updated via `update_soul` tool; never auto-overwritten |
+| Planning prompt | Minimal in system prompt; full detail injected per-subgoal into `compactSummary` |
+| File writes | `write_file` tool only (shows red/green line diff before confirmation); shell `>`, `>>`, `tee` blocked in `shell_exec` |
+| Memory management | `/memory` slash command for interactive browse/delete; state machine handles multi-step TUI flow |
 | Planning | `PlanningLoop` wraps `ExecutionLoop`; `SessionManager` dispatches optionally |
 | Plan state | In-memory singleton + atomic `tmp→rename` JSON; Node.js single-thread eliminates race conditions |
 | Lazy task planning | Tasks planned per-subgoal just before execution, not upfront — later subgoals benefit from earlier findings |
@@ -296,7 +503,9 @@ Human escalation also triggers when `verificationAttempts >= maxVerificationAtte
 | Plugin system | `plugin.json` manifests with JSON Schema tool definitions |
 | Session storage | Append-only JSONL — human-readable, corruption-resistant |
 | Event persistence | `turn_metadata` + `error_log` records in session JSONL |
-| Memory storage | Per-entry JSON files, atomic writes (tmp + rename), mode 0o600; embeddings in flat JSON map |
+| Memory storage | Per-entry JSON files, atomic writes (tmp + rename), mode 0o600; embeddings in flat `embeddings.json` |
+| Memory vector index | `HnswEmbeddingIndex` — HNSW O(log n) search (hnswlib-node); `JsonEmbeddingIndex` kept as fallback |
+| Memory entry cache | Two-tier write-back LRU inside `JsonMemoryStore`; hot tier (Map, write-through) + LRU tier (write-back, debounced); eliminates O(n) disk reads from search hot path |
 | Memory search | Hybrid reranking: cosine (0.75) + BM25-TF (0.25) + tag overlap boost (0.10) |
 | Memory consolidation | Session-end LLM extraction (gpt-4o-mini) + embedding dedup (text-embedding-3-small) |
 | Token counting | `js-tiktoken` (cl100k_base) for exact chunking across languages and emoji |

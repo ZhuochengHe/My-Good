@@ -56,13 +56,14 @@ export function ToolCallRecord(props: ToolCallRecordProps): React.ReactElement {
   const focusIndicator = focused ? '▶ ' : '  ';
   const expandIcon = expanded ? '▼' : '▶';
 
+  const safeOutput = output ?? '';
   const outputPreview =
-    output.length > PREVIEW_LENGTH
-      ? `${output.slice(0, PREVIEW_LENGTH)}…`
-      : output;
+    safeOutput.length > PREVIEW_LENGTH
+      ? `${safeOutput.slice(0, PREVIEW_LENGTH)}…`
+      : safeOutput;
 
-  const expandedLines = output.split('\n').slice(0, MAX_EXPANDED_LINES);
-  const truncated = output.split('\n').length > MAX_EXPANDED_LINES;
+  const expandedLines = safeOutput.split('\n').slice(0, MAX_EXPANDED_LINES);
+  const truncated = safeOutput.split('\n').length > MAX_EXPANDED_LINES;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -103,7 +104,7 @@ export function ToolCallRecord(props: ToolCallRecordProps): React.ReactElement {
             ))}
             {truncated && (
               <Text color="gray" dimColor>
-                … (truncated to {MAX_EXPANDED_LINES} lines)
+                … (truncated to {MAX_EXPANDED_LINES} lines, {safeOutput.split('\n').length} total)
               </Text>
             )}
           </Box>
