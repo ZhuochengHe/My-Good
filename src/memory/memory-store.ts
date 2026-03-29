@@ -11,6 +11,22 @@
  *     semantic/      ← retrieved on demand
  *     episodic/      ← retrieved on demand; supports TTL eviction
  *     embeddings.json
+ *
+ * In-memory cache
+ * ───────────────
+ * Two-tier write-back cache eliminates O(n) disk reads on the search hot path.
+ *
+ * Hot tier  (Map): preference + experiential
+ *   - Full set always in memory after first access
+ *   - Write-through: disk write completes before save/update returns
+ *
+ * LRU tier: semantic + episodic
+ *   - Bounded by lruCapacity (default 500 entries)
+ *   - Write-back: cache updated immediately; disk flush debounced ~500ms
+ *   - LRU eviction when capacity is exceeded
+ *
+ * Cold start: first call to ensureCache() scans all 4 kind dirs once, populates
+ * both tiers. All subsequent reads are served from memory.
  */
 
 import type {
@@ -49,6 +65,116 @@ const UUID_V4_RE =
 /** Max number of recent episodic entries to inject into the system prompt. */
 const SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT = 5;
 
+/** Default max entries in the LRU tier (semantic + episodic). ~1MB at average entry size. */
+const DEFAULT_LRU_CAPACITY = 500;
+
+/** Debounce delay for write-back flushes on LRU-tier entries (ms). */
+const WRITE_BACK_DEBOUNCE_MS = 500;
+
+/** Kinds stored in the hot tier (Map, write-through, never evicted). */
+const HOT_KINDS: ReadonlySet<MemoryKind> = new Set(['preference', 'experiential']);
+
+// ─── Minimal LRU cache ────────────────────────────────────────────────────────
+
+/**
+ * Doubly-linked-list node used by LruCache.
+ * Kept inline (no external dep) to avoid adding a package for a single data structure.
+ */
+interface LruNode<V> {
+  key: string;
+  value: V;
+  prev: LruNode<V> | null;
+  next: LruNode<V> | null;
+}
+
+/**
+ * Bounded LRU cache (Map + doubly-linked list, O(1) get/set/delete).
+ * When capacity is exceeded the least-recently-used entry is evicted.
+ */
+class LruCache<V> {
+  private readonly map = new Map<string, LruNode<V>>();
+  // Sentinel head/tail make insert/remove branchless
+  private readonly head: LruNode<V>;
+  private readonly tail: LruNode<V>;
+
+  constructor(private readonly capacity: number) {
+    this.head = { key: '', value: undefined as unknown as V, prev: null, next: null };
+    this.tail = { key: '', value: undefined as unknown as V, prev: null, next: null };
+    this.head.next = this.tail;
+    this.tail.prev = this.head;
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+
+  get(key: string): V | undefined {
+    const node = this.map.get(key);
+    if (node === undefined) return undefined;
+    this.moveToFront(node);
+    return node.value;
+  }
+
+  set(key: string, value: V): void {
+    const existing = this.map.get(key);
+    if (existing !== undefined) {
+      existing.value = value;
+      this.moveToFront(existing);
+      return;
+    }
+    const node: LruNode<V> = { key, value, prev: null, next: null };
+    this.map.set(key, node);
+    this.insertFront(node);
+    if (this.map.size > this.capacity) {
+      this.evictLru();
+    }
+  }
+
+  delete(key: string): void {
+    const node = this.map.get(key);
+    if (node === undefined) return;
+    this.removeNode(node);
+    this.map.delete(key);
+  }
+
+  has(key: string): boolean {
+    return this.map.has(key);
+  }
+
+  values(): IterableIterator<V> {
+    const entries = this.map.values();
+    return (function* () {
+      for (const node of entries) yield node.value;
+    })();
+  }
+
+  private insertFront(node: LruNode<V>): void {
+    node.next = this.head.next;
+    node.prev = this.head;
+    this.head.next!.prev = node;
+    this.head.next = node;
+  }
+
+  private removeNode(node: LruNode<V>): void {
+    node.prev!.next = node.next;
+    node.next!.prev = node.prev;
+  }
+
+  private moveToFront(node: LruNode<V>): void {
+    this.removeNode(node);
+    this.insertFront(node);
+  }
+
+  private evictLru(): void {
+    const lru = this.tail.prev!;
+    if (lru === this.head) return; // empty
+    this.removeNode(lru);
+    this.map.delete(lru.key);
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 /**
  * Returns true if the string is a valid UUID v4.
  *
@@ -72,26 +198,152 @@ function isExpiredByTtlDays(entry: MemoryEntry): boolean {
   );
 }
 
+// ─── JsonMemoryStore ──────────────────────────────────────────────────────────
+
 /**
- * JSON file-based MemoryStore.
+ * JSON file-based MemoryStore with two-tier in-memory cache.
  * Files are stored at baseDir/<kind>/<id>.json.
  * All writes are atomic (tmp + rename) with mode 0o600.
  */
 export class JsonMemoryStore implements MemoryStore {
   private readonly evictionThreshold: number;
+  private readonly lruCapacity: number;
+
+  // ─── Cache state ────────────────────────────────────────────────────────────
+
+  /** Hot tier: preference + experiential — full set, never evicted. */
+  private hotCache: Map<string, MemoryEntry> | null = null;
+
+  /** LRU tier: semantic + episodic — bounded. */
+  private lruCache: LruCache<MemoryEntry> | null = null;
+
+  /** True once ensureCache() has completed its initial load. */
+  private cacheLoaded = false;
+
+  /**
+   * Pending write-back timer handle per entry ID.
+   * When a write-back flush fires it clears its own entry here.
+   */
+  private writeBackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /**
    * @param baseDir - Root directory for all memory kind subdirectories
    * @param evictionThreshold - Max episodic entry count before eviction sweep runs (default 100)
    * @param embeddingIndex - Optional EmbeddingIndex for similarity search
+   * @param lruCapacity - Max entries in the LRU tier (default 500)
    */
   constructor(
     private readonly baseDir: string,
     evictionThreshold: number = DEFAULT_EVICTION_THRESHOLD,
-    private readonly embeddingIndex?: EmbeddingIndex
+    private readonly embeddingIndex?: EmbeddingIndex,
+    lruCapacity: number = DEFAULT_LRU_CAPACITY
   ) {
     this.evictionThreshold = evictionThreshold;
+    this.lruCapacity = lruCapacity;
   }
+
+  // ─── Cache helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Lazily loads all 4 kind directories from disk, populates both cache tiers.
+   * Subsequent calls return immediately.
+   */
+  private async ensureCache(): Promise<void> {
+    if (this.cacheLoaded) return;
+
+    this.hotCache = new Map();
+    this.lruCache = new LruCache<MemoryEntry>(this.lruCapacity);
+
+    await Promise.all(
+      Array.from(VALID_KINDS as Set<MemoryKind>).map(async kind => {
+        const entries = await this.scanKindFromDisk(kind, false);
+        for (const entry of entries) {
+          this.cacheSet(entry);
+        }
+      })
+    );
+
+    this.cacheLoaded = true;
+  }
+
+  /**
+   * Stores an entry in the appropriate cache tier.
+   */
+  private cacheSet(entry: MemoryEntry): void {
+    if (HOT_KINDS.has(entry.kind)) {
+      this.hotCache!.set(entry.id, entry);
+    } else {
+      this.lruCache!.set(entry.id, entry);
+    }
+  }
+
+  /**
+   * Retrieves an entry from cache (either tier). Returns undefined if not cached.
+   */
+  private cacheGet(id: string): MemoryEntry | undefined {
+    return this.hotCache!.get(id) ?? this.lruCache!.get(id);
+  }
+
+  /**
+   * Removes an entry from whichever cache tier holds it.
+   */
+  private cacheDelete(id: string, kind: MemoryKind): void {
+    if (HOT_KINDS.has(kind)) {
+      this.hotCache!.delete(id);
+    } else {
+      this.lruCache!.delete(id);
+    }
+  }
+
+  /**
+   * Returns all non-expired entries of the given kind from cache.
+   */
+  private cacheGetKind(kind: MemoryKind, excludeExpired = true): MemoryEntry[] {
+    const src = HOT_KINDS.has(kind) ? this.hotCache!.values() : this.lruCache!.values();
+    const result: MemoryEntry[] = [];
+    for (const entry of src) {
+      if (entry.kind !== kind) continue;
+      if (excludeExpired && isExpiredByTtlDays(entry)) continue;
+      result.push(entry);
+    }
+    return result;
+  }
+
+  /**
+   * Flushes an entry to disk immediately (write-through path).
+   * Cancels any pending write-back timer for this entry.
+   */
+  private async flushToDisk(entry: MemoryEntry): Promise<void> {
+    const timer = this.writeBackTimers.get(entry.id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.writeBackTimers.delete(entry.id);
+    }
+    const filePath = this.entryPath(entry.kind, entry.id);
+    await this.atomicWrite(filePath, entry);
+  }
+
+  /**
+   * Schedules a write-back flush for the entry with WRITE_BACK_DEBOUNCE_MS debounce.
+   * Cancels any previously scheduled flush for the same entry.
+   * Used for the LRU tier (semantic + episodic).
+   */
+  private scheduleWriteBack(entry: MemoryEntry): void {
+    const existing = this.writeBackTimers.get(entry.id);
+    if (existing !== undefined) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this.writeBackTimers.delete(entry.id);
+      const filePath = this.entryPath(entry.kind, entry.id);
+      // Fire-and-forget: if this fails we lose the accessCount update for this
+      // entry, which is acceptable (used only for eviction scoring, not correctness).
+      this.atomicWrite(filePath, entry).catch(() => undefined);
+    }, WRITE_BACK_DEBOUNCE_MS);
+
+    this.writeBackTimers.set(entry.id, timer);
+  }
+
+  // ─── File helpers ────────────────────────────────────────────────────────────
 
   /**
    * Ensures all kind subdirectories exist.
@@ -154,13 +406,14 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   /**
-   * Scans a kind directory and returns all parseable entries.
-   * Expired entries are silently excluded unless excludeExpired is false.
+   * Scans a kind directory from disk and returns all parseable entries.
+   * Used only during cold-start cache population and the eviction sweep
+   * (which needs expired entries that the cache filters out).
    *
    * @param kind - Kind to scan
    * @param excludeExpired - Whether to filter out expired entries (default true)
    */
-  private async scanKind(kind: MemoryKind, excludeExpired = true): Promise<MemoryEntry[]> {
+  private async scanKindFromDisk(kind: MemoryKind, excludeExpired = true): Promise<MemoryEntry[]> {
     const dir = path.join(this.baseDir, kind);
     let names: string[];
     try {
@@ -185,6 +438,8 @@ export class JsonMemoryStore implements MemoryStore {
     }
     return valid;
   }
+
+  // ─── Validation ──────────────────────────────────────────────────────────────
 
   /**
    * Validates that id is a UUID v4 string.
@@ -216,6 +471,8 @@ export class JsonMemoryStore implements MemoryStore {
     }
   }
 
+  // ─── MemoryStore interface ───────────────────────────────────────────────────
+
   /**
    * Retrieves a memory entry by UUID.
    * Returns null if no entry with that ID exists, or if the entry is expired.
@@ -226,18 +483,12 @@ export class JsonMemoryStore implements MemoryStore {
   async get(id: string): Promise<MemoryEntry | null> {
     this.assertValidId(id);
     await this.ensureDirs();
+    await this.ensureCache();
 
-    for (const kind of VALID_KINDS as Set<MemoryKind>) {
-      const filePath = this.entryPath(kind, id);
-      const entry = await this.readFile(filePath);
-      if (entry !== null) {
-        if (isExpiredByTtlDays(entry)) {
-          return null;
-        }
-        return entry;
-      }
-    }
-    return null;
+    const entry = this.cacheGet(id);
+    if (entry === undefined) return null;
+    if (isExpiredByTtlDays(entry)) return null;
+    return entry;
   }
 
   /**
@@ -245,13 +496,24 @@ export class JsonMemoryStore implements MemoryStore {
    * Validates content and kind before writing.
    * If the entry has an embedding and an embeddingIndex is configured, stores the vector.
    *
+   * Write strategy:
+   *   preference / experiential → write-through (disk write completes before returning)
+   *   semantic / episodic       → write-back (cache updated immediately, disk flush debounced)
+   *
    * @param entry - Entry to store
    */
   async save(entry: MemoryEntry): Promise<void> {
     this.assertValidEntry(entry);
     await this.ensureDirs();
-    const filePath = this.entryPath(entry.kind, entry.id);
-    await this.atomicWrite(filePath, entry);
+    await this.ensureCache();
+
+    this.cacheSet(entry);
+
+    // Always flush to disk immediately on save() regardless of tier.
+    // Write-back (debounced) is used only for the high-frequency accessCount updates
+    // in search() — those are eviction metadata and tolerable to lose on crash.
+    // Content/tags/embedding are never debounced.
+    await this.flushToDisk(entry);
 
     if (entry.embedding && this.embeddingIndex) {
       await this.embeddingIndex.set(entry.id, entry.embedding as number[]);
@@ -262,6 +524,8 @@ export class JsonMemoryStore implements MemoryStore {
    * Applies a partial update to an existing entry.
    * Merges provided fields with existing data and updates updatedAt.
    *
+   * Write strategy: same as save() — write-through for hot kinds, immediate flush otherwise.
+   *
    * @param id - UUID of the entry to update
    * @param input - Fields to merge
    * @returns The updated entry
@@ -269,21 +533,10 @@ export class JsonMemoryStore implements MemoryStore {
   async update(id: string, input: MemoryUpdateInput): Promise<MemoryEntry> {
     this.assertValidId(id);
     await this.ensureDirs();
+    await this.ensureCache();
 
-    let existing: MemoryEntry | null = null;
-    let foundKind: MemoryKind | null = null;
-
-    for (const kind of VALID_KINDS as Set<MemoryKind>) {
-      const filePath = this.entryPath(kind, id);
-      const entry = await this.readFile(filePath);
-      if (entry !== null) {
-        existing = entry;
-        foundKind = kind;
-        break;
-      }
-    }
-
-    if (existing === null || foundKind === null) {
+    const existing = this.cacheGet(id);
+    if (existing === undefined) {
       throw new MemoryNotFoundError(id);
     }
 
@@ -296,8 +549,8 @@ export class JsonMemoryStore implements MemoryStore {
       updatedAt: Date.now(),
     };
 
-    const filePath = this.entryPath(foundKind, id);
-    await this.atomicWrite(filePath, updated);
+    this.cacheSet(updated);
+    await this.flushToDisk(updated);
     return updated;
   }
 
@@ -311,23 +564,34 @@ export class JsonMemoryStore implements MemoryStore {
   async delete(id: string): Promise<void> {
     this.assertValidId(id);
     await this.ensureDirs();
+    await this.ensureCache();
 
-    for (const kind of VALID_KINDS as Set<MemoryKind>) {
-      const filePath = this.entryPath(kind, id);
-      try {
-        await fs.unlink(filePath);
-        if (this.embeddingIndex) {
-          await this.embeddingIndex.delete(id);
-        }
-        return;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw new MemoryStorageError(`delete ${filePath}`, err);
-        }
+    const existing = this.cacheGet(id);
+    if (existing === undefined) {
+      throw new MemoryNotFoundError(id);
+    }
+
+    // Cancel any pending write-back before deleting
+    const timer = this.writeBackTimers.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.writeBackTimers.delete(id);
+    }
+
+    this.cacheDelete(id, existing.kind);
+
+    const filePath = this.entryPath(existing.kind, id);
+    try {
+      await fs.unlink(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new MemoryStorageError(`delete ${filePath}`, err);
       }
     }
 
-    throw new MemoryNotFoundError(id);
+    if (this.embeddingIndex) {
+      await this.embeddingIndex.delete(id);
+    }
   }
 
   /**
@@ -340,15 +604,16 @@ export class JsonMemoryStore implements MemoryStore {
    */
   async search(options: MemorySearchOptions): Promise<readonly MemoryEntry[]> {
     await this.ensureDirs();
+    await this.ensureCache();
 
     const kinds: MemoryKind[] = options.kind !== undefined
       ? [options.kind]
       : Array.from(VALID_KINDS) as MemoryKind[];
 
+    // Serve all candidates from cache — no disk reads on the hot path.
     const all: MemoryEntry[] = [];
     for (const kind of kinds) {
-      const entries = await this.scanKind(kind, true);
-      all.push(...entries);
+      all.push(...this.cacheGetKind(kind, true));
     }
 
     let results = all;
@@ -442,21 +707,21 @@ export class JsonMemoryStore implements MemoryStore {
       results = results.slice(0, options.limit);
     }
 
-    // Increment accessCount on every returned entry so the eviction scorer can
-    // distinguish frequently-read entries from stale ones.
+    // Increment accessCount on returned entries.
+    // Both tiers: update cache immediately, flush to disk with debounce.
+    // Losing an accessCount increment on crash is acceptable — it's used only for
+    // eviction scoring, not correctness.
     const now = Date.now();
-    await Promise.all(
-      results.map(entry => {
-        const filePath = this.entryPath(entry.kind, entry.id);
-        const updated: MemoryEntry = {
-          ...entry,
-          accessCount: (entry.accessCount ?? 0) + 1,
-          lastAccessed: now,
-          // updatedAt is NOT changed here — content hasn't been modified
-        };
-        return this.atomicWrite(filePath, updated);
-      })
-    );
+    for (const entry of results) {
+      const updated: MemoryEntry = {
+        ...entry,
+        accessCount: (entry.accessCount ?? 0) + 1,
+        lastAccessed: now,
+        // updatedAt is NOT changed here — content hasn't been modified
+      };
+      this.cacheSet(updated);
+      this.scheduleWriteBack(updated);
+    }
 
     return results;
   }
@@ -471,11 +736,12 @@ export class JsonMemoryStore implements MemoryStore {
    */
   async loadForSystemPrompt(): Promise<readonly MemoryEntry[]> {
     await this.ensureDirs();
+    await this.ensureCache();
 
-    const preferenceEntries = await this.scanKind('preference', true);
+    const preferenceEntries = this.cacheGetKind('preference', true);
     preferenceEntries.sort((a, b) => a.createdAt - b.createdAt);
 
-    const episodicEntries = await this.scanKind('episodic', true);
+    const episodicEntries = this.cacheGetKind('episodic', true);
     episodicEntries.sort((a, b) => b.updatedAt - a.updatedAt);
     const recentEpisodic = episodicEntries.slice(0, SYSTEM_PROMPT_RECENT_EPISODIC_LIMIT);
 
@@ -494,7 +760,8 @@ export class JsonMemoryStore implements MemoryStore {
   /**
    * Eviction sweep for episodic entries.
    *
-   * Scans all episodic files (including expired ones). If the total number of expired
+   * Scans all episodic files from disk (including expired ones — these are filtered
+   * out of the cache, so we must go to disk here). If the total number of expired
    * episodic entries does not exceed evictionThreshold, returns early without changes.
    * Otherwise, scores each expired episodic entry:
    *   - Score >= 0.6 (high value): sets pendingKB: true on the entry and re-writes it.
@@ -506,7 +773,8 @@ export class JsonMemoryStore implements MemoryStore {
   async evict(): Promise<void> {
     await this.ensureDirs();
 
-    const allEpisodic = await this.scanKind('episodic', false);
+    // Must scan disk directly: expired entries are not kept in the cache.
+    const allEpisodic = await this.scanKindFromDisk('episodic', false);
     const expiredEpisodic = allEpisodic.filter(e => isExpiredByTtlDays(e));
 
     if (expiredEpisodic.length <= this.evictionThreshold) {

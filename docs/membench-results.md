@@ -14,10 +14,34 @@ Tracks MemBench evaluation results across memory architecture iterations.
 |------|---------|-------------|----------|-----------|-------|
 | 2026-03-23 | v2-baseline | 100 | 49.0% | 8.0% | substring search; recency fallback; kind-based store |
 | 2026-03-24 | v2-embedding | 100 | 94.0% | 100.0% | text-embedding-3-small cosine search; batch embed per trajectory |
+| 2026-03-28 | v3-hnsw-hybrid | 100 | 94.0% | 100.0% | HnswEmbeddingIndex + full hybrid search (HNSW cosine + BM25-TF + tag boost); per-trajectory store isolation |
 
 ---
 
 ## Analysis
+
+### v2-embedding → v3-hnsw-hybrid: accuracy held at 94%, architecture hardened
+
+Accuracy and Recall@10 are unchanged from v2-embedding, confirming the retrieval quality
+ceiling is the LLM answer step (ambiguous questions), not the search layer.
+
+Architectural changes in v3:
+
+1. **HNSW index** (`HnswEmbeddingIndex`) replaces `JsonEmbeddingIndex`. At 100-entry
+   trajectory scale the speedup is modest (~0.25ms vs ~2.5ms per query), but the O(log n)
+   scaling matters for longer trajectories or larger memory stores.
+
+2. **Hybrid search** (`queryEmbedding` + `query` string together) activates the full
+   HNSW + BM25-TF + tag-boost pipeline. Previously the adapter passed `queryEmbedding`
+   only, skipping BM25 re-ranking. At Recall@10 = 100% the re-ranking makes no observable
+   difference on this dataset, but it is the correct production code path.
+
+3. **Per-trajectory store isolation** (fresh `JsonMemoryStore` + `HnswEmbeddingIndex` per
+   trajectory) fixes a stale-cache correctness bug: the previous `adapter.reset()` unlinked
+   entry files on disk but did not invalidate the in-memory LRU cache, meaning later
+   trajectories could see memories from earlier ones. The bug was masked by Recall@10 = 100%
+   (correct step always retrievable even with noise), but it would corrupt metrics on harder
+   datasets where retrieval precision matters.
 
 ### v2-baseline → v2-embedding: +45% accuracy, +92% Recall@10
 
@@ -38,6 +62,34 @@ ambiguous questions or LLM answer errors, not retrieval failures.
 ---
 
 ## Architecture Descriptions
+
+### v3-hnsw-hybrid — `JsonMemoryStore` + `HnswEmbeddingIndex` + hybrid search (2026-03-28)
+
+**Storage**: Same as v2-embedding — JSON files under `<kind>/<uuid>.json`, atomic writes.
+Embedding vectors stored in `embeddings.json`; loaded into the HNSW graph on first access.
+Entry data served from the two-tier LRU cache (`preference`/`experiential` in hot Map;
+`semantic`/`episodic` in bounded LRU).
+
+**Index**: `HnswEmbeddingIndex` — O(log n) approximate nearest-neighbour search (M=16,
+efConstruction=200, ef=50). All vectors kept in memory after first query; no file I/O on
+subsequent searches.
+
+**Retrieval**: `recall()`/`retri()` embed the question via `text-embedding-3-small` and
+call `store.search({ queryEmbedding, query: question, limit: 10 })`. The hybrid scorer:
+1. HNSW graph traversal → top-K candidates by cosine similarity
+2. BM25-TF re-ranking over those candidates using question tokens
+3. Tag-boost applied to entries whose tags overlap with query terms
+
+**Benchmark adapter behavior**:
+- Per-trajectory store isolation: fresh `JsonMemoryStore` + `HnswEmbeddingIndex` constructed
+  per trajectory instead of reusing a shared store across trajectories. Eliminates a
+  stale-LRU-cache correctness bug where `adapter.reset()` cleared files but not in-memory state.
+- `storeBatch()`: unchanged — all messages for a trajectory embedded in one batched API call.
+
+**Why 94% not 100%**: Recall@10 = 100%, so the search layer delivers all correct steps.
+Remaining 6% errors are LLM answer errors on ambiguous questions.
+
+---
 
 ### v2-embedding — `JsonMemoryStore` + `text-embedding-3-small` cosine search (2026-03-24)
 

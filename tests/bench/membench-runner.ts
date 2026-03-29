@@ -38,7 +38,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { parseArgs } from 'node:util';
 import { JsonMemoryStore } from '../../src/memory/memory-store.js';
-import { JsonEmbeddingIndex } from '../../src/memory/embedding-index.js';
+import { HnswEmbeddingIndex } from '../../src/memory/hnsw-embedding-index.js';
 import { MemBenchAdapter } from './membench-adapter.js';
 import OpenAI from 'openai';
 import { tmpdir } from 'os';
@@ -247,15 +247,15 @@ async function main(): Promise<void> {
   console.log(`[info] Loaded ${trajectories.length} trajectories from ${datasetPath}`);
 
   // Setup
-  // A fresh temporary memory directory is created for each full run.
-  // adapter.reset() also clears all entries between individual trajectories,
-  // so each trajectory starts from a completely empty memory store.
+  // A fresh store + HNSW index is constructed for every trajectory so that the
+  // LRU entry cache starts cold and cannot carry stale entries across trajectories.
+  // Using adapter.reset() (unlink files + embeddingIndex.clear()) is insufficient
+  // because it does not invalidate the in-memory LRU cache inside JsonMemoryStore.
   const client = new OpenAI({ apiKey });
-  const baseDir = path.join(tmpdir(), `membench-${randomUUID()}`);
-  await fs.mkdir(baseDir, { recursive: true });
-  const embeddingIndex = new JsonEmbeddingIndex(baseDir);
-  const store = new JsonMemoryStore(baseDir, undefined, embeddingIndex);
-  const adapter = new MemBenchAdapter(store, baseDir, client, embeddingIndex);
+
+  // Root temp directory for the entire run; per-trajectory subdirs live inside it.
+  const runDir = path.join(tmpdir(), `membench-${randomUUID()}`);
+  await fs.mkdir(runDir, { recursive: true });
 
   let correct = 0;
   let total = 0;
@@ -266,8 +266,13 @@ async function main(): Promise<void> {
     // Run trajectories
     for (let i = 0; i < trajectories.length; i++) {
       const traj = trajectories[i]!;
-      // Fresh memory state for each trajectory
-      await adapter.reset();
+
+      // Fresh store + HNSW index for each trajectory — no stale LRU state.
+      const baseDir = path.join(runDir, `traj-${i}`);
+      await fs.mkdir(baseDir, { recursive: true });
+      const embeddingIndex = new HnswEmbeddingIndex(baseDir);
+      const store = new JsonMemoryStore(baseDir, undefined, embeddingIndex);
+      const adapter = new MemBenchAdapter(store, baseDir, client, embeddingIndex);
 
       // Store phase — batch embed all messages in one API call, then save concurrently
       const steps = extractSteps(traj);
@@ -312,8 +317,8 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    // Clean up temp dir even if the run was interrupted
-    await fs.rm(baseDir, { recursive: true, force: true });
+    // Clean up all per-trajectory temp dirs even if the run was interrupted
+    await fs.rm(runDir, { recursive: true, force: true });
   }
 
   // Aggregate metrics

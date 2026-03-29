@@ -50,3 +50,7 @@ tests/bench/data/*
 # MemBench results (local, not committed)
 tests/bench/membench-results/*
 !tests/bench/membench-results/.gitkeep
+
+docs/resume-non-quantifiable.md
+docs/resume-bullets.md
+docs/quantifiable-improvements.md

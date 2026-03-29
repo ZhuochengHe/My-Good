@@ -5,11 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
+    singleFork: true,
     include: ['tests/**/*.test.ts'],
     coverage: {
       provider: 'v8',
