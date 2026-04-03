@@ -16,6 +16,8 @@ export interface PlanTask {
   readonly title: string;
   readonly status: TaskStatus;
   readonly resultProcess?: string; // what actually happened (filled during execution)
+  readonly artifacts?: readonly string[];    // file paths or outputs produced
+  readonly failedAttempts?: readonly string[]; // approaches tried but failed (prevents re-trying)
   readonly startedAt?: number;
   readonly completedAt?: number;
 }

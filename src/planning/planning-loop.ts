@@ -110,7 +110,9 @@ export class PlanningLoop {
       this.progress('Complex task detected — generating plan...');
       let plan = await this.generateInitialPlan(goal, sessionId);
       this.progress(`Plan ready: ${plan.subgoals.length} subgoals.`);
-      const conversationHistory: ConversationMessage[] = [];
+      // Cross-subgoal context: one-line outcome + artifacts per completed subgoal.
+      // We deliberately do NOT accumulate raw conversation — only structured summaries.
+      const completedSubgoalSummaries: string[] = [];
       let subgoalsCompleted = 0;
 
       // Phase B + C + D: Per-subgoal loop
@@ -133,14 +135,14 @@ export class PlanningLoop {
           status: 'in_progress',
           startedAt: Date.now(),
         });
-        const { messages, taskResults } = await this.executeSubgoal(
+        const { taskResults } = await this.executeSubgoal(
           subgoal,
           plan,
-          conversationHistory,
+          [],
           sessionId,
-          signal
+          signal,
+          completedSubgoalSummaries
         );
-        conversationHistory.push(...messages);
 
         // Reload plan after execution (tools may have updated it)
         plan = (await this.planStore.load())!;
@@ -150,9 +152,23 @@ export class PlanningLoop {
         const replanReflection = plan.reflections.find(
           (r) => r.subgoalId === subgoal.id && r.triggerReplan
         );
+        let finalTaskResults = taskResults;
         if (replanReflection) {
           this.progress(`Replanning subgoal ${sgLabel}...`);
           await this.replanSubgoalTasks(updatedSubgoal, plan, replanReflection.nextAction);
+          this.progress(`Re-executing subgoal ${sgLabel} after replan...`);
+          plan = (await this.planStore.load())!;
+          const replanedSubgoal = plan.subgoals.find((sg) => sg.id === subgoal.id)!;
+          const reExec = await this.executeSubgoal(
+            replanedSubgoal,
+            plan,
+            [],
+            sessionId,
+            signal,
+            completedSubgoalSummaries
+          );
+          finalTaskResults = reExec.taskResults;
+          plan = (await this.planStore.load())!;
         }
 
         await this.planStore.updateSubgoal(subgoal.id, { status: 'awaiting_verification' });
@@ -168,7 +184,7 @@ export class PlanningLoop {
           const { passed, escalateToHuman } = await this.verifySubgoal(
             updatedSubgoal,
             plan,
-            taskResults,
+            finalTaskResults,
             sessionId,
             signal
           );
@@ -178,7 +194,7 @@ export class PlanningLoop {
             // Human review
             const reviewResult = await this.onHumanReview({
               subgoal: updatedSubgoal,
-              taskResults,
+              taskResults: finalTaskResults,
               planContext: goal,
               question: escalateToHuman
                 ? `Please verify: ${updatedSubgoal.verificationMethod?.description ?? updatedSubgoal.title}`
@@ -194,11 +210,12 @@ export class PlanningLoop {
               const reExec = await this.executeSubgoal(
                 updatedSubgoal,
                 plan,
-                conversationHistory,
+                [],
                 sessionId,
-                signal
+                signal,
+                completedSubgoalSummaries
               );
-              conversationHistory.push(...reExec.messages);
+              finalTaskResults = reExec.taskResults;
               // Give one more verification pass after re-execution
             }
             break; // Exit verification loop after human review
@@ -218,6 +235,15 @@ export class PlanningLoop {
             : `Subgoal ${sgLabel} — failed verification.`
         );
         subgoalsCompleted++;
+
+        // Record a one-line outcome summary for this subgoal to carry into the next.
+        // This is all cross-subgoal context — no raw history crosses the boundary.
+        const sgOutcome = updatedSubgoal.result ?? finalTaskResults.join('; ');
+        if (sgOutcome) {
+          completedSubgoalSummaries.push(
+            `Subgoal ${subgoal.index} (${subgoal.title}): ${sgOutcome}`
+          );
+        }
 
         // Reload plan for next iteration
         plan = (await this.planStore.load())!;
@@ -437,52 +463,103 @@ export class PlanningLoop {
 
   // ── Phase C helpers ───────────────────────────────────────────────────────
 
-  private async executeSubgoal(
-    subgoal: Subgoal,
-    plan: PlanState,
-    conversationHistory: ConversationMessage[],
-    sessionId: string,
-    signal?: AbortSignal
-  ): Promise<{ messages: ConversationMessage[]; taskResults: string[] }> {
-    const planMarkdown = this.serializePlanToMarkdown(plan);
-    const planningDocs = await this.loadPlanningDocs();
+  /**
+   * Serialize completed task summaries for injection into the next task's prompt.
+   * Includes outcome, artifacts, and failed attempts to prevent redundant re-tries.
+   */
+  private serializeCompletedTaskSummaries(tasks: readonly PlanTask[]): string {
+    const completed = tasks.filter((t) => t.status === 'completed' && t.resultProcess);
+    if (completed.length === 0) return '';
 
-    const subgoalPrompt =
-      `Execute subgoal ${subgoal.index}/${plan.subgoals.length}: ${subgoal.title}\n\n` +
-      `${subgoal.description}\n\n` +
-      `Use plan_subgoal_tasks to plan your tasks first, then execute them with update_task after each.`;
-
-    // Inject planning docs + current plan state as compactSummary so the agent
-    // has the full planning ruleset and live plan context during execution.
-    const compactSummary = planningDocs
-      ? `${planningDocs}\n\n---\n\n${planMarkdown}`
-      : planMarkdown;
-
-    const result = await this.executionLoop.run(subgoalPrompt, {
-      sessionId,
-      conversationHistory: [...conversationHistory],
-      compactSummary,
-      ...(signal !== undefined && { signal }),
-    });
-
-    // Reload plan to extract task result summaries added during execution
-    const updatedPlan = await this.planStore.load();
-    const taskResults: string[] = [];
-    if (updatedPlan) {
-      const sg = updatedPlan.subgoals.find((s) => s.id === subgoal.id);
-      if (sg) {
-        for (const task of sg.tasks) {
-          if (task.resultProcess) {
-            taskResults.push(`[${task.title}]: ${task.resultProcess}`);
-          }
+    const lines: string[] = ['## Completed Tasks So Far'];
+    for (const task of completed) {
+      lines.push(`\n### Task ${task.index}: ${task.title}`);
+      lines.push(`**Outcome:** ${task.resultProcess}`);
+      if (task.artifacts && task.artifacts.length > 0) {
+        lines.push(`**Artifacts:** ${task.artifacts.join(', ')}`);
+      }
+      if (task.failedAttempts && task.failedAttempts.length > 0) {
+        lines.push(`**Failed approaches (do not retry):**`);
+        for (const attempt of task.failedAttempts) {
+          lines.push(`  - ${attempt}`);
         }
       }
     }
+    return lines.join('\n');
+  }
 
-    return {
-      messages: [...result.messages],
-      taskResults,
-    };
+  private async executeSubgoal(
+    subgoal: Subgoal,
+    plan: PlanState,
+    _conversationHistory: ConversationMessage[],
+    sessionId: string,
+    signal?: AbortSignal,
+    completedSubgoalSummaries?: readonly string[]
+  ): Promise<{ messages: ConversationMessage[]; taskResults: string[] }> {
+    const planningDocs = await this.loadPlanningDocs();
+
+    // Reload the subgoal's current tasks from the store (may have been lazily planned)
+    let currentPlan = (await this.planStore.load()) ?? plan;
+    let currentSubgoal = currentPlan.subgoals.find((sg) => sg.id === subgoal.id) ?? subgoal;
+
+    const taskResults: string[] = [];
+
+    // Execute each task independently with its own conversation thread.
+    // Each task receives: subgoal context + structured summaries of prior completed tasks.
+    // Raw tool call/result history is discarded after each task — only summaries persist.
+    for (const task of currentSubgoal.tasks) {
+      if (task.status === 'completed') {
+        // Already done (e.g. from a previous partial execution)
+        if (task.resultProcess) {
+          taskResults.push(`[${task.title}]: ${task.resultProcess}`);
+        }
+        continue;
+      }
+
+      await this.planStore.updateTask(subgoal.id, task.id, {
+        status: 'in_progress',
+        startedAt: Date.now(),
+      });
+
+      // Build per-task prompt: completed summaries + current task + subgoal context
+      const completedSummaries = this.serializeCompletedTaskSummaries(currentSubgoal.tasks);
+      const taskPrompt =
+        `## Subgoal Context\n` +
+        `Subgoal ${subgoal.index}/${plan.subgoals.length}: ${subgoal.title}\n` +
+        `${subgoal.description}\n\n` +
+        (completedSummaries ? `${completedSummaries}\n\n` : '') +
+        `## Current Task\n` +
+        `Task ${task.index}/${currentSubgoal.tasks.length}: ${task.title}\n\n` +
+        `Execute this task. When done, call update_task to record your outcome, any artifacts produced, ` +
+        `and any approaches that failed.`;
+
+      // compactSummary carries planning docs + high-level plan state (no raw history)
+      const planMarkdown = this.serializePlanToMarkdown(currentPlan, completedSubgoalSummaries);
+      const compactSummary = planningDocs
+        ? `${planningDocs}\n\n---\n\n${planMarkdown}`
+        : planMarkdown;
+
+      await this.executionLoop.run(taskPrompt, {
+        sessionId,
+        // Each task starts a fresh conversation — no accumulated raw history
+        conversationHistory: [],
+        compactSummary,
+        ...(signal !== undefined && { signal }),
+      });
+
+      // Reload plan after task execution to pick up update_task writes
+      currentPlan = (await this.planStore.load()) ?? currentPlan;
+      currentSubgoal = currentPlan.subgoals.find((sg) => sg.id === subgoal.id) ?? currentSubgoal;
+
+      const updatedTask = currentSubgoal.tasks.find((t) => t.id === task.id);
+      if (updatedTask?.resultProcess) {
+        taskResults.push(`[${task.title}]: ${updatedTask.resultProcess}`);
+      }
+    }
+
+    // Return empty messages — we no longer accumulate raw conversation across tasks.
+    // The calling loop's conversationHistory is intentionally not grown.
+    return { messages: [], taskResults };
   }
 
   private async replanSubgoalTasks(
@@ -578,11 +655,23 @@ export class PlanningLoop {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private serializePlanToMarkdown(plan: PlanState): string {
+  private serializePlanToMarkdown(
+    plan: PlanState,
+    completedSubgoalSummaries?: readonly string[]
+  ): string {
     const lines: string[] = [];
     lines.push(`## Current Plan: ${plan.originalGoal}`);
     lines.push(`Status: ${plan.status}`);
     lines.push('');
+
+    if (completedSubgoalSummaries && completedSubgoalSummaries.length > 0) {
+      lines.push('## Completed Subgoals');
+      for (const summary of completedSubgoalSummaries) {
+        lines.push(`- ${summary}`);
+      }
+      lines.push('');
+    }
+
     for (const sg of plan.subgoals) {
       lines.push(`### ${sg.index}. ${sg.title} [${sg.status}]`);
       lines.push(sg.description);
