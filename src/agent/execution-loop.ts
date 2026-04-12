@@ -51,11 +51,10 @@ export interface OnToolCallCallback {
 
 /**
  * Extended run options with tool callback.
+ * compactSummary and onToolCallComplete are inherited from AgentRunOptions.
  */
 export interface ExtendedRunOptions extends AgentRunOptions {
   readonly onToolCall?: OnToolCallCallback;
-  /** Optional summary of a compacted prior conversation to inject into the system prompt. */
-  readonly compactSummary?: string;
 }
 
 /**
@@ -173,6 +172,7 @@ export class ExecutionLoop implements Agent {
     const signal = options?.signal;
     const onEvent = options?.onEvent;
     const onToolCall = options?.onToolCall;
+    const onToolCallComplete = options?.onToolCallComplete;
 
     // Initialize state — seed messages from conversation history when provided
     const messages: ConversationMessage[] = [...(options?.conversationHistory ?? [])];
@@ -321,6 +321,12 @@ export class ExecutionLoop implements Agent {
 
           // Execute each tool call
           for (const toolCall of response.message.toolCalls) {
+            // Check cancellation before each tool — don't start new side-effects after abort
+            if (signal?.aborted) {
+              finishReason = 'cancelled';
+              break;
+            }
+
             // Emit tool_call_start
             await this.emitEvent(
               {
@@ -339,6 +345,11 @@ export class ExecutionLoop implements Agent {
 
             const result = await onToolCall(toolCall, context);
             toolCalls.push(result);
+
+            // Notify planning layer so it can persist inProgressTools in real-time
+            if (onToolCallComplete) {
+              await onToolCallComplete(result);
+            }
 
             // Emit tool_call_end
             await this.emitEvent(
@@ -375,24 +386,28 @@ export class ExecutionLoop implements Agent {
         finishReason = 'max_turns';
       }
     } catch (err) {
-      // Handle any errors during execution
-      finishReason = 'error';
-      error = {
-        code: 'PROVIDER_ERROR',
-        message: err instanceof Error ? err.message : 'Unknown error',
-        recoverable: false,
-        ...(err instanceof Error && { cause: err }),
-      };
+      // Distinguish user-initiated abort from genuine errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        finishReason = 'cancelled';
+      } else {
+        finishReason = 'error';
+        error = {
+          code: 'PROVIDER_ERROR',
+          message: err instanceof Error ? err.message : 'Unknown error',
+          recoverable: false,
+          ...(err instanceof Error && { cause: err }),
+        };
 
-      // Emit error event
-      await this.emitEvent(
-        {
-          type: 'error',
-          error,
-          timestamp: Date.now(),
-        },
-        onEvent
-      );
+        // Emit error event only for genuine errors, not cancellations
+        await this.emitEvent(
+          {
+            type: 'error',
+            error,
+            timestamp: Date.now(),
+          },
+          onEvent
+        );
+      }
     }
 
     // Build final result
@@ -587,6 +602,12 @@ export class ExecutionLoop implements Agent {
 
           // Execute each tool call
           for (const toolCallItem of pendingToolCalls) {
+            // Check cancellation before each tool
+            if (signal?.aborted) {
+              finishReason = 'cancelled';
+              break;
+            }
+
             // Yield tool_call_start
             yield {
               type: 'tool_call_start',
@@ -601,6 +622,11 @@ export class ExecutionLoop implements Agent {
 
             const result = await onToolCall(toolCallItem, context);
             toolCalls.push(result);
+
+            // Notify planning layer
+            if (options?.onToolCallComplete) {
+              await options.onToolCallComplete(result);
+            }
 
             // Yield tool_call_end
             yield {
@@ -654,19 +680,23 @@ export class ExecutionLoop implements Agent {
         finishReason = 'max_turns';
       }
     } catch (err) {
-      finishReason = 'error';
-      error = {
-        code: 'PROVIDER_ERROR',
-        message: err instanceof Error ? err.message : 'Unknown error',
-        recoverable: false,
-        ...(err instanceof Error && { cause: err }),
-      };
+      if (err instanceof Error && err.name === 'AbortError') {
+        finishReason = 'cancelled';
+      } else {
+        finishReason = 'error';
+        error = {
+          code: 'PROVIDER_ERROR',
+          message: err instanceof Error ? err.message : 'Unknown error',
+          recoverable: false,
+          ...(err instanceof Error && { cause: err }),
+        };
 
-      yield {
-        type: 'error',
-        error,
-        timestamp: Date.now(),
-      };
+        yield {
+          type: 'error',
+          error,
+          timestamp: Date.now(),
+        };
+      }
     }
 
     // Build and yield final result
