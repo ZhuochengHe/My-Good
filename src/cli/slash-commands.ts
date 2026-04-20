@@ -5,7 +5,7 @@
  */
 
 import type { OutputAdapter } from './output-adapter.js';
-import type { SessionManager, SearchFilters } from '../session/session-manager.js';
+import type { SessionManager } from '../session/session-manager.js';
 import type { AppConfig } from '../types/config.js';
 import type { MemoryStore, MemoryKind } from '../types/memory.js';
 import type { InputReader } from './input-reader.js';
@@ -173,7 +173,7 @@ async function handleSession(
     const sessionId = args[0]!;
     try {
       // Search all sessions and find the one matching this id prefix/exact match.
-      const all = await context.sessionManager.searchSessions({} as SearchFilters);
+      const all = await context.sessionManager.searchSessions({});
       const match = all.find(
         (s) => s.id === sessionId || s.id.startsWith(sessionId),
       );
@@ -200,7 +200,7 @@ async function handleSession(
   // List recent sessions
   try {
     const sessions = await context.sessionManager.searchSessions(
-      {} as SearchFilters,
+      {},
     );
     if (sessions.length === 0) {
       context.output.write('No sessions found.');
