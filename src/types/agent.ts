@@ -90,6 +90,8 @@ export interface AgentRunOptions {
    * tasks can resume with context about which side-effects already occurred.
    */
   readonly onToolCallComplete?: (result: ToolResult) => Promise<void>;
+  /** Per-call turn limit override. When set, takes precedence over settings.behavior.maxTurns. */
+  readonly maxTurns?: number;
 }
 
 /** Finish reason for agent execution */

@@ -80,7 +80,7 @@ export function InputLine(props: InputLineProps): React.ReactElement {
         onChange={setValue}
         onSubmit={handleSubmit}
         focus={isActive}
-        placeholder={isActive ? '' : '(waiting...)'}
+        placeholder={isActive ? '' : '(generating… press ESC to abort)'}
       />
     </Box>
   );

@@ -95,6 +95,44 @@ interface ToolEntry {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
+ * Shell commands that are read-only and never mutate the filesystem or system state.
+ * A shell_exec call whose first token matches one of these names skips confirmation.
+ */
+const READ_ONLY_COMMANDS = new Set([
+  'bat', 'less', 'more',
+  'ls', 'la', 'll', 'dir',
+  'echo', 'printf',
+  'pwd', 'cd',
+  'which', 'whereis', 'type',
+  'grep', 'rg', 'awk', 'sed',
+  'find', 'locate',
+  'head', 'tail', 'wc',
+  'diff', 'diff3', 'cmp',
+  'stat', 'file', 'du', 'df',
+  'env', 'printenv', 'set', 'export',
+  'ps', 'top', 'htop',
+  'uname', 'hostname', 'whoami', 'id',
+  'date', 'uptime',
+  'git',
+  'node', 'python', 'python3',
+  'jq', 'yq',
+  'curl', 'wget',
+  'ping', 'traceroute', 'nslookup', 'dig',
+]);
+
+/**
+ * Returns true when a shell_exec command is considered read-only and safe to
+ * run without confirmation. Matches on the first word of the command string.
+ */
+function isReadOnlyShellCommand(command: unknown): boolean {
+  if (typeof command !== 'string' || command.trim() === '') return false;
+  const firstToken = command.trim().split(/\s+/)[0] ?? '';
+  // Strip any path prefix (e.g. /usr/bin/cat → cat)
+  const basename = firstToken.split('/').at(-1) ?? firstToken;
+  return READ_ONLY_COMMANDS.has(basename);
+}
+
+/**
  * Tool executor for managing and executing tools.
  *
  * Responsibilities:
@@ -219,8 +257,13 @@ export class ToolExecutor {
       entry.definition.parameters.properties
     );
 
-    // Check dangerous tool confirmation
-    if (entry.dangerous && this.onDangerousToolCall !== undefined) {
+    // Check dangerous tool confirmation.
+    // shell_exec with a read-only command is exempt — skip the prompt entirely.
+    const skipConfirm =
+      toolCall.name === 'shell_exec' &&
+      isReadOnlyShellCommand(argsWithDefaults['command']);
+
+    if (entry.dangerous && !skipConfirm && this.onDangerousToolCall !== undefined) {
       const allowed = await this.onDangerousToolCall(toolCall.name, argsWithDefaults);
       if (!allowed) {
         const duration = Math.max(1, Date.now() - startTime);

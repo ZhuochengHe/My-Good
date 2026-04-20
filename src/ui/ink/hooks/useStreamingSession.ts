@@ -40,6 +40,8 @@ export interface UseStreamingSessionResult {
   readonly isStreaming: boolean;
   /** Submit a user message to start a new agent turn. */
   readonly submit: (input: string) => void;
+  /** Abort the current streaming turn and return control to the user. */
+  readonly abort: () => void;
   /** Dispatch a ChatAction directly (e.g. confirm_tool, reset_turn). */
   readonly dispatch: (action: ChatAction) => void;
   /** Compact the conversation. Resolves with summary or error message. */
@@ -69,6 +71,12 @@ export function useStreamingSession(
   const [state, dispatch] = useReducer(chatReducer, INITIAL_CHAT_STATE);
   const [isStreaming, setIsStreaming] = useState(false);
   const isStreamingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const abort = useCallback((): void => {
+    if (!isStreamingRef.current) return;
+    abortControllerRef.current?.abort();
+  }, []);
 
   const submit = useCallback(
     (input: string): void => {
@@ -76,11 +84,14 @@ export function useStreamingSession(
       isStreamingRef.current = true;
       setIsStreaming(true);
 
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       dispatch({ type: 'user_message', text: input });
 
       void (async (): Promise<void> => {
         try {
-          for await (const event of sessionManager.streamRun(sessionId, input)) {
+          for await (const event of sessionManager.streamRun(sessionId, input, controller.signal)) {
             const action = agentEventToAction(event);
             if (action !== null) {
               dispatch(action);
@@ -100,6 +111,7 @@ export function useStreamingSession(
           });
         } finally {
           isStreamingRef.current = false;
+          abortControllerRef.current = null;
           setIsStreaming(false);
         }
       })();
@@ -126,6 +138,7 @@ export function useStreamingSession(
     state,
     isStreaming,
     submit,
+    abort,
     dispatch,
     compact,
   };

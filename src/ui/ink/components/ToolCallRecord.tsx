@@ -76,7 +76,7 @@ export function ToolCallRecord(props: ToolCallRecordProps): React.ReactElement {
         </Text>
         <Text color="gray"> {expandIcon} </Text>
         {!expanded && (
-          <Text color="gray" dimColor>
+          <Text color="white" dimColor>
             {outputPreview}
           </Text>
         )}
@@ -90,7 +90,7 @@ export function ToolCallRecord(props: ToolCallRecordProps): React.ReactElement {
             <Text color="gray" dimColor>
               args:
             </Text>
-            <Text color="gray">{JSON.stringify(args, null, 2)}</Text>
+            <Text color="white" dimColor>{JSON.stringify(args, null, 2)}</Text>
           </Box>
           {/* Output */}
           <Box flexDirection="column">

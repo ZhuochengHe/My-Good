@@ -34,7 +34,8 @@ export type RenderedMessage =
       readonly args: unknown;
       readonly output: string;
       readonly success: boolean;
-    };
+    }
+  | { readonly role: 'system'; readonly text: string; readonly isError: boolean };
 
 /**
  * Immutable snapshot of all chat UI state for one session.
@@ -73,6 +74,7 @@ export type ChatAction =
   | { type: 'tool_end'; output: string; success: boolean }
   | { type: 'agent_end'; usage: TokenUsage }
   | { type: 'user_message'; text: string }
+  | { type: 'system_message'; text: string; isError: boolean }
   | { type: 'await_confirmation'; toolName: string; args: unknown }
   | { type: 'confirm_tool'; approved: boolean }
   | { type: 'error'; message: string }
@@ -115,14 +117,20 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         pendingText: state.pendingText + action.delta,
       };
 
-    case 'tool_start':
+    case 'tool_start': {
+      const flushedOnToolStart: readonly RenderedMessage[] =
+        state.pendingText.trim().length > 0
+          ? [...state.messages, { role: 'agent' as const, text: state.pendingText }]
+          : state.messages;
       return {
         ...state,
         phase: 'tool_call',
+        messages: flushedOnToolStart,
         pendingText: '',
         activeToolName: action.toolName,
         activeToolArgs: action.args,
       };
+    }
 
     case 'await_confirmation':
       return {
@@ -203,6 +211,15 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         activeToolArgs: null,
         awaitingConfirmation: null,
         contextWarning: false,
+      };
+
+    case 'system_message':
+      return {
+        ...state,
+        messages: [
+          ...state.messages,
+          { role: 'system' as const, text: action.text, isError: action.isError },
+        ],
       };
 
     case 'context_warning':

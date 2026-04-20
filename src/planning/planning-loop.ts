@@ -582,6 +582,7 @@ export class PlanningLoop {
         sessionId,
         // Each task starts a fresh conversation — no accumulated raw history
         conversationHistory: [],
+        maxTurns: 30,
         compactSummary,
         ...(signal !== undefined && { signal }),
         // Persist each tool call result in real-time so interrupted tasks can resume
