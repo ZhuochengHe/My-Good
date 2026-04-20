@@ -1,8 +1,7 @@
 /**
  * Integration tests for file-ops plugin with PluginManager.
  *
- * The file-ops plugin is write-only: read_file and list_directory were removed
- * because shell_exec (cat/ls) is preferred for reading. Only write_file remains.
+ * The file-ops plugin v2 exposes: read_file, write_file, edit_file.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -40,11 +39,12 @@ describe('file-ops plugin integration', () => {
       expect(plugin.enabled).toBe(true);
     });
 
-    it('registers only write_file tool from the plugin', async () => {
+    it('registers read_file, write_file, and edit_file tools from the plugin', async () => {
       await manager.loadPlugin(pluginDir);
 
+      expect(manager.hasTool('read_file')).toBe(true);
       expect(manager.hasTool('write_file')).toBe(true);
-      expect(manager.hasTool('read_file')).toBe(false);
+      expect(manager.hasTool('edit_file')).toBe(true);
       expect(manager.hasTool('list_directory')).toBe(false);
     });
 
@@ -55,9 +55,9 @@ describe('file-ops plugin integration', () => {
       const writeFileTool = tools.find((t) => t.name === 'write_file');
 
       expect(writeFileTool).toBeDefined();
-      expect(writeFileTool?.description).toContain('Write');
+      expect(writeFileTool?.description).toContain('overwrite');
       expect(writeFileTool?.parameters.required).toContain('path');
-      expect(writeFileTool?.parameters.required).toContain('content');
+      expect(writeFileTool?.parameters.required).not.toContain('content');
     });
   });
 
@@ -137,8 +137,9 @@ describe('file-ops plugin integration', () => {
       expect(handler).toBeDefined();
 
       if (handler) {
+        // Missing 'path' — the only required param
         const result = await handler(
-          { path: 'test.txt' }, // Missing 'content'
+          {},
           {
             sessionId: 'error-test',
             workingDirectory: testDir,
@@ -147,7 +148,7 @@ describe('file-ops plugin integration', () => {
         );
 
         expect(result.output).toContain('Error');
-        expect(result.output).toContain('content');
+        expect(result.output).toContain('path');
       }
     });
   });

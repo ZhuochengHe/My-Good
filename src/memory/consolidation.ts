@@ -231,7 +231,7 @@ If nothing is worth remembering: { "memories": [] }`;
     return parsed.memories.filter(
       (m): m is ExtractedMemory =>
         typeof m.content === 'string' &&
-        m.content.trim().length >= 40 &&
+        m.content.trim().length >= 10 &&
         typeof m.kind === 'string' &&
         validKinds.has(m.kind) &&
         Array.isArray(m.tags)

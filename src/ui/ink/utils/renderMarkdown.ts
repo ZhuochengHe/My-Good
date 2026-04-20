@@ -34,7 +34,7 @@ export function renderMarkdown(text: string): string {
       continue;
     }
 
-    let l = line;
+    const l = line;
 
     // ATX headings: # H1  ## H2  ### H3
     const headingMatch = l.match(/^(#{1,6})\s+(.*)/);
