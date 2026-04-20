@@ -145,63 +145,6 @@ async function compressToolOutput(toolName: string, output: string): Promise<str
 }
 
 /**
- * Maximum characters allowed in a tool result before compression.
- * ~2000 tokens, leaves budget for the paired tool call and surrounding messages.
- */
-const TOOL_OUTPUT_MAX_CHARS = 8_000;
-
-/**
- * Tool names whose output should be tail-preserved (errors appear at the end)
- * and whose full output is spilled to a tmp file for the agent to read on demand.
- */
-const SHELL_TOOL_NAMES = new Set(['bash', 'run_command', 'execute', 'shell']);
-
-/**
- * Compress a tool result that exceeds TOOL_OUTPUT_MAX_CHARS.
- *
- * - Shell tools (bash/run_command/…): keep the tail (errors are at the end),
- *   write the full output to a tmp file, and append a path hint so the agent
- *   can read it with read_file + offset/limit.
- * - All other tools (read_file, search, …): keep a head + tail window with a
- *   "[truncated]" marker in the middle.
- *
- * Returns the original output unchanged when it is within the limit.
- */
-async function compressToolOutput(toolName: string, output: string): Promise<string> {
-  if (output.length <= TOOL_OUTPUT_MAX_CHARS) return output;
-
-  const totalLen = output.length;
-
-  if (SHELL_TOOL_NAMES.has(toolName)) {
-    // Keep the tail so the agent sees exit codes, errors, and final output.
-    const tail = output.slice(-TOOL_OUTPUT_MAX_CHARS);
-    const tmpPath = join(tmpdir(), `agent-tool-${randomUUID()}.txt`);
-    try {
-      await writeFile(tmpPath, output, 'utf-8');
-    } catch {
-      // If we can't write the tmp file, fall back to tail-only with no path hint.
-      return `[Output truncated: ${totalLen} chars, showing last ${TOOL_OUTPUT_MAX_CHARS}]\n\n${tail}`;
-    }
-    return (
-      `[Output truncated: ${totalLen} chars. Full output saved to ${tmpPath}]\n` +
-      `[Use read_file with offset/limit to inspect specific sections]\n\n` +
-      `... (last ${TOOL_OUTPUT_MAX_CHARS} chars shown below) ...\n\n${tail}`
-    );
-  }
-
-  // For file/search tools: head + tail window.
-  const halfBudget = Math.floor(TOOL_OUTPUT_MAX_CHARS / 2);
-  const head = output.slice(0, halfBudget);
-  const tail = output.slice(-halfBudget);
-  const omitted = totalLen - halfBudget * 2;
-  return (
-    `${head}\n\n` +
-    `[... ${omitted} chars truncated — use read_file with offset/limit for full content ...]\n\n` +
-    `${tail}`
-  );
-}
-
-/**
  * Agent execution loop.
  *
  * Implements the Agent interface with full execution logic including:
