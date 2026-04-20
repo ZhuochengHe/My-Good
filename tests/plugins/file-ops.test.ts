@@ -134,13 +134,13 @@ describe('file-ops plugin', () => {
       expect(result.output).toContain('Error');
     });
 
-    it('returns error message when content is null', async () => {
+    it('treats null content as empty string (touch semantics)', async () => {
       const result: ToolHandlerResult = await write_file(
         { path: 'test.txt', content: null as unknown as string },
         mockContext
       );
 
-      expect(result.output).toContain('Error');
+      expect(result.output).toContain('File written');
     });
 
     it('returns error message when required parameters are missing', async () => {

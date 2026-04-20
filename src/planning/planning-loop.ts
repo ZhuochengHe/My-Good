@@ -21,6 +21,7 @@ import type {
   PlanState,
   Subgoal,
   PlanTask,
+  TaskToolRecord,
   VerificationMethod,
 } from '../types/planning.js';
 import type { PlanStore } from './plan-store.js';
@@ -58,6 +59,8 @@ export interface PlanningRunResult {
   readonly totalSubgoals: number;
   readonly finalSummary?: string;
   readonly error?: string;
+  /** True when the run was stopped by an AbortSignal (user interrupt), not a genuine error. */
+  readonly interrupted?: boolean;
 }
 
 // ── Class ─────────────────────────────────────────────────────────────────────
@@ -89,6 +92,11 @@ export class PlanningLoop {
     } else {
       this.runtimeProgress = undefined;
     }
+
+    // Declared outside try so catch can report partial progress
+    let plan: PlanState | undefined;
+    let subgoalsCompleted = 0;
+
     try {
       // Phase A: Complexity check
       this.progress('Checking task complexity...');
@@ -108,12 +116,11 @@ export class PlanningLoop {
 
       // Phase A: Generate initial plan
       this.progress('Complex task detected — generating plan...');
-      let plan = await this.generateInitialPlan(goal, sessionId);
+      plan = await this.generateInitialPlan(goal, sessionId);
       this.progress(`Plan ready: ${plan.subgoals.length} subgoals.`);
       // Cross-subgoal context: one-line outcome + artifacts per completed subgoal.
       // We deliberately do NOT accumulate raw conversation — only structured summaries.
       const completedSubgoalSummaries: string[] = [];
-      let subgoalsCompleted = 0;
 
       // Phase B + C + D: Per-subgoal loop
       for (const subgoal of plan.subgoals) {
@@ -124,7 +131,7 @@ export class PlanningLoop {
         const verificationMethod = await this.planSubgoalVerification(subgoal, plan);
         await this.planStore.updateSubgoal(subgoal.id, { verificationMethod, status: 'planning' });
 
-        const tasks = await this.planSubgoalTasks(subgoal, plan);
+        const tasks = await this.planSubgoalTasks(subgoal, plan, completedSubgoalSummaries);
         // planSubgoalTasks already calls updateSubgoal with tasks + 'in_progress'
         void tasks; // tasks stored in plan store; reference suppresses unused-var warning
         this.progress(`Subgoal ${sgLabel} — ${tasks.length} tasks planned.`);
@@ -236,12 +243,17 @@ export class PlanningLoop {
         );
         subgoalsCompleted++;
 
-        // Record a one-line outcome summary for this subgoal to carry into the next.
-        // This is all cross-subgoal context — no raw history crosses the boundary.
+        // Record a structured summary for this subgoal to carry into the next.
+        // Includes outcome + artifacts; raw history never crosses the boundary.
         const sgOutcome = updatedSubgoal.result ?? finalTaskResults.join('; ');
         if (sgOutcome) {
+          const allArtifacts = updatedSubgoal.tasks
+            .flatMap((t) => t.artifacts ?? [])
+            .filter((a) => a.length > 0);
+          const artifactSuffix =
+            allArtifacts.length > 0 ? ` [artifacts: ${allArtifacts.join(', ')}]` : '';
           completedSubgoalSummaries.push(
-            `Subgoal ${subgoal.index} (${subgoal.title}): ${sgOutcome}`
+            `Subgoal ${subgoal.index} (${subgoal.title}): ${sgOutcome}${artifactSuffix}`
           );
         }
 
@@ -253,18 +265,58 @@ export class PlanningLoop {
       await this.planStore.patch({ status: 'completed' });
       this.progress(`All done — ${subgoalsCompleted}/${plan.subgoals.length} subgoals completed.`);
 
+      // Generate a final summary using completed subgoal outcomes
+      let finalSummary: string | undefined;
+      try {
+        const summaryContext = completedSubgoalSummaries.length > 0
+          ? completedSubgoalSummaries.map((s) => `- ${s}`).join('\n')
+          : '(no subgoal summaries available)';
+        const summaryResponse = await this.provider.complete({
+          model: this.executionLoop.config.model,
+          messages: [
+            {
+              id: randomUUID(),
+              role: 'user',
+              content:
+                `The following goal has been completed:\n"${goal}"\n\n` +
+                `Completed subgoals:\n${summaryContext}\n\n` +
+                `Write a concise summary of what was accomplished, key findings, and any important outcomes. ` +
+                `Respond in the same language the user used in their goal.`,
+              timestamp: Date.now(),
+            },
+          ],
+          systemPrompt: 'You are summarizing the results of a completed multi-step plan. Be concise and informative.',
+        });
+        finalSummary = summaryResponse.message.content;
+      } catch {
+        // Best-effort — fall back to mechanical summary
+      }
+
       return {
         success: true,
         planId: plan.planId,
         subgoalsCompleted,
         totalSubgoals: plan.subgoals.length,
+        ...(finalSummary !== undefined && { finalSummary }),
       };
     } catch (err) {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
+      // Mark plan as abandoned so resume logic can detect the interrupted state
+      try {
+        await this.planStore.patch({ status: 'abandoned' });
+      } catch {
+        // Best-effort — don't mask the original error
+      }
       return {
         success: false,
-        subgoalsCompleted: 0,
-        totalSubgoals: 0,
-        error: err instanceof Error ? err.message : 'Unknown error',
+        subgoalsCompleted,
+        totalSubgoals: plan?.subgoals.length ?? 0,
+        interrupted: isAbort,
+        error: isAbort
+          ? 'Interrupted by user'
+          : err instanceof Error
+            ? err.message
+            : 'Unknown error',
       };
     }
   }
@@ -431,15 +483,24 @@ export class PlanningLoop {
 
   private async planSubgoalTasks(
     subgoal: Subgoal,
-    _plan: PlanState
+    _plan: PlanState,
+    completedSubgoalSummaries: readonly string[] = []
   ): Promise<readonly PlanTask[]> {
+    const priorContext =
+      completedSubgoalSummaries.length > 0
+        ? `\n\nCompleted subgoals so far:\n${completedSubgoalSummaries.map((s) => `- ${s}`).join('\n')}`
+        : '';
+
     const response = await this.provider.complete({
       model: this.executionLoop.config.model,
       messages: [
         {
           id: randomUUID(),
           role: 'user',
-          content: `Plan atomic tasks for this subgoal:\nSubgoal: "${subgoal.title}"\nDescription: "${subgoal.description}"\n\nRespond with JSON:\n{ "tasks": [{ "title": string }] }\n\nEach task should be completable in 1-2 tool calls. Create 2-8 tasks.`,
+          content:
+            `Plan atomic tasks for this subgoal:\nSubgoal: "${subgoal.title}"\nDescription: "${subgoal.description}"` +
+            priorContext +
+            `\n\nRespond with JSON:\n{ "tasks": [{ "title": string }] }\n\nEach task should be completable in 1-2 tool calls. Create 2-8 tasks.`,
           timestamp: Date.now(),
         },
       ],
@@ -521,13 +582,15 @@ export class PlanningLoop {
         startedAt: Date.now(),
       });
 
-      // Build per-task prompt: completed summaries + current task + subgoal context
+      // Build per-task prompt: completed summaries + recovery context + current task
       const completedSummaries = this.serializeCompletedTaskSummaries(currentSubgoal.tasks);
+      const recoverySection = this.serializeRecoveryContext(task.inProgressTools);
       const taskPrompt =
         `## Subgoal Context\n` +
         `Subgoal ${subgoal.index}/${plan.subgoals.length}: ${subgoal.title}\n` +
         `${subgoal.description}\n\n` +
         (completedSummaries ? `${completedSummaries}\n\n` : '') +
+        (recoverySection ? `${recoverySection}\n\n` : '') +
         `## Current Task\n` +
         `Task ${task.index}/${currentSubgoal.tasks.length}: ${task.title}\n\n` +
         `Execute this task. When done, call update_task to record your outcome, any artifacts produced, ` +
@@ -539,13 +602,51 @@ export class PlanningLoop {
         ? `${planningDocs}\n\n---\n\n${planMarkdown}`
         : planMarkdown;
 
+      // Capture subgoal/task ids for the closure — loop variables will advance
+      const capturedSubgoalId = subgoal.id;
+      const capturedTaskId = task.id;
+
       await this.executionLoop.run(taskPrompt, {
         sessionId,
         // Each task starts a fresh conversation — no accumulated raw history
         conversationHistory: [],
+        maxTurns: 30,
         compactSummary,
         ...(signal !== undefined && { signal }),
+        // Persist each tool call result in real-time so interrupted tasks can resume
+        onToolCallComplete: async (result) => {
+          const record: TaskToolRecord = {
+            callId: result.callId,
+            name: result.name,
+            success: result.success,
+            // Keep only first 500 chars — enough for the agent to understand what happened
+            output: result.output.slice(0, 500),
+            executedAt: Date.now(),
+          };
+          // Reload to avoid overwriting concurrent writes from the agent's own update_task calls
+          const latest = await this.planStore.load();
+          const latestTask = latest?.subgoals
+            .find((sg) => sg.id === capturedSubgoalId)
+            ?.tasks.find((t) => t.id === capturedTaskId);
+          if (latestTask) {
+            await this.planStore.updateTask(capturedSubgoalId, capturedTaskId, {
+              inProgressTools: [...(latestTask.inProgressTools ?? []), record],
+            });
+          }
+        },
       });
+
+      // Clear inProgressTools now that the task finished (completed or failed).
+      // The resultProcess / artifacts fields carry forward what matters.
+      const postExecPlan = await this.planStore.load();
+      const postExecTask = postExecPlan?.subgoals
+        .find((sg) => sg.id === capturedSubgoalId)
+        ?.tasks.find((t) => t.id === capturedTaskId);
+      if (postExecTask) {
+        await this.planStore.updateTask(capturedSubgoalId, capturedTaskId, {
+          inProgressTools: [],
+        });
+      }
 
       // Reload plan after task execution to pick up update_task writes
       currentPlan = (await this.planStore.load()) ?? currentPlan;
@@ -567,13 +668,19 @@ export class PlanningLoop {
     _plan: PlanState,
     reason: string
   ): Promise<readonly PlanTask[]> {
+    const completedSummaries = this.serializeCompletedTaskSummaries(subgoal.tasks);
+    const priorTaskContext = completedSummaries ? `\n\n${completedSummaries}` : '';
+
     const response = await this.provider.complete({
       model: this.executionLoop.config.model,
       messages: [
         {
           id: randomUUID(),
           role: 'user',
-          content: `Replan atomic tasks for this subgoal due to the following reason:\nReason: "${reason}"\nSubgoal: "${subgoal.title}"\nDescription: "${subgoal.description}"\n\nRespond with JSON:\n{ "tasks": [{ "title": string }] }\n\nEach task should be completable in 1-2 tool calls. Create 2-8 tasks.`,
+          content:
+            `Replan atomic tasks for this subgoal due to the following reason:\nReason: "${reason}"\nSubgoal: "${subgoal.title}"\nDescription: "${subgoal.description}"` +
+            priorTaskContext +
+            `\n\nRespond with JSON:\n{ "tasks": [{ "title": string }] }\n\nEach task should be completable in 1-2 tool calls. Create 2-8 tasks.`,
           timestamp: Date.now(),
         },
       ],
@@ -654,6 +761,28 @@ export class PlanningLoop {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Build a recovery section for a task prompt when the task has inProgressTools.
+   * Tells the agent which tools already executed so it avoids repeating side-effects.
+   */
+  private serializeRecoveryContext(
+    inProgressTools: readonly TaskToolRecord[] | undefined
+  ): string {
+    if (!inProgressTools || inProgressTools.length === 0) return '';
+
+    const lines: string[] = [
+      '## ⚠️ Recovery Context',
+      'This task was interrupted mid-execution. The following tools already ran — ' +
+        'do NOT repeat them unless they are idempotent (e.g. read-only):',
+    ];
+    for (const record of inProgressTools) {
+      const status = record.success ? 'success' : 'failed';
+      lines.push(`- **${record.name}** (${status}): ${record.output}`);
+    }
+    lines.push('Resume from where the task left off.');
+    return lines.join('\n');
+  }
 
   private serializePlanToMarkdown(
     plan: PlanState,

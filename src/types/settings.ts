@@ -71,7 +71,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
     responseStyle: 'balanced',
     enableToolUse: true,
     enableStreaming: true,
-    maxTurns: 25,
+    maxTurns: 100,
     systemPrompt: `You are a helpful AI assistant.
 
 You have access to a persistent memory system. Memories are written automatically at the end of each session — you do not need to save them yourself.

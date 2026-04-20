@@ -203,8 +203,8 @@ describe('PlanningLoop', () => {
     const result = await loop.run('complex multi-step task', 'session-1');
 
     expect(result.success).toBe(true);
-    // 4 provider calls: complexity + plan + verify-method + tasks
-    expect(provider.complete).toHaveBeenCalledTimes(4);
+    // 5 provider calls: complexity + plan + verify-method + tasks + final-summary
+    expect(provider.complete).toHaveBeenCalledTimes(5);
     // executionLoop.run called for the one subgoal
     expect(agent.run).toHaveBeenCalledOnce();
   });

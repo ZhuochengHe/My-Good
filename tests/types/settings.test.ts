@@ -87,8 +87,8 @@ describe('DEFAULT_SETTINGS', () => {
       expect(DEFAULT_SETTINGS.behavior.enableStreaming).toBe(true);
     });
 
-    it('has default maxTurns of 25', () => {
-      expect(DEFAULT_SETTINGS.behavior.maxTurns).toBe(25);
+    it('has default maxTurns of 100', () => {
+      expect(DEFAULT_SETTINGS.behavior.maxTurns).toBe(100);
     });
   });
 

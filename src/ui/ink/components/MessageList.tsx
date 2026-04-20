@@ -10,6 +10,7 @@ import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { RenderedMessage } from '../../shared/chat-state.js';
 import { ToolCallRecord } from './ToolCallRecord.js';
+import { renderMarkdown } from '../utils/renderMarkdown.js';
 
 /**
  * Props for MessageList.
@@ -87,15 +88,26 @@ export function MessageList(props: MessageListProps): React.ReactElement {
           );
         }
 
+        if (msg.role === 'system') {
+          return (
+            <Box key={index} marginBottom={1}>
+              <Text color={msg.isError ? 'red' : 'cyan'} dimColor={!msg.isError}>
+                {msg.text}
+              </Text>
+            </Box>
+          );
+        }
+
+        const isAgent = msg.role === 'agent';
+        const label = isAgent ? agentLabel : userLabel;
+        const body = isAgent ? renderMarkdown(msg.text) : msg.text;
+
         return (
           <Box key={index} flexDirection="column" marginBottom={1}>
-            <Text
-              color={msg.role === 'user' ? 'white' : 'green'}
-              bold={msg.role === 'user'}
-            >
-              {msg.role === 'user' ? `${userLabel} › ` : `${agentLabel} › `}
-              {msg.text}
+            <Text color={isAgent ? 'green' : 'white'} bold={!isAgent}>
+              {label} ›{' '}
             </Text>
+            <Text>{body}</Text>
           </Box>
         );
       })}

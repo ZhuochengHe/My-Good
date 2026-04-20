@@ -79,7 +79,7 @@ export class PlanStore {
     const merged = deepMerge(this.state, {
       ...changes,
       updatedAt: Date.now(),
-    } as DeepPartial<PlanState>);
+    });
 
     await this.save(merged);
     return merged;

@@ -341,7 +341,7 @@ export class AnthropicProvider extends BaseProvider {
       input_schema: {
         type: 'object',
         properties: tool.parameters.properties,
-        required: tool.parameters.required as string[],
+        required: tool.parameters.required,
       },
     };
   }

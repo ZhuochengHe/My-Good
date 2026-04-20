@@ -348,7 +348,7 @@ export class OpenAIProvider extends BaseProvider {
         parameters: {
           type: 'object',
           properties: tool.parameters.properties,
-          required: tool.parameters.required as string[],
+          required: tool.parameters.required,
         },
       },
     };

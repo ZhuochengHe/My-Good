@@ -139,10 +139,15 @@ score = 0.75 × cosine_similarity
 
 ### In-Memory Cache
 
-A two-tier write-back cache eliminates O(n) disk I/O on the search hot path:
+A two-tier cache eliminates O(n) disk I/O on the search hot path:
 
-- **Hot tier** (`Map`): `preference` + `experiential` kinds — full set, always resident, write-through
-- **LRU tier** (`LruCache`, default 500 entries): `semantic` + `episodic` — bounded, write-back with 500ms debounce on `accessCount` updates
+- **Hot tier** (`Map`): `preference` + `experiential` kinds — full set, always resident, never evicted
+- **LRU tier** (`LruCache`, default 500 entries): `semantic` + `episodic` — bounded, evicted by LRU when capacity is exceeded
+
+Write strategy is determined by the **type of write**, not the kind tier:
+
+- **Content writes** (`save()` / `update()`): all kinds flush to disk immediately before returning — content is never debounced
+- **Access metadata** (`accessCount` / `lastAccessed`): debounced ~500ms across both tiers — losing an increment on crash is acceptable since it only affects eviction scoring, not correctness
 
 Cold start: first search scans all four kind directories once and populates both tiers. All subsequent reads are served from RAM.
 

@@ -10,6 +10,21 @@ export interface VerificationMethod {
 // ── Task (finest granularity, agent-internal) ─────────────────────
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
+/**
+ * A single tool call executed during a task.
+ * Persisted in real-time so interrupted tasks can resume with context
+ * about what side-effects already occurred.
+ * Cleared when the task reaches 'completed' status.
+ */
+export interface TaskToolRecord {
+  readonly callId: string;
+  readonly name: string;
+  readonly success: boolean;
+  /** Truncated output (first 500 chars) — enough for the agent to understand what happened. */
+  readonly output: string;
+  readonly executedAt: number;
+}
+
 export interface PlanTask {
   readonly id: string;             // "sg-1-t-1"
   readonly index: number;          // 1-based within parent Subgoal
@@ -20,6 +35,12 @@ export interface PlanTask {
   readonly failedAttempts?: readonly string[]; // approaches tried but failed (prevents re-trying)
   readonly startedAt?: number;
   readonly completedAt?: number;
+  /**
+   * Real-time log of tool calls executed so far within this task.
+   * Non-empty only while status is 'in_progress' (cleared on completion).
+   * Used to inject recovery context if the task is interrupted and retried.
+   */
+  readonly inProgressTools?: readonly TaskToolRecord[];
 }
 
 // ── Subgoal ────────────────────────────────────────────────────────

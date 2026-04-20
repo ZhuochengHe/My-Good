@@ -324,3 +324,259 @@ Planning 阶段：
 - 把问题转成"设计决策层面遇到的最难判断"：
   > "最难的不是 bug，是系统行为不可预测的边界——比如记忆融合的 cosine 阈值选 0.8 还是 0.9、HNSW 切换时机、写回 LRU 的 debounce 时间。这些决策错了，系统不会报错，但行为会悄悄漂移。"
 - 这是你真正有发言权的领域，比强行编 debug 故事更诚实有力
+
+---
+
+# 第二轮面试 — 全栈开发视角（2026-04-13）
+
+侧重点：Plugin 系统设计、TypeScript 工程、React/Ink 前端、性能优化、系统设计开放题。
+
+---
+
+## Q1 — Plugin 系统：参数校验与危险工具拦截
+
+**问题**: ToolExecutor 怎么做参数校验和危险工具拦截？为什么选 JSON manifest + handler 架构而不是硬编码？
+
+**我的回答**:
+
+1. **两阶段校验**:
+   - 加载期：Zod 对 plugin.json manifest 做结构校验（递归 z.lazy()）
+   - 执行期：validateParameters 手写轻量校验（type/enum/required），对未知参数宽松跳过（容错 LLM 额外字段）
+
+2. **dangerous 拦截**：回调注入模式
+   - ToolExecutor 接收 `DangerousToolConfirm` 回调，executor 本身不知道如何确认
+   - 调用方可注入 readline 提示（生产）、mock return true（测试）、权限系统查询（企业）
+   - manifest 里 `"dangerous": true` 标志，PluginManager.isToolDangerous() 读取
+
+3. **超时**：`Promise.race` + 自定义 TimeoutError，默认 30s，manifest 可覆盖
+
+4. **架构选择 trade-off**：
+   - manifest 架构：新工具零框架改动、用户/第三方可扩展、测试隔离（独立 handler 模块）
+   - 代价：动态 import() 加载失败只在运行时暴露，非编译期
+
+**面试官评价**: 回答扎实，细节到位。回调注入的依赖反转、宽松校验的容错设计、manifest vs 硬编码的 trade-off 表格都说到了。
+
+---
+
+### 追问 Q1.1 — 加载失败的 Partial Failure 处理
+
+**问题**: PluginManager 启动时 handler 加载失败，是 fail-fast 还是跳过？
+
+**我的回答**: 返回 loaded/failed 状态，跳过坏插件继续启动。Plugin 是扩展不是核心功能，不应拖垮主进程。
+
+**面试官评价**: 方向正确。
+
+### 追问 Q1.1.1 — 失败插件工具后续执行
+
+**问题**: LLM 调用属于加载失败插件的工具时会发生什么？
+
+**我的回答**: LLM 无法看到加载失败的插件工具，因此不会调用。
+
+**面试官评价**: 正确。
+
+### 追问 Q1.1.2 — "看不到"的实现层
+
+**问题**: 是 PluginManager 不注册，还是构建 tools 数组时过滤？
+
+**我的回答**: PluginManager 加载失败时根本不往 ToolExecutor 注册。
+
+**面试官评价**: 正确。面试官表示减少追问粒度。
+
+---
+
+## Q2 — 混合检索权重与 BM25-TF
+
+**问题**: `score = 0.75 × cosine + 0.25 × BM25-TF + 0.10 × tag_overlap`，三个权重怎么来的？为什么用 BM25-TF 而不是完整 BM25？
+
+**我的回答**:
+- 权重参照业内常用参数（0.7 cosine + 0.3 BM25），tag overlap 从 BM25 分了权重
+- BM25-TF 没有 IDF——个人 agent 语料太小，IDF 不稳定
+
+**面试官评价**: IDF 在小语料下不稳定这个 reasoning 正确。
+
+### 追问 Q2.1 — BM25-TF 饱和参数 k₁
+
+**问题**: k₁=1.2 做什么的？调大/调到 0 有什么变化？
+
+**我的回答**: k₁ 让 TF 对得分贡献饱和趋于平缓。k₁→0 退化为 binary（出现即得分），k₁→∞ 趋近线性增长。
+
+**面试官评价**: 正确。k₁=1.2 是经验平衡点。
+
+---
+
+## Q3 — HNSW 索引
+
+**问题**: HNSW 为什么快？核心数据结构和查询策略？牺牲了什么？
+
+**我的回答**:
+
+1. **数据结构**：分层图，每层节点以指数概率递减，Layer 0 包含全部节点
+2. **查询策略**：顶层贪心搜索定位 → 逐层下降 → Layer 0 beam search 返回 top-k
+3. **复杂度**：O(log N)，与维度基本无关（vs 暴力 O(N·d)，KD-Tree 高维退化）
+
+**追问：牺牲了什么？**
+
+**我的回答**: 牺牲了精度（查询时找到的不是全局最优），图本身占用内存。
+
+**面试官追问**：精度损失在哪个环节？还有其他代价吗？
+
+**补充回答**: 查询时 beam search 的候选集有限，可能错过全局最优。内存方面每个节点存 M 条边。
+
+**面试官追问**：删除操作呢？对 memory 系统有没有影响？
+
+**补充回答**: 删除后节点的邻居需要更新。影响不大，运行时以 update/renew 为主，只有 TTL 过期才删除。
+
+**面试官补充**:
+- 删除难的核心原因：被删节点可能是其他节点到达某区域的"桥梁"，路径断裂后重建代价高
+- 大多数实现（包括 hnswlib）用**软删除**（标记 deleted，查询时跳过），不是真正从图移除
+
+---
+
+## Q4 — 两层缓存设计
+
+**问题**: Hot tier（Map）write-through vs LRU tier write-back 的 reasoning？accessCount 为什么加 500ms debounce？
+
+**我的回答**:
+- README 描述有误（已修正），实际全部 write-through，不希望丢失记忆
+- debounce 防止用户高频提问导致大量读写
+
+**面试官补充**: accessCount 只是统计字段，影响排序权重——crash 丢掉几次计数无所谓，是少数可以接受 write-back 的字段，debounce 合理。
+
+---
+
+## Q5 — Planning 上下文传递
+
+**问题**: Subgoal 2 的任务生成依赖 Subgoal 1 的执行结果，这个"结果"怎么传递？
+
+**我的回答**: 要求换全栈方向的问题。
+
+**面试官**: 同意换方向。
+
+---
+
+## Q6 — 工具并发执行
+
+**问题**: LLM 返回多个 tool_use block 时，是 Promise.all 还是串行？dangerous 确认弹窗怎么处理？
+
+**我的回答**:
+- 现在严格串行 `for...await`，dangerous 确认弹窗不会叠加
+- 如果并发，合理方案是**两阶段**：
+  - 阶段一：串行确认所有 dangerous 工具（UI 层）
+  - 阶段二：并发执行所有已批准的工具（I/O 层）
+- 边界情况：PlanStore 并发写竞态——两个工具同时 update_task 会导致最后写入覆盖前一个
+- 当前串行方案规避了以上问题，且 task 间多有依赖，串行更合理
+
+**面试官评价**: 两阶段方案清楚，PlanStore 并发写的边界情况主动提到，加分。
+
+---
+
+## Q7 — 错误类层级设计
+
+**问题**: 有没有公共基类？instanceof 跨模块有没有问题？
+
+**我的回答**:
+- 当前单进程、单 module graph 下 instanceof 不会出问题
+- **潜在陷阱一**：跨 bundle instanceof 失效——插件打包了自己的 MemoryError 副本，isMemoryError(err) 返回 false
+- **潜在陷阱二**：没有统一基类，无法写 isAppError(e)，顶层 catch 退化到 `err instanceof Error`
+- **额外发现**：toUserMessage() 接口不一致——MemoryError 未实现，运行时才发现 undefined，TypeScript 无法编译期捕获
+
+**面试官评价**: 跨 bundle instanceof 失效和缺少统一基类说到了。toUserMessage 不一致是加分项——主动发现接口未被统一约束。
+
+---
+
+## Q8 — 测试策略：外部 API 依赖
+
+**问题**: memory 系统依赖 text-embedding-3-small API，测试怎么处理外部依赖？
+
+**我的回答（初始）**: 真实调用 API。
+
+**面试官追问后修正**: 全部 mock。vi.mock('openai') 模块级 mock，CI 里不注入 OPENAI_API_KEY。HNSW embedding 测试 22 条，用 oneHot 合成向量（cosine similarity 完全可预测）。
+
+**面试官评价**: 初始回答和后续完全矛盾，被自己打脸。回答前应先确认印象。oneHot 向量设计加分——确定性单元测试。
+
+**教训**: 回答前先想清楚再说，不确定的用"我记得是..."而不是直接断言。
+
+---
+
+## Q9 — 系统设计开放题：多用户 SaaS 改造
+
+**问题**: 如果把 agent 做成 10k+ 并发用户的 SaaS，memory 系统怎么改造？说 3 个关键决策点。
+
+**我的回答**:
+
+1. **向量检索换 pgvector**：per-user HNSW 常驻不可行，pgvector 带 user_id 过滤，延迟 ~5-20ms 在 LLM 调用时间尺度下可接受
+2. **loadForSystemPrompt 加 per-user TTL 缓存**：读/写比极高，preference/experiential 改动频率低，缓存命中率高，consolidation 后主动 invalidate
+3. **consolidation 异步队列化**：BullMQ worker 消费，集中管理 OpenAI rate limit（token bucket），失败可 retry，可按用户等级设优先级
+
+**面试官评价**: 三个决策点都抓住了核心矛盾。
+
+---
+
+## 技术栈全景介绍题
+
+**问题（面试官模拟）**: 介绍一下这个项目的技术栈，前端后端分别用了什么，为什么这么选？
+
+**我的回答**（结构化回答，适合面试 2-3 分钟版本）:
+
+- **"前端" TUI**：Ink + React，Ink 实现自己的 renderer 把 React vdom diff 翻译成 ANSI 转义码。选 React 而不是 blessed/chalk 拼字符串是因为流式输出 + 确认弹框 + spinner 是并发状态变化，声明式模型更可维护。trade-off：生态小、无 DevTools、必须 Node 20+
+- **后端**：TypeScript 5.4 + ESM + Node.js，Zod 做运行时 schema 验证。ESM 和 CJS 互操作是陷阱——hnswlib-node 是 CJS native module，用 createRequire(import.meta.url) 绕路
+- **向量检索**：hnswlib-node（C++ bindings），O(log n) vs O(n×d)，实测 69× 加速。trade-off：平台依赖、近似搜索
+- **持久化**：JSONL append-only（会话）+ JSON（embeddings source of truth）+ HNSW bin（可重建）
+- **工具链**：commander（CLI）、zod（schema）、js-tiktoken（token 计数）、vitest（测试，原生 ESM 支持）
+
+**面试官评价**: 能拿高分。Ink reconciler → renderer → ANSI 链说清楚了，每个选型都说了 trade-off，createRequire 踩坑细节有说服力，JSONL append-only 取舍到位。
+
+---
+
+## 多设备/多人协作演进路径
+
+**问题**: 没有后端服务，多设备同步和多人协作怎么加？
+
+**我的回答**（三档演进）:
+
+1. **档一（零改动）**: 存储目录 symlink 到云盘（iCloud/Dropbox），embeddings.json 是 source of truth、hnsw.bin 可重建的设计已预留空间。不能解决并发写
+2. **档二（新存储实现）**: MemoryStore 接口干净，新增 RemoteMemoryStore 实现 + 薄后端（Hono/Fastify）+ pgvector 替换本地 HNSW
+3. **档三（多人协作）**: 在档二基础上加 auth + userId 分区 + 行级锁/optimistic concurrency。consolidation.ts 的"多条记忆合并去重"逻辑天然可扩展为多用户 memory 合并
+
+**面试官评价**: 层次清晰。接口抽象是可替换边界这个论断有力，consolidation 可扩展为多用户合并的联想加分，先说最小代价方案体现工程判断。
+
+---
+
+## Q10（本轮 Q11）— useTypewriter：useRef vs useState
+
+**问题**: queue 为什么用 useRef 而不是 useState？
+
+**我的回答（初始）**: 根本区别是值改变时触不触发重渲染。useState 每次流式输入都重渲染，性能下降。
+
+**面试官追问**: "性能下降"太浅。具体问题是什么？
+
+**补充回答**:
+1. **性能浪费**：queue 不需要显示在界面上，每次 setQueue 触发的 re-render 是纯浪费
+2. **正确性 bug（更关键）**：setInterval 闭包捕获的是创建时的 queue 快照。useState 版本里，新 enqueue 的字符对 setInterval 回调是隐形的——typewriter 永远不动
+
+**面试官总结**:
+- useRef 给的是稳定的**盒子**，.current 永远指向最新内容
+- useState 给的是**值的快照**，闭包捕获创建时的版本
+- setInterval 是典型的闭包陷阱
+- 心智模型：**驱动 UI 的状态用 useState，运行时内部状态用 useRef**。在动画、timer、WebSocket 场景反复出现
+
+---
+
+## Q12 — useEffect 依赖数组
+
+**问题**: `useEffect(..., [isDraining, intervalMs])` 为什么不把 queueRef 加进依赖数组？ESLint exhaustive-deps 会报警吗？
+
+（此题未完成回答）
+
+---
+
+## 总体评价（面试官）
+
+**强项**:
+- 对自己写的代码细节掌握扎实，能说到具体文件和行为
+- 主动暴露设计缺陷（toUserMessage 不一致、没有统一基类）而不是只讲优点
+- 算法部分（HNSW、BM25）原理清楚，能说出 trade-off
+
+**可以更强的地方**:
+- 追问细节时有点不耐烦——面试官追问细节通常是因为感兴趣，不是刁难
+- 有一题说"真实调用"后被推翻，回答前应先确认印象，避免被自己打脸

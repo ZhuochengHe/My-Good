@@ -34,6 +34,36 @@ import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 /**
+ * Ensures every tool_call in the last assistant message has a corresponding tool result.
+ * Injects "Cancelled by user." stubs for any that are missing.
+ * Called after the loop exits (max_turns, abort, or unexpected break) to maintain
+ * the provider invariant that tool_call_ids must be matched by tool messages.
+ */
+function patchMissingToolResults(messages: ConversationMessage[]): void {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'assistant' || !last.toolCalls || last.toolCalls.length === 0) return;
+
+  const resultedIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === 'tool') resultedIds.add(msg.toolCallId);
+  }
+
+  for (const tc of last.toolCalls) {
+    if (!resultedIds.has(tc.id)) {
+      messages.push({
+        id: randomUUID(),
+        role: 'tool',
+        content: 'Cancelled by user.',
+        toolCallId: tc.id,
+        toolName: tc.name,
+        isError: false,
+        timestamp: Date.now(),
+      });
+    }
+  }
+}
+
+/**
  * Tool call context passed to onToolCall handler.
  */
 interface ToolCallContext {
@@ -51,11 +81,10 @@ export interface OnToolCallCallback {
 
 /**
  * Extended run options with tool callback.
+ * compactSummary and onToolCallComplete are inherited from AgentRunOptions.
  */
 export interface ExtendedRunOptions extends AgentRunOptions {
   readonly onToolCall?: OnToolCallCallback;
-  /** Optional summary of a compacted prior conversation to inject into the system prompt. */
-  readonly compactSummary?: string;
 }
 
 /**
@@ -173,6 +202,8 @@ export class ExecutionLoop implements Agent {
     const signal = options?.signal;
     const onEvent = options?.onEvent;
     const onToolCall = options?.onToolCall;
+    const onToolCallComplete = options?.onToolCallComplete;
+    const maxTurns = options?.maxTurns ?? this.settings.behavior.maxTurns;
 
     // Initialize state — seed messages from conversation history when provided
     const messages: ConversationMessage[] = [...(options?.conversationHistory ?? [])];
@@ -224,7 +255,7 @@ export class ExecutionLoop implements Agent {
       const systemPrompt = await this.buildSystemPrompt(options?.compactSummary);
 
       // Main execution loop
-      while (turnNumber < this.settings.behavior.maxTurns) {
+      while (turnNumber < maxTurns) {
         // Check cancellation before each turn
         if (signal?.aborted) {
           finishReason = 'cancelled';
@@ -320,7 +351,16 @@ export class ExecutionLoop implements Agent {
           }
 
           // Execute each tool call
-          for (const toolCall of response.message.toolCalls) {
+          const pendingCalls = response.message.toolCalls;
+          let abortedAtIndex = -1;
+          for (let tcIdx = 0; tcIdx < pendingCalls.length; tcIdx++) {
+            const toolCall = pendingCalls[tcIdx]!;
+            // Check cancellation before each tool — don't start new side-effects after abort
+            if (signal?.aborted) {
+              abortedAtIndex = tcIdx;
+              break;
+            }
+
             // Emit tool_call_start
             await this.emitEvent(
               {
@@ -339,6 +379,11 @@ export class ExecutionLoop implements Agent {
 
             const result = await onToolCall(toolCall, context);
             toolCalls.push(result);
+
+            // Notify planning layer so it can persist inProgressTools in real-time
+            if (onToolCallComplete) {
+              await onToolCallComplete(result);
+            }
 
             // Emit tool_call_end
             await this.emitEvent(
@@ -362,6 +407,26 @@ export class ExecutionLoop implements Agent {
             messages.push(toolResultMessage);
           }
 
+          if (abortedAtIndex !== -1) {
+            // Inject cancelled stubs for all tool calls that never ran,
+            // so the conversation history satisfies the provider's invariant
+            // that every tool_call_id in an assistant message has a tool result.
+            for (let i = abortedAtIndex; i < pendingCalls.length; i++) {
+              const skipped = pendingCalls[i]!;
+              messages.push({
+                id: randomUUID(),
+                role: 'tool',
+                content: 'Cancelled by user.',
+                toolCallId: skipped.id,
+                toolName: skipped.name,
+                isError: false,
+                timestamp: Date.now(),
+              });
+            }
+            finishReason = 'cancelled';
+            break;
+          }
+
           // Continue loop for next turn
           continue;
         }
@@ -371,29 +436,38 @@ export class ExecutionLoop implements Agent {
       }
 
       // Check if we hit max turns
-      if (turnNumber >= this.settings.behavior.maxTurns && finishReason === 'completed') {
+      if (turnNumber >= maxTurns && finishReason === 'completed') {
         finishReason = 'max_turns';
       }
-    } catch (err) {
-      // Handle any errors during execution
-      finishReason = 'error';
-      error = {
-        code: 'PROVIDER_ERROR',
-        message: err instanceof Error ? err.message : 'Unknown error',
-        recoverable: false,
-        ...(err instanceof Error && { cause: err }),
-      };
 
-      // Emit error event
-      await this.emitEvent(
-        {
-          type: 'error',
-          error,
-          timestamp: Date.now(),
-        },
-        onEvent
-      );
+    } catch (err) {
+      // Distinguish user-initiated abort from genuine errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        finishReason = 'cancelled';
+      } else {
+        finishReason = 'error';
+        error = {
+          code: 'PROVIDER_ERROR',
+          message: err instanceof Error ? err.message : 'Unknown error',
+          recoverable: false,
+          ...(err instanceof Error && { cause: err }),
+        };
+
+        // Emit error event only for genuine errors, not cancellations
+        await this.emitEvent(
+          {
+            type: 'error',
+            error,
+            timestamp: Date.now(),
+          },
+          onEvent
+        );
+      }
     }
+
+    // Ensure every tool_call_id in the last assistant message has a tool result.
+    // Covers all exit paths: max_turns, abort mid-tool (caught above), and unexpected breaks.
+    patchMissingToolResults(messages);
 
     // Build final result
     const result = this.buildResult(
@@ -434,6 +508,7 @@ export class ExecutionLoop implements Agent {
   ): AsyncIterable<AgentEvent> {
     const sessionId = options?.sessionId ?? randomUUID();
     const signal = options?.signal;
+    const maxTurns = options?.maxTurns ?? this.settings.behavior.maxTurns;
 
     // Initialize state — seed messages from conversation history when provided
     const messages: ConversationMessage[] = [...(options?.conversationHistory ?? [])];
@@ -488,7 +563,7 @@ export class ExecutionLoop implements Agent {
       const systemPrompt = await this.buildSystemPrompt(options?.compactSummary);
 
       // Main execution loop
-      while (turnNumber < this.settings.behavior.maxTurns) {
+      while (turnNumber < maxTurns) {
         // Check cancellation
         if (signal?.aborted) {
           finishReason = 'cancelled';
@@ -586,7 +661,15 @@ export class ExecutionLoop implements Agent {
           }
 
           // Execute each tool call
-          for (const toolCallItem of pendingToolCalls) {
+          let streamAbortedAtIndex = -1;
+          for (let tcIdx = 0; tcIdx < pendingToolCalls.length; tcIdx++) {
+            const toolCallItem = pendingToolCalls[tcIdx]!;
+            // Check cancellation before each tool
+            if (signal?.aborted) {
+              streamAbortedAtIndex = tcIdx;
+              break;
+            }
+
             // Yield tool_call_start
             yield {
               type: 'tool_call_start',
@@ -601,6 +684,11 @@ export class ExecutionLoop implements Agent {
 
             const result = await onToolCall(toolCallItem, context);
             toolCalls.push(result);
+
+            // Notify planning layer
+            if (options?.onToolCallComplete) {
+              await options.onToolCallComplete(result);
+            }
 
             // Yield tool_call_end
             yield {
@@ -619,6 +707,24 @@ export class ExecutionLoop implements Agent {
               timestamp: Date.now(),
             };
             messages.push(toolResultMessage);
+          }
+
+          if (streamAbortedAtIndex !== -1) {
+            // Inject cancelled stubs for all tool calls that never ran.
+            for (let i = streamAbortedAtIndex; i < pendingToolCalls.length; i++) {
+              const skipped = pendingToolCalls[i]!;
+              messages.push({
+                id: randomUUID(),
+                role: 'tool',
+                content: 'Cancelled by user.',
+                toolCallId: skipped.id,
+                toolName: skipped.name,
+                isError: false,
+                timestamp: Date.now(),
+              });
+            }
+            finishReason = 'cancelled';
+            break;
           }
 
           // Continue loop for next turn
@@ -650,24 +756,31 @@ export class ExecutionLoop implements Agent {
       }
 
       // Check if we hit max turns
-      if (turnNumber >= this.settings.behavior.maxTurns && finishReason === 'completed') {
+      if (turnNumber >= maxTurns && finishReason === 'completed') {
         finishReason = 'max_turns';
       }
-    } catch (err) {
-      finishReason = 'error';
-      error = {
-        code: 'PROVIDER_ERROR',
-        message: err instanceof Error ? err.message : 'Unknown error',
-        recoverable: false,
-        ...(err instanceof Error && { cause: err }),
-      };
 
-      yield {
-        type: 'error',
-        error,
-        timestamp: Date.now(),
-      };
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        finishReason = 'cancelled';
+      } else {
+        finishReason = 'error';
+        error = {
+          code: 'PROVIDER_ERROR',
+          message: err instanceof Error ? err.message : 'Unknown error',
+          recoverable: false,
+          ...(err instanceof Error && { cause: err }),
+        };
+
+        yield {
+          type: 'error',
+          error,
+          timestamp: Date.now(),
+        };
+      }
     }
+
+    patchMissingToolResults(messages);
 
     // Build and yield final result
     const result = this.buildResult(

@@ -426,6 +426,7 @@ export class SessionManager implements EventSubscriber {
   async *streamRun(
     sessionId: string,
     input: string,
+    signal?: AbortSignal,
   ): AsyncGenerator<AgentEvent> {
     if (!this.executionLoop) {
       // Fallback: run non-streaming and emit a single text_delta + agent_end
@@ -456,17 +457,30 @@ export class SessionManager implements EventSubscriber {
       conversationHistory: this.currentMessages,
       ...(this.onToolCall !== null && { onToolCall: this.onToolCall }),
       ...(this.compactSummary !== null && { compactSummary: this.compactSummary }),
+      ...(signal !== undefined && { signal }),
     })) {
       void this.onEvent(event);
 
       if (event.type === 'agent_end') {
         const result = event.result;
-        // Filter: only persist user + final assistant message (drop tool intermediates)
+        // Filter: only persist user + final assistant message (drop tool intermediates).
+        // Exception: if the final assistant message has tool_calls (aborted mid-tool),
+        // also persist the corresponding tool result messages so the provider invariant
+        // (every tool_call_id must have a tool result) is maintained across turns.
         const newUserMessage = result.messages.find((m) => m.role === 'user');
         const lastAssistantMessage = result.messages.filter((m) => m.role === 'assistant').pop();
         const filteredMessages: ConversationMessage[] = [];
         if (newUserMessage) filteredMessages.push(newUserMessage);
-        if (lastAssistantMessage) filteredMessages.push(lastAssistantMessage);
+        if (lastAssistantMessage) {
+          filteredMessages.push(lastAssistantMessage);
+          if (lastAssistantMessage.toolCalls && lastAssistantMessage.toolCalls.length > 0) {
+            const assistantIdx = result.messages.indexOf(lastAssistantMessage);
+            const toolResultsAfter = result.messages
+              .slice(assistantIdx + 1)
+              .filter((m) => m.role === 'tool');
+            filteredMessages.push(...toolResultsAfter);
+          }
+        }
         this.currentMessages = [...this.currentMessages, ...filteredMessages];
         for (const message of filteredMessages) {
           await this.store.appendMessage(sessionId, message);
@@ -523,6 +537,9 @@ export class SessionManager implements EventSubscriber {
       timestamp: Date.now(),
     };
     await this.store.appendMessage(sessionId, assistantMessage);
+
+    // Update in-memory history so the next turn has context of this plan's outcome
+    this.currentMessages = [...this.currentMessages, userMessage, assistantMessage];
 
     return {
       success: result.success,
@@ -581,7 +598,9 @@ export class SessionManager implements EventSubscriber {
 
       const response = lastAssistantMessage?.content ?? '';
 
-      // Filter to only user + final assistant text message (drop tool_use intermediates and tool_result)
+      // Filter to only user + final assistant text message (drop tool_use intermediates and tool_result).
+      // Exception: if the final assistant message has tool_calls (aborted mid-tool),
+      // also persist the corresponding tool result messages.
       const newUserMessage = result.messages.find((m) => m.role === 'user');
       const filteredMessages: ConversationMessage[] = [];
       if (newUserMessage) {
@@ -589,6 +608,13 @@ export class SessionManager implements EventSubscriber {
       }
       if (lastAssistantMessage) {
         filteredMessages.push(lastAssistantMessage);
+        if (lastAssistantMessage.toolCalls && lastAssistantMessage.toolCalls.length > 0) {
+          const assistantIdx = result.messages.indexOf(lastAssistantMessage);
+          const toolResultsAfter = result.messages
+            .slice(assistantIdx + 1)
+            .filter((m) => m.role === 'tool');
+          filteredMessages.push(...toolResultsAfter);
+        }
       }
 
       // Update in-memory history for the next turn

@@ -188,33 +188,29 @@ async function extractMemories(
 ): Promise<ExtractedMemory[]> {
   if (transcript.trim().length === 0) return [];
 
-  const systemPrompt = `You are a memory extraction assistant. Given a conversation excerpt, extract facts that will genuinely help future sessions — not just facts that happened to come up.
+  const systemPrompt = `You are a memory extraction assistant. Given a conversation excerpt, extract only what will genuinely help future sessions.
 
 ## The core question
 Before extracting anything, ask: "Would knowing this in a future conversation make the agent meaningfully more useful?" If no, skip it.
 
-## What to extract (only if they pass the core question)
-- kind: one of "preference" | "experiential" | "semantic" | "episodic"
-  - preference: stable user preferences, communication style, behavioral rules
-  - experiential: reusable patterns, workflows, techniques that proved effective
-  - semantic: durable facts about the project, architecture, domain, or tech stack
-  - episodic: time-sensitive context still relevant beyond this session (active initiatives, recent decisions with ongoing consequences) — use sparingly
-- content: one clear, specific factual sentence
-- tags: 2–4 short keyword strings
-- ttlDays: integer 7–90 for episodic only; omit for all other kinds
+## Memory kinds — read carefully before assigning
+- **preference**: Rules for how to treat the user — tone, communication style, explicit behavioral feedback, things they dislike. Must be something the user directly expressed, not inferred. Example: "User prefers concise answers without trailing summaries."
+- **experiential**: A high-value methodology lesson distilled after completing a non-trivial task — what approach worked, what pitfall was hit, how to tackle similar work next time. VERY high bar. Do NOT use for: observations about the user's attitude ("user is open to X"), single-session debug details, or task-specific steps. Example: "When refactoring this codebase's plugin system, read plugin.json manifests first before touching handlers — the manifest is the source of truth for dangerous flags."
+- **semantic**: Stable objective facts about the project, tech stack, architecture, or domain. Not opinions, not behavior rules. Example: "The project uses gpt-4o-mini for consolidation and text-embedding-3-small for embeddings."
+- **episodic**: Short-lived context: active tasks, recent decisions, ongoing bugs or goals. Use ttlDays (7–90). This is the most commonly used kind. Example: "User is currently implementing a write-back LRU cache for JsonMemoryStore to fix a scanKind bottleneck."
 
 ## What NOT to extract
 - Anything specific to a single debugging session (stack traces, one-off errors, intermediate fix attempts)
+- Soft observations like "user is open to suggestions" or "user is receptive to X" — these are not preferences
 - Step-by-step task instructions that won't recur
-- Information already derivable from reading the code or git history
-- Temporary state: "currently working on X", "today's failing test", "this branch has Y"
+- Information derivable from reading the code or git history
 - Pleasantries, clarifications, and conversational filler
-- Conclusions that are obvious from the project structure
 
 ## Calibration
-Err toward extracting nothing. A session with 0–2 memories is healthy. Forcing 3–5 memories per chunk produces noise. { "memories": [] } is a valid and often correct output.
+Err toward extracting nothing. A session with 0–2 memories is healthy. Most chunks should produce 0. { "memories": [] } is a valid and often correct output.
 
 Respond ONLY with valid JSON: { "memories": [...] }
+Each memory: { "kind": "...", "content": "one clear specific sentence", "tags": ["2-4 keywords"], "ttlDays": N (episodic only) }
 If nothing is worth remembering: { "memories": [] }`;
 
   try {
@@ -235,7 +231,7 @@ If nothing is worth remembering: { "memories": [] }`;
     return parsed.memories.filter(
       (m): m is ExtractedMemory =>
         typeof m.content === 'string' &&
-        m.content.trim().length > 0 &&
+        m.content.trim().length >= 10 &&
         typeof m.kind === 'string' &&
         validKinds.has(m.kind) &&
         Array.isArray(m.tags)

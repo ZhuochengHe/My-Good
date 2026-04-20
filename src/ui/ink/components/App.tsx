@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import type { SessionManager } from '../../../session/session-manager.js';
 import type { AppConfig } from '../../../types/config.js';
 import type { DangerousToolConfirm } from '../../../plugins/tool-executor.js';
@@ -27,15 +27,6 @@ const DEFAULT_USER_LABEL = 'you';
 const DEFAULT_AGENT_LABEL = 'agent';
 /** Default typewriter speed in milliseconds. */
 const DEFAULT_TYPEWRITER_MS = 30;
-
-/**
- * A system-level notification line shown in the message feed.
- */
-interface SystemMessage {
-  readonly id: number;
-  readonly text: string;
-  readonly isError: boolean;
-}
 
 /**
  * Props for App.
@@ -66,9 +57,6 @@ type MemoryFlowStep =
   | { step: 'entry'; entries: readonly MemoryEntry[] }
   | { step: 'confirm'; entry: MemoryEntry };
 
-/** Monotonic counter for system message IDs. */
-let nextSysMsgId = 0;
-
 /**
  * Root chat application component.
  *
@@ -90,13 +78,17 @@ export function App(props: AppProps): React.ReactElement {
       ? 0
       : (config?.agent.typewriterSpeedMs ?? DEFAULT_TYPEWRITER_MS);
 
-  const { state, isStreaming, submit, dispatch, compact } = useStreamingSession({
+  const { state, isStreaming, submit, abort, dispatch, compact } = useStreamingSession({
     sessionManager,
     sessionId,
   });
 
-  // System messages: info/error lines injected by slash commands
-  const [sysMessages, setSysMessages] = useState<SystemMessage[]>([]);
+  // ESC during streaming aborts the current turn
+  useInput((_input, key) => {
+    if (key.escape && isStreaming) {
+      abort();
+    }
+  });
 
   // Multi-step /memory flow state — null when not active
   const [memoryFlow, setMemoryFlow] = useState<MemoryFlowStep | null>(null);
@@ -126,8 +118,8 @@ export function App(props: AppProps): React.ReactElement {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addSys = useCallback((text: string, isError = false): void => {
-    setSysMessages((prev) => [...prev, { id: nextSysMsgId++, text, isError }]);
-  }, []);
+    dispatch({ type: 'system_message', text, isError });
+  }, [dispatch]);
 
   // ------------------------------------------------------------------
   // Slash command handler (Ink-native, no OutputAdapter)
@@ -147,11 +139,7 @@ export function App(props: AppProps): React.ReactElement {
 
         case 'help':
         case '?':
-          addSys('Commands: /help  /session [id]  /model  /compact [hint]  /memory  /memory clear-all  /clear  /exit');
-          break;
-
-        case 'clear':
-          setSysMessages([]);
+          addSys('Commands: /help  /session [id]  /model  /compact [hint]  /memory  /memory clear-all  /exit');
           break;
 
         case 'model': {
@@ -361,15 +349,6 @@ export function App(props: AppProps): React.ReactElement {
         userLabel={userLabel}
         agentLabel={agentLabel}
       />
-
-      {/* System messages from slash commands */}
-      {sysMessages.map((msg) => (
-        <Box key={msg.id} marginBottom={1}>
-          <Text color={msg.isError ? 'red' : 'cyan'} dimColor={!msg.isError}>
-            {msg.text}
-          </Text>
-        </Box>
-      ))}
 
       {state.phase === 'tool_call' && state.activeToolName !== null && (
         <ToolCallBlock toolName={state.activeToolName} />

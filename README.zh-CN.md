@@ -136,10 +136,15 @@ my-agent model update                     # 从提供商刷新模型列表
 
 ### 内存缓存
 
-两层写回缓存消除了检索热路径上的 O(n) 磁盘 I/O：
+两层缓存消除了检索热路径上的 O(n) 磁盘 I/O：
 
-- **热层**（`Map`）：`preference` + `experiential` 类型——全量常驻，直写策略
-- **LRU 层**（`LruCache`，默认 500 条）：`semantic` + `episodic`——有界缓存，`accessCount` 更新采用 500ms 防抖写回
+- **热层**（`Map`）：`preference` + `experiential` 类型——全量常驻，永不淘汰
+- **LRU 层**（`LruCache`，默认 500 条）：`semantic` + `episodic`——有界缓存，超出容量时按 LRU 淘汰
+
+写入策略按**写入内容的语义**而非层级划分：
+
+- **内容写入**（`save()` / `update()`）：所有类型均在返回前立即落盘，内容永不防抖
+- **访问元数据**（`accessCount` / `lastAccessed`）：两层均采用 ~500ms 防抖写回——崩溃时丢失计数可接受，因为它仅影响淘汰评分，不影响数据正确性
 
 冷启动时，首次检索会一次性扫描四个类型目录并填充两层缓存；此后所有读操作均从内存服务，不再访问磁盘。
 

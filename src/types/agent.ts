@@ -84,6 +84,14 @@ export interface AgentRunOptions {
    * the system prompt so the model retains awareness of prior context.
    */
   readonly compactSummary?: string;
+  /**
+   * Called after each tool call completes, in order.
+   * Used by PlanningLoop to persist inProgressTools in real-time so interrupted
+   * tasks can resume with context about which side-effects already occurred.
+   */
+  readonly onToolCallComplete?: (result: ToolResult) => Promise<void>;
+  /** Per-call turn limit override. When set, takes precedence over settings.behavior.maxTurns. */
+  readonly maxTurns?: number;
 }
 
 /** Finish reason for agent execution */
