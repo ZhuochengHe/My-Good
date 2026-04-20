@@ -265,11 +265,39 @@ export class PlanningLoop {
       await this.planStore.patch({ status: 'completed' });
       this.progress(`All done — ${subgoalsCompleted}/${plan.subgoals.length} subgoals completed.`);
 
+      // Generate a final summary using completed subgoal outcomes
+      let finalSummary: string | undefined;
+      try {
+        const summaryContext = completedSubgoalSummaries.length > 0
+          ? completedSubgoalSummaries.map((s) => `- ${s}`).join('\n')
+          : '(no subgoal summaries available)';
+        const summaryResponse = await this.provider.complete({
+          model: this.executionLoop.config.model,
+          messages: [
+            {
+              id: randomUUID(),
+              role: 'user',
+              content:
+                `The following goal has been completed:\n"${goal}"\n\n` +
+                `Completed subgoals:\n${summaryContext}\n\n` +
+                `Write a concise summary of what was accomplished, key findings, and any important outcomes. ` +
+                `Respond in the same language the user used in their goal.`,
+              timestamp: Date.now(),
+            },
+          ],
+          systemPrompt: 'You are summarizing the results of a completed multi-step plan. Be concise and informative.',
+        });
+        finalSummary = summaryResponse.message.content;
+      } catch {
+        // Best-effort — fall back to mechanical summary
+      }
+
       return {
         success: true,
         planId: plan.planId,
         subgoalsCompleted,
         totalSubgoals: plan.subgoals.length,
+        ...(finalSummary !== undefined && { finalSummary }),
       };
     } catch (err) {
       const isAbort = err instanceof Error && err.name === 'AbortError';

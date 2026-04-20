@@ -538,6 +538,9 @@ export class SessionManager implements EventSubscriber {
     };
     await this.store.appendMessage(sessionId, assistantMessage);
 
+    // Update in-memory history so the next turn has context of this plan's outcome
+    this.currentMessages = [...this.currentMessages, userMessage, assistantMessage];
+
     return {
       success: result.success,
       response: responseText,
